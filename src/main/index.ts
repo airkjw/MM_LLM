@@ -344,7 +344,7 @@ function registerHandlers(): void {
         const contextMessages = regenerateIndex >= 0
           ? thread.messages.slice(0, regenerateIndex + 1) : thread.messages;
         const messages = contextMessages.map((item) => ({ role: item.role, content: item.apiContent }));
-        for await (const delta of streamChat(modelId, messages, abort.signal)) {
+        for await (const delta of streamChat(modelId, messages, prompt, abort.signal)) {
           text += delta;
           send({ type: "delta", text: delta });
         }

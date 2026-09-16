@@ -6,7 +6,7 @@ import {
 } from "@assistant-ui/react";
 import {
   ArrowRight, ArrowUp, BookOpen, Check, ChevronDown, CircleHelp, Copy,
-  Download, FileText, HeartPulse, Image as ImageIcon, LoaderCircle,
+  Download, FileText, Globe2, HeartPulse, Image as ImageIcon, LoaderCircle,
   LogOut, Menu, MessageCircle, Mic2, Music2, Paperclip, Plus,
   RefreshCw, Search, ShieldCheck, Sparkles, Square, Trash2, Video, X
 } from "lucide-react";
@@ -16,6 +16,7 @@ import type {
   ThreadSnapshot, ThreadSummary, UpdateState
 } from "../../shared/contracts";
 import { modelLabel, providerLabel } from "./model-names";
+import { hasNativeWebSearch } from "../../shared/web-search";
 
 type Screen = "chat" | "image" | "audio" | "video";
 const MAX_ATTACHMENT_BYTES = 18 * 1024 * 1024;
@@ -70,6 +71,7 @@ function ModelPicker({
       >
         <span className="model-dot" />
         <span className="model-trigger-text">{selected ? modelLabel(selected) : "모델 선택"}</span>
+        {selected && hasNativeWebSearch(selected) && <Globe2 className="model-trigger-web" size={14} />}
         <ChevronDown size={16} />
       </button>
       {open && <div className="model-popover">
@@ -87,6 +89,9 @@ function ModelPicker({
                 key={model.id} onClick={() => { onSelect(model.id); setOpen(false); setQuery(""); }}
               >
                 <span><strong>{modelLabel(model.id)}</strong><small>{model.id}</small></span>
+                {hasNativeWebSearch(model.id) && <span className="native-search-badge">
+                  <Globe2 size={12} />직접 웹검색
+                </span>}
                 {model.id === selected && <Check size={17} />}
               </button>)}
             </div>
@@ -425,12 +430,14 @@ function ChatPanel({
                   : <ComposerPrimitive.Send className="send-button" title="전송"><ArrowUp size={19} /></ComposerPrimitive.Send>}
               </div>
             </ComposerPrimitive.Root>
-            <div className="chat-checkline">{needsConsent && !attachmentConsent
-              ? <button type="button" className="privacy-confirm-link"
-                  onClick={() => setPrivacyDialog("history")}>첨부 자료 전송 확인</button>
-              : <span>{needsConsent
-                ? "이 대화의 첨부 자료는 API로 다시 전송될 수 있습니다"
-                : "환자 식별정보는 입력 전에 제거해 주세요"}</span>}
+            <div className="chat-checkline"><span className="web-search-status"><Globe2 size={13} />
+              {hasNativeWebSearch(modelId) ? "선택 모델이 직접 웹 검색" : "Sonar 검색 후 선택 모델이 답변"}</span>
+              {needsConsent && !attachmentConsent
+                ? <button type="button" className="privacy-confirm-link"
+                    onClick={() => setPrivacyDialog("history")}>첨부 자료 전송 확인</button>
+                : <span>{needsConsent
+                  ? "이 대화의 첨부 자료는 API로 다시 전송될 수 있습니다"
+                  : "환자 식별정보는 입력 전에 제거해 주세요"}</span>}
               <span>대화 기록은 기기 안에 저장됩니다</span></div>
           </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>

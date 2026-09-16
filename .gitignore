@@ -1,5 +1,6 @@
 node_modules/
 out/
 release/
+release-*-local/
 .DS_Store
 *.log
