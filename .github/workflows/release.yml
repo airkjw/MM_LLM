@@ -1,9 +1,7 @@
 name: Build and release MM_LLM
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
+  workflow_dispatch:
 
 permissions:
   contents: write
