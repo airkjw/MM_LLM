@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#d7c5e4"/>
+      <stop offset=".54" stop-color="#b9a9d2"/>
+      <stop offset="1" stop-color="#a5b9d4"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f9f5fc"/>
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="976" height="976" rx="224" fill="url(#base)"/>
+  <circle cx="830" cy="210" r="245" fill="#fff" opacity=".16"/>
+  <circle cx="165" cy="810" r="260" fill="#f8e7dc" opacity=".24"/>
+  <path d="M258 280C258 240 290 208 330 208H694C734 208 766 240 766 280V650C766 690 734 722 694 722H455L349 812C326 831 291 815 291 784V715C271 703 258 682 258 650Z" fill="url(#bubble)"/>
+  <path d="M517 294L557 420L683 460L557 500L517 626L477 500L351 460L477 420Z" fill="#9d86bc"/>
+  <path d="M710 460v92M664 506h92" stroke="#cbb5da" stroke-width="25" stroke-linecap="round"/>
+  <circle cx="345" cy="584" r="21" fill="#dbcbe7"/>
+</svg>

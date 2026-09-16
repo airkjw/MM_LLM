@@ -1,0 +1,81 @@
+{
+  "name": "mm-llm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Medical MBA desktop workspace for ChatKHU Gateway",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "icon": "node scripts/render-icon.mjs",
+    "build": "npm run typecheck && electron-vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "electron-vite preview",
+    "dist:mac": "npm run icon && npm run build && electron-builder --mac --arm64 --x64 --publish never",
+    "dist:mac:unsigned": "npm run icon && npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --arm64 --x64 --publish never",
+    "dist:win": "npm run icon && npm run build && electron-builder --win nsis --x64 --publish never",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@assistant-ui/react": "0.15.20",
+    "electron-updater": "6.8.9",
+    "exceljs": "4.4.0",
+    "lucide-react": "^0.468.0",
+    "mammoth": "1.12.3",
+    "pdf-parse": "1.1.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "44.4.1",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "typescript": "^5.9.0"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
+  },
+  "build": {
+    "appId": "edu.khu.medicalmba.mmllm",
+    "productName": "MM_LLM",
+    "publish": {
+      "provider": "github",
+      "owner": "airkjw",
+      "repo": "MM_LLM",
+      "releaseType": "draft"
+    },
+    "electronUpdaterCompatibility": ">=2.16",
+    "icon": "resources/icon.png",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/pdf-parse/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.education",
+      "target": ["dmg", "zip"],
+      "identity": "JOUNGWOOK KWON (9T5JLVT8G6)",
+      "hardenedRuntime": true,
+      "entitlements": "resources/entitlements.mac.plist",
+      "entitlementsInherit": "resources/entitlements.mac.plist"
+    },
+    "win": {
+      "target": "nsis"
+    }
+  },
+  "optionalDependencies": {
+    "@esbuild/darwin-arm64": "^0.28.2",
+    "@rollup/rollup-darwin-arm64": "^4.63.3"
+  }
+}
