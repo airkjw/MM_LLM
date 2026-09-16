@@ -11,13 +11,14 @@ import {
   RefreshCw, Search, ShieldCheck, Sparkles, Square, Trash2, Video, X
 } from "lucide-react";
 import type {
-  AudioRequest, ChatEvent, ChatRequest, CreditBalance, GatewayModel,
+  AudioRequest, ChatEvent, ChatRequest, CreditBalance, DroppedAttachment, GatewayModel,
   MediaResult, PickedAttachment, PublicMessage, SessionState,
   ThreadSnapshot, ThreadSummary, UpdateState
 } from "../../shared/contracts";
 import { modelLabel, providerLabel } from "./model-names";
 
 type Screen = "chat" | "image" | "audio" | "video";
+const MAX_ATTACHMENT_BYTES = 18 * 1024 * 1024;
 
 const templates = [
   { icon: HeartPulse, title: "병원 경영", detail: "운영 지표와 개선 과제", prompt: "병원의 운영 지표를 바탕으로 경영 현황을 분석하고 개선 과제를 우선순위로 정리해 주세요. 필요한 지표가 있다면 먼저 질문해 주세요." },
@@ -29,6 +30,12 @@ const templates = [
 function errorText(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   return raw.replace(/^Error invoking remote method '[^']+': Error: /, "");
+}
+
+async function readDroppedFiles(files: File[]): Promise<DroppedAttachment[]> {
+  const oversized = files.find((file) => file.size > MAX_ATTACHMENT_BYTES);
+  if (oversized) throw new Error(`${oversized.name}: 파일은 18MB 이하만 첨부할 수 있습니다.`);
+  return Promise.all(files.map(async (file) => ({ name: file.name, bytes: await file.arrayBuffer() })));
 }
 
 function ModelPicker({
@@ -142,8 +149,9 @@ function ChatPanel({
   const [messages, setMessages] = useState<PublicMessage[]>(thread.messages);
   const [pending, setPending] = useState<PickedAttachment[]>([]);
   const [attachmentConsent, setAttachmentConsent] = useState(thread.attachmentConsent);
-  const [privacyDialog, setPrivacyDialog] = useState<"pick" | "history" | null>(null);
+  const [privacyDialog, setPrivacyDialog] = useState<"pick" | "drop" | "history" | null>(null);
   const [privacyBusy, setPrivacyBusy] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
   const stopRef = useRef<(() => void) | null>(null);
@@ -152,6 +160,8 @@ function ChatPanel({
   const consentRef = useRef(attachmentConsent);
   const modelRef = useRef(modelId);
   const messagesRef = useRef(messages);
+  const dragDepthRef = useRef(0);
+  const droppedFilesRef = useRef<File[]>([]);
   pendingRef.current = pending;
   consentRef.current = attachmentConsent;
   modelRef.current = modelId;
@@ -303,6 +313,48 @@ function ChatPanel({
     }
   }
 
+  async function importDroppedFiles(files: File[]) {
+    try {
+      const capacity = 4 - pendingRef.current.length;
+      if (capacity <= 0) throw new Error("파일은 한 번에 최대 4개까지 첨부할 수 있습니다.");
+      if (files.length > capacity) throw new Error(`파일은 한 번에 최대 4개까지 첨부할 수 있습니다. 현재 ${capacity}개를 더 첨부할 수 있습니다.`);
+      const items = await window.mmllm.addDroppedAttachments(
+        await readDroppedFiles(files), ["document", "image"]
+      );
+      setPending((current) => [...current, ...items]);
+      setError("");
+    } catch (error) { setError(errorText(error)); }
+  }
+
+  function handleDragEnter(event: React.DragEvent<HTMLDivElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setDropActive(true);
+  }
+
+  function handleDragLeave(event: React.DragEvent<HTMLDivElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDropActive(false);
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setDropActive(false);
+    const files = Array.from(event.dataTransfer.files);
+    if (!files.length) return;
+    if (isRunning || privacyDialog) { setError("답변 생성이나 확인이 끝난 뒤 파일을 첨부해 주세요."); return; }
+    if (!consentRef.current) {
+      droppedFilesRef.current = files;
+      setPrivacyDialog("drop");
+      return;
+    }
+    void importDroppedFiles(files);
+  }
+
   async function acknowledgePrivacy() {
     if (privacyBusy) return;
     const action = privacyDialog;
@@ -314,12 +366,21 @@ function ChatPanel({
       onRefreshThreads();
       setPrivacyDialog(null);
       if (action === "pick") await pickFile();
+      if (action === "drop") {
+        const files = droppedFilesRef.current;
+        droppedFilesRef.current = [];
+        await importDroppedFiles(files);
+      }
     } catch (error) { setError(errorText(error)); }
     finally { setPrivacyBusy(false); }
   }
 
   return <AssistantRuntimeProvider runtime={runtime}>
-    <div className="chat-panel">
+    <div className="chat-panel" onDragEnter={handleDragEnter} onDragOver={(event) => {
+      if (!event.dataTransfer.types.includes("Files")) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    }} onDragLeave={handleDragLeave} onDrop={handleDrop}>
       <div className="panel-header">
         <div><span className="eyebrow">MEDICAL MBA WORKSPACE</span>
           <h2>{thread.title === "새 대화" ? "새로운 대화" : thread.title}</h2></div>
@@ -341,7 +402,9 @@ function ChatPanel({
           <ThreadPrimitive.ViewportFooter className="chat-footer">
             {error && <div className="inline-error"><CircleHelp size={16} />{error}
               <button onClick={() => setError("")} type="button"><X size={14} /></button></div>}
-            <ComposerPrimitive.Root className="composer-card">
+            <ComposerPrimitive.Root className={dropActive ? "composer-card drop-active" : "composer-card"}>
+              {dropActive && <div className="composer-drop-hint"><Paperclip size={18} />
+                PDF·Word·Excel·이미지를 여기에 놓으세요</div>}
               {pending.length > 0 && <div className="attachment-row">
                 {pending.map((item) => <span className="attachment-chip" key={item.id}>
                   {item.kind === "image" ? <ImageIcon size={14} /> : <FileText size={14} />}
@@ -380,7 +443,10 @@ function ChatPanel({
           <p id="privacy-modal-detail">첨부 자료는 ChatKHU API로 전송됩니다.<br />
             사용은 가능하지만 책임은 본인에게 있습니다.</p>
           <div className="privacy-modal-actions">
-            <button type="button" onClick={() => setPrivacyDialog(null)} disabled={privacyBusy}>취소</button>
+            <button type="button" onClick={() => {
+              droppedFilesRef.current = [];
+              setPrivacyDialog(null);
+            }} disabled={privacyBusy}>취소</button>
             <button type="button" className="privacy-modal-primary"
               onClick={() => void acknowledgePrivacy()} disabled={privacyBusy}>제거했고 계속하기</button>
           </div>
@@ -401,6 +467,7 @@ function MediaPanel({
   const [voice, setVoice] = useState("Aoede");
   const [picked, setPicked] = useState<PickedAttachment[]>([]);
   const [deidentified, setDeidentified] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<MediaResult | null>(null);
@@ -426,6 +493,41 @@ function MediaPanel({
         screen === "video" || (screen === "audio" && audioLane === "stt") ? 1 : 4));
     } catch (error) { setError(errorText(error)); }
   }
+
+  async function importDroppedFiles(files: File[]) {
+    try {
+      const stt = screen === "audio" && audioLane === "stt";
+      const limit = screen === "video" || stt ? 1 : 4;
+      const capacity = stt ? 1 : limit - picked.length;
+      if (files.length > capacity) throw new Error(`이 화면에서는 파일을 최대 ${limit}개까지 첨부할 수 있습니다.`);
+      const kinds = stt ? ["audio"] as const : ["image"] as const;
+      const items = await window.mmllm.addDroppedAttachments(await readDroppedFiles(files), [...kinds]);
+      setPicked((current) => stt ? items.slice(0, 1) : [...current, ...items].slice(0, limit));
+      setError("");
+    } catch (error) { setError(errorText(error)); }
+  }
+
+  function handleMediaDrop(event: React.DragEvent<HTMLElement>) {
+    event.preventDefault();
+    setDropActive(false);
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length) void importDroppedFiles(files);
+  }
+
+  const mediaDropProps = {
+    onDragEnter: (event: React.DragEvent<HTMLElement>) => {
+      if (!event.dataTransfer.types.includes("Files")) return;
+      event.preventDefault(); setDropActive(true);
+    },
+    onDragOver: (event: React.DragEvent<HTMLElement>) => {
+      if (!event.dataTransfer.types.includes("Files")) return;
+      event.preventDefault(); event.dataTransfer.dropEffect = "copy";
+    },
+    onDragLeave: (event: React.DragEvent<HTMLElement>) => {
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropActive(false);
+    },
+    onDrop: handleMediaDrop
+  };
 
   async function submit() {
     if (!deidentified) { setError("환자 식별정보를 제거했는지 확인해 주세요."); return; }
@@ -504,9 +606,10 @@ function MediaPanel({
           <label className="field-label">{screen === "audio" && audioLane === "stt" ? "오디오 파일" :
             screen === "audio" && audioLane === "tts" ? "읽을 텍스트" : "프롬프트"}</label>
           {screen === "audio" && audioLane === "stt"
-            ? <button className="file-drop" type="button" onClick={pick}>
+            ? <button className={dropActive ? "file-drop drop-active" : "file-drop"} type="button" onClick={pick}
+                {...mediaDropProps}>
               <Paperclip size={22} /><strong>{picked[0]?.name || "녹음 파일 선택"}</strong>
-              <small>MP3, M4A, WAV, FLAC, OGG, AIFF · 18MB 이하</small>
+              <small>파일을 놓거나 선택 · MP3, M4A, WAV, FLAC, OGG, AIFF · 18MB 이하</small>
             </button>
             : <textarea className="media-textarea" value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
@@ -519,8 +622,9 @@ function MediaPanel({
                 <option value="16:9">16:9 가로</option><option value="1:1">1:1 정사각형</option>
                 <option value="9:16">9:16 세로</option><option value="4:3">4:3</option>
               </select></label></div>
-            <button className="reference-button" type="button" onClick={pick}>
-              <Plus size={16} />{picked.length ? `참고 이미지 ${picked.length}개` : "참고 이미지 추가"}
+            <button className={dropActive ? "reference-button drop-active" : "reference-button"}
+              type="button" onClick={pick} {...mediaDropProps}>
+              <Plus size={16} />{picked.length ? `참고 이미지 ${picked.length}개` : "참고 이미지를 놓거나 선택"}
             </button>
             {picked.length > 0 && <div className="attachment-row">
               {picked.map((item) => <span className="attachment-chip" key={item.id}>
@@ -635,6 +739,18 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [error, setError] = useState("");
   const [updateState, setUpdateState] = useState<UpdateState | null>(null);
+
+  useEffect(() => {
+    const preventFileNavigation = (event: DragEvent) => {
+      if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+    };
+    window.addEventListener("dragover", preventFileNavigation);
+    window.addEventListener("drop", preventFileNavigation);
+    return () => {
+      window.removeEventListener("dragover", preventFileNavigation);
+      window.removeEventListener("drop", preventFileNavigation);
+    };
+  }, []);
 
   const llmModels = useMemo(() => session?.models.filter((model) => model.type === "llm") ?? [], [session]);
   const defaultModel = useCallback((items: GatewayModel[]) =>

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
-  AudioRequest, ChatEvent, ChatRequest, DesktopApi, ImageRequest,
+  AudioRequest, ChatEvent, ChatRequest, DesktopApi, DroppedAttachment, ImageRequest,
   PickedAttachment, VideoRequest
 } from "../shared/contracts";
 
@@ -16,6 +16,8 @@ const desktopApi: DesktopApi = {
   deleteThread: (id) => ipcRenderer.invoke("threads:delete", id),
   pickAttachment: (kinds: Array<PickedAttachment["kind"]>) =>
     ipcRenderer.invoke("attachments:pick", kinds),
+  addDroppedAttachments: (files: DroppedAttachment[], kinds: Array<PickedAttachment["kind"]>) =>
+    ipcRenderer.invoke("attachments:add-dropped", files, kinds),
   acknowledgeAttachmentPrivacy: (threadId) => ipcRenderer.invoke("attachments:acknowledge", threadId),
   streamChat(request: ChatRequest, onEvent: (event: ChatEvent) => void) {
     const { port1, port2 } = new MessageChannel();

@@ -42,6 +42,11 @@ export type PickedAttachment = {
   size: number;
 };
 
+export type DroppedAttachment = {
+  name: string;
+  bytes: ArrayBuffer;
+};
+
 export type SessionState = {
   authenticated: boolean;
   models: GatewayModel[];
@@ -111,6 +116,10 @@ export type DesktopApi = {
   loadThread(id: string): Promise<ThreadSnapshot>;
   deleteThread(id: string): Promise<void>;
   pickAttachment(kinds: Array<"document" | "image" | "audio">): Promise<PickedAttachment | null>;
+  addDroppedAttachments(
+    files: DroppedAttachment[],
+    kinds: Array<"document" | "image" | "audio">
+  ): Promise<PickedAttachment[]>;
   acknowledgeAttachmentPrivacy(threadId: string): Promise<ThreadSnapshot>;
   streamChat(request: ChatRequest, onEvent: (event: ChatEvent) => void): () => void;
   generateImage(request: ImageRequest): Promise<MediaResult>;

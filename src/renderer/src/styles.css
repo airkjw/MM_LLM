@@ -197,6 +197,12 @@ a { color: inherit; }
 .composer-card { display: flex; flex-direction: column; border: 1px solid #e8e0e9; border-radius: 20px;
   background: #fff; box-shadow: 0 10px 30px #887a9319; padding: 10px 10px 9px; }
 .composer-card:focus-within { border-color: #cbb8d5; box-shadow: 0 10px 30px #887a9319, 0 0 0 3px #bca6ca17; }
+.composer-card.drop-active { border-color: #a98fbb; background: #fbf6fd;
+  box-shadow: 0 10px 30px #887a9319, 0 0 0 4px #bca6ca24; }
+.composer-drop-hint { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 67px;
+  margin: 1px 2px 5px; border: 1px dashed #bfa8cc; border-radius: 13px; color: #886c99;
+  background: #f7effa; font-size: 12px; font-weight: 700; }
+.composer-card.drop-active .composer-input { display: none; }
 .composer-input { width: 100%; min-height: 67px; max-height: 170px; border: none; outline: none;
   resize: none; background: transparent; padding: 8px 10px; color: #48444e; font-size: 13px; line-height: 1.6; }
 .composer-input::placeholder { color: #aaa2ad; }
@@ -268,6 +274,8 @@ a { color: inherit; }
   height: 35px; padding: 0 10px; color: #776c7b; outline: none; }
 .reference-button { display: inline-flex; align-items: center; gap: 6px; border: 1px dashed #d4c5d9; border-radius: 10px;
   background: #fbf7fc; color: #987ea7; padding: 9px 11px; margin: 16px 0 0; font-size: 11px; }
+.reference-button.drop-active, .file-drop.drop-active { border-color: #9e7db2; color: #7f6092;
+  background: #f4eaf8; box-shadow: 0 0 0 3px #bca6ca1f; }
 .media-form .attachment-row { margin-top: 10px; }
 .media-confirm { border-top: 1px solid #f0eaef; padding-top: 16px; margin-top: 20px; }
 .media-submit { width: 100%; margin-top: 15px; }

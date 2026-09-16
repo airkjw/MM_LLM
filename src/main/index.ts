@@ -17,7 +17,7 @@ import {
   isAllowedMedia, listModels, pollVideo, runAudio, setGatewayKey, streamChat
 } from "./gateway";
 import {
-  contentForChat, discardAttachments, getAttachment, imageDataUrls, pickAttachment
+  addDroppedAttachments, contentForChat, discardAttachments, getAttachment, imageDataUrls, pickAttachment
 } from "./attachments";
 import { checkForUpdates, currentUpdateState, installUpdate, startUpdates } from "./updates";
 
@@ -179,6 +179,32 @@ function registerHandlers(): void {
       throw new Error("첨부 종류가 올바르지 않습니다.");
     }
     return pickAttachment(window, value);
+  });
+  ipcMain.handle("attachments:add-dropped", async (event, rawFiles: unknown, rawKinds: unknown): Promise<PickedAttachment[]> => {
+    trustedInvoke(event);
+    if (!Array.isArray(rawKinds) || !rawKinds.length ||
+      !rawKinds.every((kind) => ["document", "image", "audio"].includes(kind))) {
+      throw new Error("첨부 종류가 올바르지 않습니다.");
+    }
+    if (!Array.isArray(rawFiles) || !rawFiles.length || rawFiles.length > 4) {
+      throw new Error("한 번에 파일을 1개에서 4개까지 첨부할 수 있습니다.");
+    }
+    const files = rawFiles.map((file) => {
+      if (!isRecord(file) || typeof file.name !== "string" || file.name.length > 255) {
+        throw new Error("첨부 파일 정보가 올바르지 않습니다.");
+      }
+      const bytes = file.bytes;
+      if (!(bytes instanceof ArrayBuffer) && !ArrayBuffer.isView(bytes)) {
+        throw new Error("첨부 파일을 읽을 수 없습니다.");
+      }
+      return {
+        name: file.name,
+        bytes: bytes instanceof ArrayBuffer
+          ? new Uint8Array(bytes)
+          : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+      };
+    });
+    return addDroppedAttachments(files, rawKinds);
   });
   ipcMain.handle("media:image", async (event, value: unknown) => {
     trustedInvoke(event);

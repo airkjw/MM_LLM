@@ -6,6 +6,7 @@ import type { PickedAttachment } from "../shared/contracts";
 import { extractDocx, extractPdf, extractXlsx } from "./document-text";
 
 type Attachment = PickedAttachment & { bytes: Buffer; mime: string };
+type AttachmentKind = PickedAttachment["kind"];
 const attachments = new Map<string, Attachment>();
 const MAX_FILE_BYTES = 18 * 1024 * 1024;
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".webp"]);
@@ -29,9 +30,43 @@ function mimeFor(extension: string): string {
   } as Record<string, string>)[extension] ?? "application/octet-stream";
 }
 
+function attachmentKind(name: string): AttachmentKind | null {
+  const extension = extname(name).toLowerCase();
+  return IMAGE_EXT.has(extension) ? "image" :
+    DOC_EXT.has(extension) ? "document" :
+      AUDIO_EXT.has(extension) ? "audio" : null;
+}
+
+function prepareAttachment(name: string, bytes: Buffer, kinds: AttachmentKind[]): Attachment {
+  const safeName = basename(name);
+  const kind = attachmentKind(safeName);
+  if (!safeName || safeName.length > 255 || !kind || !kinds.includes(kind)) {
+    throw new Error(`${safeName || "파일"}: 지원하지 않는 파일 형식입니다.`);
+  }
+  if (bytes.length > MAX_FILE_BYTES) throw new Error(`${safeName}: 파일은 18MB 이하만 첨부할 수 있습니다.`);
+  return {
+    id: randomUUID(),
+    name: safeName,
+    kind,
+    size: bytes.length,
+    mime: mimeFor(extname(safeName).toLowerCase()),
+    bytes
+  };
+}
+
+function storeAttachment(selected: Attachment): PickedAttachment {
+  if (attachments.size >= 20) {
+    const oldest = attachments.keys().next().value;
+    if (oldest) attachments.delete(oldest);
+  }
+  attachments.set(selected.id, selected);
+  const { bytes: _bytes, mime: _mime, ...publicAttachment } = selected;
+  return publicAttachment;
+}
+
 export async function pickAttachment(
   window: BrowserWindow,
-  kinds: Array<"document" | "image" | "audio">
+  kinds: AttachmentKind[]
 ): Promise<PickedAttachment | null> {
   const extensions = [
     ...(kinds.includes("document") ? ["pdf", "docx", "xlsx"] : []),
@@ -44,28 +79,17 @@ export async function pickAttachment(
   });
   if (result.canceled || !result.filePaths[0]) return null;
   const path = result.filePaths[0];
-  const extension = extname(path).toLowerCase();
-  const kind = IMAGE_EXT.has(extension) ? "image" :
-    DOC_EXT.has(extension) ? "document" :
-      AUDIO_EXT.has(extension) ? "audio" : null;
-  if (!kind || !kinds.includes(kind)) throw new Error("지원하지 않는 파일 형식입니다.");
   const bytes = await readFile(path);
-  if (bytes.length > MAX_FILE_BYTES) throw new Error("파일은 18MB 이하만 첨부할 수 있습니다.");
-  const selected: Attachment = {
-    id: randomUUID(),
-    name: basename(path),
-    kind,
-    size: bytes.length,
-    mime: mimeFor(extension),
-    bytes
-  };
-  if (attachments.size >= 20) {
-    const oldest = attachments.keys().next().value;
-    if (oldest) attachments.delete(oldest);
-  }
-  attachments.set(selected.id, selected);
-  const { bytes: _bytes, mime: _mime, ...publicAttachment } = selected;
-  return publicAttachment;
+  return storeAttachment(prepareAttachment(basename(path), bytes, kinds));
+}
+
+export function addDroppedAttachments(
+  files: Array<{ name: string; bytes: Uint8Array }>,
+  kinds: AttachmentKind[]
+): PickedAttachment[] {
+  if (!files.length || files.length > 4) throw new Error("한 번에 파일을 1개에서 4개까지 첨부할 수 있습니다.");
+  const prepared = files.map((file) => prepareAttachment(file.name, Buffer.from(file.bytes), kinds));
+  return prepared.map(storeAttachment);
 }
 
 export function getAttachment(id: string): Attachment {
