@@ -165,6 +165,13 @@ function registerHandlers(): void {
     trustedInvoke(event);
     await removeThread(shortString(id, 100, "대화"));
   });
+  ipcMain.handle("attachments:acknowledge", async (event, rawThreadId: unknown) => {
+    trustedInvoke(event);
+    const threadId = shortString(rawThreadId, 100, "대화");
+    const thread = await getThread(threadId);
+    if (thread.attachmentConsent) return snapshot(thread);
+    return updateThread(threadId, (item) => { item.attachmentConsent = true; });
+  });
   ipcMain.handle("attachments:pick", async (event, value: unknown): Promise<PickedAttachment | null> => {
     const window = trustedInvoke(event);
     if (!Array.isArray(value) || !value.length ||
@@ -284,13 +291,15 @@ function registerHandlers(): void {
             ? existing.messages.findIndex((item) => item.id === afterId && item.role === "user")
             : existing.messages.findLastIndex((item) => item.role === "user");
           if (regenerateIndex < 0) throw new Error("다시 생성할 메시지가 없습니다.");
-          if (hasAttachedContent(existing.messages.slice(0, regenerateIndex + 1))) {
-            confirmed(rawRequest.deidentifiedConfirmed);
+          if (hasAttachedContent(existing.messages.slice(0, regenerateIndex + 1)) &&
+            !existing.attachmentConsent) {
+            throw new Error("첨부 자료 전송 확인을 먼저 완료해 주세요.");
           }
         } else {
           const existing = await getThread(threadId);
-          if (attachmentIds.length || hasAttachedContent(existing.messages)) {
-            confirmed(rawRequest.deidentifiedConfirmed);
+          if ((attachmentIds.length || hasAttachedContent(existing.messages)) &&
+            !existing.attachmentConsent) {
+            throw new Error("첨부 자료 전송 확인을 먼저 완료해 주세요.");
           }
           const prepared = await contentForChat(prompt, attachmentIds);
           const at = new Date().toISOString();

@@ -101,6 +101,7 @@ export function summary(thread: InternalThread): ThreadSummary {
 export function snapshot(thread: InternalThread): ThreadSnapshot {
   return {
     ...summary(thread),
+    attachmentConsent: Boolean(thread.attachmentConsent),
     messages: thread.messages.map(({ apiContent: _hidden, ...message }) => message)
   };
 }
@@ -115,6 +116,7 @@ export async function createThread(modelId: string): Promise<ThreadSnapshot> {
       modelId,
       createdAt: now,
       updatedAt: now,
+      attachmentConsent: false,
       messages: []
     };
     db.threads.unshift(thread);

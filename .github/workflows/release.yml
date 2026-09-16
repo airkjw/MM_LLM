@@ -41,6 +41,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Verify signed and notarized apps
+        run: |
+          codesign --verify --deep --strict release/mac/MM_LLM.app
+          codesign --verify --deep --strict release/mac-arm64/MM_LLM.app
+          xcrun stapler validate release/mac/MM_LLM.app
+          xcrun stapler validate release/mac-arm64/MM_LLM.app
       - uses: actions/upload-artifact@v4
         with:
           name: mac-release
@@ -89,6 +95,9 @@ jobs:
           test "$GITHUB_REF_NAME" = "v$version"
           test -f release/latest-mac.yml
           test -f release/latest.yml
+          test -f "release/MM_LLM-$version-x64-Setup.exe"
+          test -f "release/MM_LLM-$version-mac.zip"
+          test -f "release/MM_LLM-$version-arm64-mac.zip"
           gh release create "$GITHUB_REF_NAME" \
             release/*.dmg release/*.zip release/*.exe release/latest*.yml release/*.blockmap \
             --verify-tag --title "MM_LLM $version" --generate-notes

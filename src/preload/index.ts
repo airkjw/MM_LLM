@@ -16,6 +16,7 @@ const desktopApi: DesktopApi = {
   deleteThread: (id) => ipcRenderer.invoke("threads:delete", id),
   pickAttachment: (kinds: Array<PickedAttachment["kind"]>) =>
     ipcRenderer.invoke("attachments:pick", kinds),
+  acknowledgeAttachmentPrivacy: (threadId) => ipcRenderer.invoke("attachments:acknowledge", threadId),
   streamChat(request: ChatRequest, onEvent: (event: ChatEvent) => void) {
     const { port1, port2 } = new MessageChannel();
     let stopped = false;

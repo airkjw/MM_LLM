@@ -131,31 +131,34 @@ function AssistantMessage() {
 }
 
 function ChatPanel({
-  thread, modelId, models, onModelChange, onThreadUpdated, onRefreshThreads
+  thread, modelId, models, onModelChange, onThreadUpdated, onRefreshThreads, onUsageChanged
 }: {
   thread: ThreadSnapshot; modelId: string; models: GatewayModel[];
   onModelChange: (id: string) => void;
   onThreadUpdated: (snapshot: ThreadSnapshot) => void;
   onRefreshThreads: () => void;
+  onUsageChanged: () => void;
 }) {
   const [messages, setMessages] = useState<PublicMessage[]>(thread.messages);
   const [pending, setPending] = useState<PickedAttachment[]>([]);
-  const [deidentified, setDeidentified] = useState(false);
+  const [attachmentConsent, setAttachmentConsent] = useState(thread.attachmentConsent);
+  const [privacyDialog, setPrivacyDialog] = useState<"pick" | "history" | null>(null);
+  const [privacyBusy, setPrivacyBusy] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
   const stopRef = useRef<(() => void) | null>(null);
   const settleRef = useRef<(() => void) | null>(null);
   const pendingRef = useRef(pending);
-  const confirmedRef = useRef(deidentified);
+  const consentRef = useRef(attachmentConsent);
   const modelRef = useRef(modelId);
   const messagesRef = useRef(messages);
   pendingRef.current = pending;
-  confirmedRef.current = deidentified;
+  consentRef.current = attachmentConsent;
   modelRef.current = modelId;
   messagesRef.current = messages;
 
   const hasAttachedHistory = messages.some((message) => Boolean(message.attachments?.length));
-  const needsConfirmation = pending.length > 0 || hasAttachedHistory;
+  const needsConsent = pending.length > 0 || hasAttachedHistory;
 
   useEffect(() => { setMessages(thread.messages); setPending([]); setError(""); }, [thread.id]);
 
@@ -169,15 +172,14 @@ function ChatPanel({
       : startingMessages.length - 1;
     const attachedInContext = startingMessages.slice(0, after + 1)
       .some((item) => Boolean(item.attachments?.length));
-    if ((attachments.length > 0 || attachedInContext) && !confirmedRef.current) {
-      throw new Error("첨부 자료의 환자 식별정보를 제거했는지 확인해 주세요.");
+    if ((attachments.length > 0 || attachedInContext) && !consentRef.current) {
+      throw new Error("첨부 자료 전송 확인을 먼저 완료해 주세요.");
     }
     const request: ChatRequest = {
       threadId: thread.id,
       modelId: modelRef.current,
       text,
       attachmentIds: attachments.map((item) => item.id),
-      deidentifiedConfirmed: confirmedRef.current,
       regenerate,
       regenerateAfterId
     };
@@ -202,7 +204,6 @@ function ChatPanel({
     setIsRunning(true);
     setError("");
     setPending([]);
-    setDeidentified(false);
     await new Promise<void>((resolve) => {
       settleRef.current = resolve;
       stopRef.current = window.mmllm.streamChat(request, (event: ChatEvent) => {
@@ -214,6 +215,7 @@ function ChatPanel({
           setMessages(event.snapshot.messages);
           onThreadUpdated(event.snapshot);
           onRefreshThreads();
+          onUsageChanged();
           setIsRunning(false);
           stopRef.current = null;
           settleRef.current = null;
@@ -230,6 +232,7 @@ function ChatPanel({
             }).catch(() => setMessages(startingMessages));
           }
           setError(event.message);
+          onUsageChanged();
           setIsRunning(false);
           stopRef.current = null;
           settleRef.current = null;
@@ -237,12 +240,13 @@ function ChatPanel({
         }
       });
     });
-  }, [thread.id, onThreadUpdated, onRefreshThreads]);
+  }, [thread.id, onThreadUpdated, onRefreshThreads, onUsageChanged]);
 
   const onNew = useCallback(async (message: { content: readonly { type: string; text?: string }[] }) => {
     const text = message.content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n").trim();
     if (!text) return;
-    await run(text);
+    try { await run(text); }
+    catch (error) { setError(errorText(error)); }
   }, [run]);
 
   const onReload = useCallback(async (parentId: string | null) => {
@@ -282,16 +286,36 @@ function ChatPanel({
 
   const runtime = useExternalStoreRuntime({
     messages, isRunning, onNew, onReload, onCancel, convertMessage,
-    isSendDisabled: (needsConfirmation && !deidentified) || isRunning || !modelId
+    isSendDisabled: Boolean(privacyDialog) || (needsConsent && !attachmentConsent) || isRunning || !modelId
   });
 
   async function addAttachment() {
+    if (!attachmentConsent) { setPrivacyDialog("pick"); return; }
+    await pickFile();
+  }
+
+  async function pickFile() {
     try {
       const item = await window.mmllm.pickAttachment(["document", "image"]);
       if (item) setPending((items) => [...items, item].slice(0, 4));
     } catch (error) {
       setError(errorText(error));
     }
+  }
+
+  async function acknowledgePrivacy() {
+    if (privacyBusy) return;
+    const action = privacyDialog;
+    setPrivacyBusy(true);
+    try {
+      const updated = await window.mmllm.acknowledgeAttachmentPrivacy(thread.id);
+      setAttachmentConsent(true);
+      onThreadUpdated(updated);
+      onRefreshThreads();
+      setPrivacyDialog(null);
+      if (action === "pick") await pickFile();
+    } catch (error) { setError(errorText(error)); }
+    finally { setPrivacyBusy(false); }
   }
 
   return <AssistantRuntimeProvider runtime={runtime}>
@@ -329,7 +353,7 @@ function ChatPanel({
                 className="composer-input" rows={2} addAttachmentOnPaste={false} />
               <div className="composer-bottom">
                 <button type="button" className="attach-button" onClick={addAttachment}
-                  disabled={isRunning} title="PDF·Word·Excel·이미지 첨부">
+                  disabled={isRunning || Boolean(privacyDialog)} title="PDF·Word·Excel·이미지 첨부">
                   <Paperclip size={17} /><span>파일 첨부</span>
                 </button>
                 <span className="composer-hint">Enter 전송 · Shift+Enter 줄바꿈</span>
@@ -338,20 +362,38 @@ function ChatPanel({
                   : <ComposerPrimitive.Send className="send-button" title="전송"><ArrowUp size={19} /></ComposerPrimitive.Send>}
               </div>
             </ComposerPrimitive.Root>
-            <div className="chat-checkline">{needsConfirmation
-              ? <DeidCheck checked={deidentified} onChange={setDeidentified} />
-              : <span>환자 식별정보는 입력 전에 제거해 주세요</span>}
+            <div className="chat-checkline">{needsConsent && !attachmentConsent
+              ? <button type="button" className="privacy-confirm-link"
+                  onClick={() => setPrivacyDialog("history")}>첨부 자료 전송 확인</button>
+              : <span>{needsConsent
+                ? "이 대화의 첨부 자료는 API로 다시 전송될 수 있습니다"
+                : "환자 식별정보는 입력 전에 제거해 주세요"}</span>}
               <span>대화 기록은 기기 안에 저장됩니다</span></div>
           </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>
+      {privacyDialog && <div className="privacy-modal-backdrop" role="presentation">
+        <div className="privacy-modal" role="dialog" aria-modal="true"
+          aria-labelledby="privacy-modal-title" aria-describedby="privacy-modal-detail">
+          <div className="privacy-modal-icon"><ShieldCheck size={23} /></div>
+          <h3 id="privacy-modal-title">환자 식별정보나 개인정보를 제거하셨습니까?</h3>
+          <p id="privacy-modal-detail">첨부 자료는 ChatKHU API로 전송됩니다.<br />
+            사용은 가능하지만 책임은 본인에게 있습니다.</p>
+          <div className="privacy-modal-actions">
+            <button type="button" onClick={() => setPrivacyDialog(null)} disabled={privacyBusy}>취소</button>
+            <button type="button" className="privacy-modal-primary"
+              onClick={() => void acknowledgePrivacy()} disabled={privacyBusy}>제거했고 계속하기</button>
+          </div>
+          <small>이 대화에서는 한 번만 확인합니다</small>
+        </div>
+      </div>}
     </div>
   </AssistantRuntimeProvider>;
 }
 
 function MediaPanel({
-  screen, models
-}: { screen: Exclude<Screen, "chat">; models: GatewayModel[] }) {
+  screen, models, onUsageChanged
+}: { screen: Exclude<Screen, "chat">; models: GatewayModel[]; onUsageChanged: () => void }) {
   const [audioLane, setAudioLane] = useState<"tts" | "stt" | "music">("tts");
   const [modelId, setModelId] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -410,6 +452,7 @@ function MediaPanel({
         next = await window.mmllm.runAudio(request);
       }
       setResult(next); setDeidentified(false);
+      onUsageChanged();
     } catch (error) { setError(errorText(error)); }
     finally { setBusy(false); }
   }
@@ -603,6 +646,15 @@ export default function App() {
     catch (error) { setError(errorText(error)); }
   }, []);
 
+  const refreshCredits = useCallback(async (showError = false) => {
+    try {
+      const credits = await window.mmllm.getCredits();
+      setSession((state) => state ? { ...state, credits } : state);
+    } catch (error) {
+      if (showError) setError(errorText(error));
+    }
+  }, []);
+
   const setupWorkspace = useCallback(async (state: SessionState) => {
     setSession(state);
     if (!state.authenticated || !state.models.some((item) => item.type === "llm")) return;
@@ -639,6 +691,12 @@ export default function App() {
     });
     return () => { mounted = false; unsubscribe(); };
   }, []);
+
+  useEffect(() => {
+    if (!session?.authenticated) return;
+    const timer = window.setInterval(() => { void refreshCredits(); }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [session?.authenticated, refreshCredits]);
 
   async function newThread() {
     if (!modelId) return;
@@ -686,13 +744,6 @@ export default function App() {
     } catch (error) { setError(errorText(error)); }
   }
 
-  async function refreshCredits() {
-    try {
-      const credits = await window.mmllm.getCredits();
-      setSession((state) => state ? { ...state, credits } : state);
-    } catch (error) { setError(errorText(error)); }
-  }
-
   if (loading) return <div className="startup"><LoaderCircle className="spin" size={30} /><span>MM_LLM을 준비하고 있어요...</span></div>;
   if (!session?.authenticated) return <Login onLogin={(state) =>
     void setupWorkspace(state).catch((error) => setError(errorText(error)))} />;
@@ -734,7 +785,8 @@ export default function App() {
         <div className="credit-card">
           <span><span className="credit-indicator" />남은 크레딧</span>
           <strong>{typeof credits === "number" ? credits.toLocaleString("ko-KR", { maximumFractionDigits: 1 }) : "조회 필요"}</strong>
-          <button type="button" onClick={refreshCredits} title="크레딧 새로고침"><RefreshCw size={14} /></button>
+          <button type="button" onClick={() => void refreshCredits(true)}
+            title="크레딧 자동 갱신 · 지금 새로고침"><RefreshCw size={14} /></button>
         </div>
         <div className="sidebar-bottom">
           <button type="button" onClick={refreshModels}><RefreshCw size={16} /> 모델 목록 새로고침</button>
@@ -767,8 +819,10 @@ export default function App() {
       {screen === "chat" && thread && llmModels.length > 0
         ? <ChatPanel key={thread.id} thread={thread} modelId={modelId}
           models={llmModels} onModelChange={setModelId}
-          onThreadUpdated={setThread} onRefreshThreads={() => void refreshThreads()} />
-        : screen !== "chat" && <MediaPanel screen={screen} models={session.models} />}
+          onThreadUpdated={setThread} onRefreshThreads={() => void refreshThreads()}
+          onUsageChanged={() => void refreshCredits()} />
+        : screen !== "chat" && <MediaPanel screen={screen} models={session.models}
+          onUsageChanged={() => void refreshCredits()} />}
       {screen === "chat" && (!thread || !llmModels.length) && <div className="no-models">
         <LoaderCircle size={27} /><h2>모델 목록을 기다리고 있어요</h2>
         <p>네트워크를 확인한 뒤 다시 시도해 주세요.</p>

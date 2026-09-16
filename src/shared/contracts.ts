@@ -33,7 +33,7 @@ export type ThreadSummary = {
   messageCount: number;
 };
 
-export type ThreadSnapshot = ThreadSummary & { messages: PublicMessage[] };
+export type ThreadSnapshot = ThreadSummary & { messages: PublicMessage[]; attachmentConsent: boolean };
 
 export type PickedAttachment = {
   id: string;
@@ -53,7 +53,6 @@ export type ChatRequest = {
   modelId: string;
   text: string;
   attachmentIds: string[];
-  deidentifiedConfirmed: boolean;
   regenerate?: boolean;
   regenerateAfterId?: string;
 };
@@ -112,6 +111,7 @@ export type DesktopApi = {
   loadThread(id: string): Promise<ThreadSnapshot>;
   deleteThread(id: string): Promise<void>;
   pickAttachment(kinds: Array<"document" | "image" | "audio">): Promise<PickedAttachment | null>;
+  acknowledgeAttachmentPrivacy(threadId: string): Promise<ThreadSnapshot>;
   streamChat(request: ChatRequest, onEvent: (event: ChatEvent) => void): () => void;
   generateImage(request: ImageRequest): Promise<MediaResult>;
   generateVideo(request: VideoRequest): Promise<MediaResult>;
