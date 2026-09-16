@@ -4,7 +4,7 @@
 
 ## 주요 기능
 
-- ChatKHU Gateway가 제공하는 36개 채팅 모델과 추가 모델을 실시간으로 불러와 선택
+- ChatKHU Gateway가 현재 계정에 허용한 채팅·미디어 모델을 실시간으로 불러와 선택
 - Gemini·Sonar의 직접 웹 검색과 그 밖의 모델을 위한 Sonar 검색 연동
 - 이미지 생성, 음성 합성·받아쓰기·음악, 비디오 생성
 - PDF·DOCX·XLSX·이미지 첨부와 문서 내용 기반 대화
@@ -61,4 +61,4 @@ npm run build
 
 ## API
 
-MM_LLM은 [ChatKHU Gateway API](https://docs.mindlogic.ai/docs/khu/api-gateway/getting-started/introduction)를 사용합니다. 앱에서 입력한 API 키는 소스 코드나 GitHub로 전송·저장하지 않습니다.
+MM_LLM은 [ChatKHU Gateway API](https://docs.mindlogic.ai/docs/khu/api-gateway/getting-started/authentication)를 사용합니다. 앱에서 입력한 API 키는 소스 코드나 GitHub로 전송·저장하지 않습니다.

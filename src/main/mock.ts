@@ -24,12 +24,13 @@ function owner(id: string): string {
 }
 
 export const mockModels: GatewayModel[] = [
-  ...llmIds.map((id): GatewayModel => ({ id, type: "llm", owned_by: owner(id) })),
-  { id: "gemini-3.1-flash-image-preview", type: "image", owned_by: "gemini" },
+  ...llmIds.map((id, index): GatewayModel => ({ id, type: "llm", owned_by: owner(id),
+    created: 1_780_000_000 + index })),
+  { id: "gemini-3.1-flash-image-preview", type: "image", owned_by: "gemini", created: 1_780_000_100 },
+  { id: "gpt-image-2", type: "image", owned_by: "openai", created: 1_780_000_200 },
   { id: "gemini-3.1-flash-tts-preview", type: "audio", owned_by: "gemini", audio_client: "google" },
   { id: "stt-async-v5", type: "audio", owned_by: "soniox", audio_client: "soniox" },
   { id: "lyria-3-clip-preview", type: "audio", owned_by: "google", audio_client: "google_lyria3" },
+  { id: "elevenlabs-music", type: "audio", owned_by: "elevenlabs", audio_client: "elevenlabs" },
   { id: "veo-3.1-fast-generate-preview", type: "video", owned_by: "google" }
 ];
-
-if (llmIds.length !== 36) throw new Error("Mock LLM catalog must match the 36 supplied models.");
