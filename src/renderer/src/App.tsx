@@ -9,11 +9,11 @@ import {
 import {
   ArrowRight, ArrowUp, BookOpen, Bot, Check, ChevronDown, CircleHelp, Columns3, Copy,
   Download, Edit3, FileText, Globe2, HeartPulse, Image as ImageIcon, LoaderCircle,
-  FolderOpen, LogOut, Menu, MessageCircle, Mic2, Music2, Paperclip, Pin, PinOff, Plus,
+  FolderOpen, MessageCircle, Mic2, Music2, Paperclip, Plus,
   RefreshCw, Search, Settings, ShieldCheck, Sparkles, Square, Trash2, Video, X
 } from "lucide-react";
 import type {
-  AppSettings, AudioRequest, ChatAdvancedSettings, ChatEvent, ChatRequest, CreditBalance,
+  AppSettings, AudioRequest, ChatAdvancedSettings, ChatEvent, ChatRequest,
   ChatbotBookmark, ChatbotUsageReport, CompareEvent, CompareRun, DroppedAttachment, GatewayModel, MediaResult, PendingMediaJob,
   PickedAttachment, ProjectSummary, PublicMessage, ReasoningMode, SessionState, ThreadSearchResult,
   ThreadSnapshot, ThreadSummary, UpdateState, WebSearchMode
@@ -39,8 +39,10 @@ import {
   claudeAllowsSampling, claudeDefaultThinkingMode, claudeForbidsForcedToolChoice, claudeThinkingCapabilities,
   isClaudeModel, isGeminiModel, isOpenAiModel
 } from "../../shared/advanced-chat";
+import { Sidebar, type SidebarScreen } from "./components/Sidebar";
 
-type Screen = "chat" | "image" | "audio" | "video";
+type Screen = SidebarScreen;
+type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
 const AUDIO_LANES = ["tts", "stt", "music"] as const;
 
 const templates = [
@@ -55,32 +57,6 @@ function errorText(error: unknown): string {
   return raw.replace(/^Error invoking remote method '[^']+': Error: /, "");
 }
 
-function formatCredit(value: number | undefined): string {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value.toLocaleString("ko-KR", { maximumFractionDigits: 1 }) : "-";
-}
-
-function CreditMeter({
-  label, bucket
-}: {
-  label: string;
-  bucket: CreditBalance["total"] | CreditBalance["monthly_allocated"] | CreditBalance["purchased"];
-}) {
-  const derivedQuota = typeof bucket?.quota === "number" ? bucket.quota
-    : typeof bucket?.used === "number" && typeof bucket?.remaining === "number"
-      ? bucket.used + bucket.remaining : undefined;
-  const max = derivedQuota && derivedQuota > 0 ? derivedQuota : 1;
-  const remaining = typeof bucket?.remaining === "number"
-    ? Math.max(0, Math.min(max, bucket.remaining)) : 0;
-  return <div className="credit-meter">
-    <span><b>{label}</b><strong>{formatCredit(bucket?.remaining)}</strong></span>
-    <progress aria-label={`${label} 남은 크레딧`} max={max} value={remaining} />
-    <small>{typeof derivedQuota === "number"
-      ? `사용 ${formatCredit(bucket?.used)} / 총 ${formatCredit(derivedQuota)}`
-      : "API에서 잔액 정보를 확인합니다."}</small>
-  </div>;
-}
-
 async function readDroppedFiles(files: File[]): Promise<DroppedAttachment[]> {
   assertDroppedFileBatch(files);
   const output: DroppedAttachment[] = [];
@@ -89,33 +65,73 @@ async function readDroppedFiles(files: File[]): Promise<DroppedAttachment[]> {
   return output;
 }
 
-function useDialogFocus(active: boolean, onClose: () => void, canClose = true) {
-  const ref = useRef<HTMLDivElement>(null);
+function useDialogFocus<T extends HTMLElement = HTMLDivElement>(
+  active: boolean,
+  onClose: () => void,
+  canClose = true,
+  restoreFallback?: () => HTMLElement | null
+) {
+  const ref = useRef<T>(null);
+  const onCloseRef = useRef(onClose);
+  const canCloseRef = useRef(canClose);
+  const restoreFallbackRef = useRef(restoreFallback);
+  onCloseRef.current = onClose;
+  canCloseRef.current = canClose;
+  restoreFallbackRef.current = restoreFallback;
   useEffect(() => {
     if (!active) return;
-    const previous = document.activeElement as HTMLElement | null;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const fallbackContainer = opener?.closest<HTMLElement>(
+      '[role="dialog"], .sidebar, .thread-list, .main-area'
+    ) ?? null;
     const dialog = ref.current;
+    const focusableSelector = [
+      'a[href]', 'button:not([disabled])', 'input:not([disabled]):not([type="hidden"])',
+      'textarea:not([disabled])', 'select:not([disabled])', 'summary',
+      '[contenteditable="true"]', '[tabindex]:not([tabindex="-1"])'
+    ].join(", ");
     const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex="0"]'
+      focusableSelector
     ) ?? []);
     const initial = focusable()[0];
     if (initial) initial.focus(); else dialog?.focus();
     const keydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        if (canClose) onClose(); else dialog?.focus();
+        if (canCloseRef.current) onCloseRef.current(); else dialog?.focus();
         return;
       }
       if (event.key !== "Tab") return;
       const items = focusable();
       if (!items.length) { event.preventDefault(); dialog?.focus(); return; }
       const first = items[0]; const last = items.at(-1)!;
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      if (!dialog?.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      }
+      else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     };
     document.addEventListener("keydown", keydown);
-    return () => { document.removeEventListener("keydown", keydown); previous?.focus(); };
-  }, [active, onClose, canClose]);
+    return () => {
+      document.removeEventListener("keydown", keydown);
+      if (opener?.isConnected) {
+        opener.focus();
+        return;
+      }
+      const explicitFallback = restoreFallbackRef.current?.();
+      if (explicitFallback?.isConnected) {
+        explicitFallback.focus();
+        return;
+      }
+      const stableFallback = fallbackContainer?.isConnected
+        ? fallbackContainer.querySelector<HTMLElement>(focusableSelector) ?? fallbackContainer
+        : document.querySelector<HTMLElement>(
+          '[role="dialog"] button:not([disabled]), .sidebar-toggle:not([disabled]), .main-area [tabindex="0"]'
+        );
+      stableFallback?.focus();
+    };
+  }, [active]);
   return ref;
 }
 
@@ -260,7 +276,7 @@ function nodeText(node: ReactNode): string {
 }
 
 function MarkdownText({ text }: { text: string }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+  return <div className="markdown-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{
     a: ({ href, children }) => {
       const safe = typeof href === "string" && href.startsWith("https://") &&
         !/^https:\/\/factchat-cloud\.mindlogic\.ai\/v1\/public\/f\//i.test(href);
@@ -279,7 +295,7 @@ function MarkdownText({ text }: { text: string }) {
           void window.mmllm.openExternal(image.externalUrl!); }}>[{image.label} 링크]</a>
         : <span>[{image.label}]</span>;
     }
-  }}>{text}</ReactMarkdown>;
+  }}>{text}</ReactMarkdown></div>;
 }
 
 function ManualToolCards({ messageId, calls, disabled, onSubmit }: {
@@ -1686,6 +1702,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<ThreadSearchResult[]>([]);
+  const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
   const [keyReplaceOpen, setKeyReplaceOpen] = useState(false);
   const [replacementKey, setReplacementKey] = useState("");
   const [keyReplacing, setKeyReplacing] = useState(false);
@@ -1717,16 +1734,22 @@ export default function App() {
   const summaryStartRef = useRef(false);
   const uiEpochRef = useRef(0);
   const visibleThreadIdRef = useRef<string | null>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const pendingWorkspaceFocusRef = useRef(false);
   const creditRefreshRef = useRef<{
     lastAt: number; timer: number | null; inFlight: Promise<void> | null;
   }>({ lastAt: 0, timer: null, inFlight: null });
   visibleThreadIdRef.current = thread?.id ?? null;
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const closeSearch = useCallback(() => setSearchOpen(false), []);
+  const closeRename = useCallback(() => {
+    setRenameDialog((current) => current?.busy ? current : null);
+  }, []);
   const closeKeyReplace = useCallback(() => { setKeyReplaceOpen(false); setReplacementKey(""); }, []);
   const closeProjects = useCallback(() => { if (!projectBusy) setProjectsOpen(false); }, [projectBusy]);
   const settingsRef = useDialogFocus(settingsOpen, closeSettings, !settingsSaving);
   const searchRef = useDialogFocus(searchOpen, closeSearch);
+  const renameRef = useDialogFocus<HTMLFormElement>(Boolean(renameDialog), closeRename, !renameDialog?.busy);
   const keyReplaceRef = useDialogFocus(keyReplaceOpen, closeKeyReplace, !keyReplacing);
   const projectsRef = useDialogFocus(projectsOpen, closeProjects, !projectBusy);
   const closeTools = useCallback(() => {
@@ -1736,13 +1759,13 @@ export default function App() {
   }, [compareBusy, bookmarkBusy, compareAttachments]);
   const toolsRef = useDialogFocus(toolsOpen, closeTools, !compareBusy && !bookmarkBusy);
   const openSearch = useCallback(() => {
-    setSettingsOpen(false); setKeyReplaceOpen(false); setReplacementKey(""); setSearchOpen(true);
+    setSettingsOpen(false); setKeyReplaceOpen(false); setReplacementKey(""); setRenameDialog(null); setSearchOpen(true);
   }, []);
   const openSettings = useCallback(() => {
-    setSearchOpen(false); setKeyReplaceOpen(false); setReplacementKey(""); setSettingsOpen(true);
+    setSearchOpen(false); setKeyReplaceOpen(false); setReplacementKey(""); setRenameDialog(null); setSettingsOpen(true);
   }, []);
   const openKeyReplace = useCallback(() => {
-    setSearchOpen(false); setSettingsOpen(false); setReplacementKey(""); setKeyReplaceOpen(true);
+    setSearchOpen(false); setSettingsOpen(false); setReplacementKey(""); setRenameDialog(null); setKeyReplaceOpen(true);
   }, []);
   const openWorkspaceTools = useCallback(async (tab: "compare" | "chatbot") => {
     setToolsTab(tab); setToolsOpen(true);
@@ -1753,6 +1776,21 @@ export default function App() {
       catch (error) { if (epoch === uiEpochRef.current) setError(errorText(error)); }
     }
   }, []);
+
+  useEffect(() => {
+    if (!renameDialog) return;
+    const frame = window.requestAnimationFrame(() => renameInputRef.current?.select());
+    return () => window.cancelAnimationFrame(frame);
+  }, [renameDialog?.thread.id]);
+
+  useEffect(() => {
+    if (!pendingWorkspaceFocusRef.current || loading || !session?.authenticated) return;
+    pendingWorkspaceFocusRef.current = false;
+    const frame = window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(".sidebar-toggle:not([disabled])")?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, session?.authenticated]);
 
   useEffect(() => {
     const preventFileNavigation = (event: DragEvent) => {
@@ -1896,7 +1934,7 @@ export default function App() {
     setProjectDraft({ name: "", instruction: "" }); setToolsOpen(false); setCompareBusy(false); setCompareRun(null);
     setCompareAttachments([]); setBookmarks([]); setThread(null); setModelId(""); setScreen("chat");
     setAppSettings(null); setSettingsDraft(null); setSettingsOpen(false); setSettingsSaving(false);
-    setSearchOpen(false); setSearchQuery(""); setSearchResults([]);
+    setSearchOpen(false); setSearchQuery(""); setSearchResults([]); setRenameDialog(null);
     setKeyReplaceOpen(false); setReplacementKey(""); setKeyReplacing(false);
     setTemplateDraft(null); setError("");
   }, []);
@@ -2227,6 +2265,7 @@ export default function App() {
       const state = await window.mmllm.replaceApiKey(replacementKey.trim());
       resetPrivateUi();
       await setupWorkspace(state);
+      pendingWorkspaceFocusRef.current = true;
     } catch (error) { setError(errorText(error)); }
     finally { setKeyReplacing(false); setLoading(false); }
   }
@@ -2288,9 +2327,18 @@ export default function App() {
     finally { setSettingsSaving(false); }
   }
 
-  async function renameConversation(item: ThreadSummary) {
-    const title = window.prompt("새 대화 이름", item.title)?.trim();
+  function openRenameConversation(item: ThreadSummary) {
+    setSearchOpen(false); setSettingsOpen(false); setKeyReplaceOpen(false); setReplacementKey("");
+    setRenameDialog({ thread: item, value: item.title, busy: false, error: "" });
+  }
+
+  async function saveRenamedConversation() {
+    if (!renameDialog || renameDialog.busy) return;
+    const item = renameDialog.thread;
+    const title = renameDialog.value.trim();
     if (!title || title === item.title) return;
+    setRenameDialog((current) => current && current.thread.id === item.id
+      ? { ...current, busy: true, error: "" } : current);
     const key = `${item.id}:rename`;
     const gate = actionGatesRef.current.get(key) ?? new LatestRequestGate();
     actionGatesRef.current.set(key, gate);
@@ -2300,7 +2348,12 @@ export default function App() {
       if (!gate.isLatest(request) || epoch !== uiEpochRef.current) return;
       if (visibleThreadIdRef.current === item.id) setThread(updated);
       await refreshThreads();
-    } catch (error) { if (gate.isLatest(request) && epoch === uiEpochRef.current) setError(errorText(error)); }
+      if (gate.isLatest(request) && epoch === uiEpochRef.current) setRenameDialog(null);
+    } catch (error) {
+      if (!gate.isLatest(request) || epoch !== uiEpochRef.current) return;
+      setRenameDialog((current) => current && current.thread.id === item.id
+        ? { ...current, busy: false, error: errorText(error) } : current);
+    }
   }
 
   async function pinConversation(item: ThreadSummary) {
@@ -2371,89 +2424,50 @@ export default function App() {
     { label: "이전", items: unpinned.filter((item) => Date.parse(item.updatedAt) < startWeek.getTime()) }
   ].filter((group) => group.items.length);
   return <div className="app-shell">
-    <aside className={sidebarOpen ? "sidebar" : "sidebar collapsed"}>
-      <div className="sidebar-top"><div className="brand"><span className="brand-mark"><Sparkles size={20} /></span>
-        <strong>MM<span className="brand-underscore">_</span>LLM</strong></div>
-        <button type="button" className="icon-button sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}
-          aria-label={sidebarOpen ? "사이드바 접기" : "사이드바 펼치기"}
-          title={sidebarOpen ? "사이드바 접기" : "사이드바 펼치기"}><Menu size={18} /></button></div>
-      {sidebarOpen && <>
-        <div className="sidebar-caption">Medical MBA의 AI 공간</div>
-        <button type="button" className="new-chat-button" onClick={newThread}><Plus size={17} /> 새 대화</button>
-        <button type="button" className="project-button" onClick={openProjectsPanel}>
-          <FolderOpen size={16} /> 프로젝트 <small>{projects.length}</small>
-        </button>
-        <div className="workspace-tools-row">
-          <button type="button" onClick={() => void openWorkspaceTools("compare")}><Columns3 size={15} /> 모델 비교</button>
-          <button type="button" onClick={() => void openWorkspaceTools("chatbot")}><Bot size={15} /> 챗봇</button>
-        </div>
-        <div className="sidebar-section-label">워크스페이스</div>
-        <nav className="nav-list">{nav.map(({ id, label, icon: Icon, count }) =>
-          <button type="button" key={id} className={screen === id ? "nav-item active" : "nav-item"}
-            onClick={() => setScreen(id)}><Icon size={18} /><span>{label}</span>
-            <small title={`현재 API 키로 사용 가능한 ${label} 모델 ${count}개`}>{count}개</small></button>)}</nav>
-        <div className="sidebar-section-label history-title">대화 <span>{threads.length}</span>
-          <button type="button" className="history-search" onClick={openSearch}
-            aria-label="대화 검색" title="대화 검색 (⌘/Ctrl+K)"><Search size={14} /></button></div>
-        <div className="thread-list">{threadGroups.map((group) => <section className="thread-group" key={group.label}>
-          <div className="thread-group-label">{group.label}</div>
-          {group.items.map((item) =>
-            <div className={thread?.id === item.id && screen === "chat" ? "thread-item selected" : "thread-item"}
-              key={item.id}>
-              <button type="button" onClick={() => selectThread(item.id)} title={item.title}>
-                {item.pinned ? <Pin size={14} /> : <MessageCircle size={15} />}<span>{item.title}</span></button>
-              <div className="thread-tools">
-                <button type="button" aria-label={item.pinned ? "고정 해제" : "고정"} title={item.pinned ? "고정 해제" : "고정"}
-                  onClick={() => void pinConversation(item)}>{item.pinned ? <PinOff size={13} /> : <Pin size={13} />}</button>
-                <button type="button" aria-label="이름 변경" title="이름 변경"
-                  onClick={() => void renameConversation(item)}><Edit3 size={13} /></button>
-                <button type="button" aria-label="Markdown 내보내기" title="Markdown 내보내기"
-                  onClick={() => void window.mmllm.exportThread(item.id).catch((error) => setError(errorText(error)))}>
-                  <Download size={13} /></button>
-                <button type="button" aria-label="삭제" title="삭제" onClick={() => deleteThread(item.id)}>
-                  <Trash2 size={13} /></button>
-              </div>
-            </div>)}</section>)}</div>
-        <div className="sidebar-spacer" />
-        <div className="credit-card">
-          <div className="credit-card-title"><span className="credit-indicator" />크레딧</div>
-          <CreditMeter label="전체" bucket={credits?.total} />
-          <CreditMeter label="월 제공" bucket={credits?.monthly_allocated} />
-          <CreditMeter label="구매" bucket={credits?.purchased} />
-          {credits?.monthly_allocated?.renewal_date && <div className="credit-renewal">
-            월 제공 크레딧 갱신 {new Date(credits.monthly_allocated.renewal_date).toLocaleDateString("ko-KR")}
-          </div>}
-          <button type="button" onClick={() => void refreshCredits(true)}
-            aria-label="크레딧 새로고침" title="크레딧 자동 갱신 · 지금 새로고침"><RefreshCw size={14} /></button>
-        </div>
-        <div className="sidebar-bottom">
-          <button type="button" onClick={openKeyReplace}>
-            <ShieldCheck size={16} /> API 키 교체</button>
-          <button type="button" onClick={refreshModels}><RefreshCw size={16} /> 모델 목록 새로고침</button>
-          <button type="button" onClick={() => { setSettingsDraft(appSettings); openSettings(); }}>
-            <Settings size={16} /> 설정</button>
-          {updateState?.status !== "disabled" && <button type="button"
-            className={updateState?.status === "ready" ? "update-ready" : ""}
-            onClick={() => void (updateState?.status === "ready"
-              ? window.mmllm.installUpdate()
-              : window.mmllm.checkForUpdates()).catch((error) => setError(errorText(error)))}
-            disabled={updateState?.status === "checking" || updateState?.status === "downloading"}>
-            {updateState?.status === "ready" ? <Download size={16} /> : <RefreshCw size={16} />}
-            {updateState?.status === "ready"
-              ? `업데이트 설치 ${updateState.availableVersion ?? ""}`
-              : updateState?.status === "downloading"
-                ? `업데이트 다운로드 ${updateState.progress ?? 0}%`
-                : updateState?.status === "checking" ? "업데이트 확인 중"
-                  : updateState?.status === "latest" ? `최신 버전 ${updateState.currentVersion}`
-                    : "업데이트 확인"}
-          </button>}
-          {updateState?.status === "error" && <span className="update-error" title={updateState.message}>
-            업데이트 확인에 실패했습니다. 다시 시도해 주세요.</span>}
-          <button type="button" onClick={logout}><LogOut size={16} /> 로그아웃</button>
-        </div>
-      </>}
-    </aside>
+    <Sidebar
+      workspace={{ open: sidebarOpen, screen, navItems: nav, projectCount: projects.length }}
+      workspaceActions={{
+        onToggle: () => setSidebarOpen((open) => !open), onNewThread: () => void newThread(),
+        onOpenProjects: openProjectsPanel, onOpenCompare: () => void openWorkspaceTools("compare"),
+        onOpenChatbot: () => void openWorkspaceTools("chatbot"), onScreenChange: setScreen
+      }}
+      history={{ threadCount: threads.length, threadGroups, selectedThreadId: thread?.id }}
+      historyActions={{
+        onOpenSearch: openSearch, onSelectThread: (id) => void selectThread(id),
+        onPinThread: (item) => void pinConversation(item), onRenameThread: openRenameConversation,
+        onExportThread: (item) => void window.mmllm.exportThread(item.id).catch((error) => setError(errorText(error))),
+        onDeleteThread: (id) => void deleteThread(id)
+      }}
+      account={{ credits, updateState }}
+      accountActions={{
+        onRefreshCredits: () => void refreshCredits(true), onOpenKeyReplace: openKeyReplace,
+        onRefreshModels: () => void refreshModels(),
+        onOpenSettings: () => { setSettingsDraft(appSettings); openSettings(); },
+        onUpdateAction: () => void (updateState?.status === "ready"
+          ? window.mmllm.installUpdate()
+          : window.mmllm.checkForUpdates()).catch((error) => setError(errorText(error))),
+        onLogout: () => void logout()
+      }} />
     <main className="main-area">
+      {renameDialog && <div className="dialog-backdrop" onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !renameDialog.busy) closeRename();
+      }}><form className="dialog-card rename-dialog" role="dialog" aria-modal="true"
+        aria-labelledby="rename-thread-title" aria-describedby={renameDialog.error ? "rename-thread-error" : undefined}
+        ref={renameRef} tabIndex={-1} onSubmit={(event) => { event.preventDefault(); void saveRenamedConversation(); }}>
+        <div className="dialog-title"><Edit3 size={21} /><h3 id="rename-thread-title">대화 이름 변경</h3></div>
+        <label className="settings-field">새 대화 이름
+          <input ref={renameInputRef} value={renameDialog.value} maxLength={80} disabled={renameDialog.busy}
+            onChange={(event) => setRenameDialog((current) => current
+              ? { ...current, value: event.target.value, error: "" } : current)} />
+        </label>
+        {renameDialog.error && <div className="inline-error" id="rename-thread-error" role="alert">
+          <CircleHelp size={16} />{renameDialog.error}</div>}
+        <div className="dialog-actions"><button type="button" className="secondary-button"
+          onClick={closeRename} disabled={renameDialog.busy}>취소</button>
+          <button type="submit" className="primary-button" disabled={renameDialog.busy ||
+            !renameDialog.value.trim() || renameDialog.value.trim() === renameDialog.thread.title}>
+            {renameDialog.busy ? "저장 중…" : "저장"}</button></div>
+      </form></div>}
       {toolsOpen && <div className="dialog-backdrop" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !compareBusy && !bookmarkBusy) closeTools();
       }}><div className="dialog-card workspace-tools-dialog" role="dialog" aria-modal="true"
@@ -2497,7 +2511,10 @@ export default function App() {
               onClick={() => void startCompare()}><Columns3 size={15} /> 비교 실행</button>}</div>
           {compareRun && <div className="compare-results" aria-live="polite">{compareRun.results.map((result) => <article key={result.modelId}>
             <header><strong>{modelLabel(result.modelId)}</strong><span>{result.status}</span></header>
-            <div>{result.text || result.error || "응답을 기다리는 중…"}</div>
+            <div className="compare-result-body">{result.error
+              ? <span className="compare-result-plain">{result.error}</span>
+              : result.text ? <MarkdownText text={result.text} />
+                : <span className="compare-result-plain">응답을 기다리는 중…</span>}</div>
             {result.text && result.status !== "running" && <button type="button" className="secondary-button"
               onClick={() => void continueCompare(compareRun.id, result.modelId)}>이 모델과 대화 이어가기</button>}
           </article>)}</div>}
