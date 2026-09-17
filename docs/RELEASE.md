@@ -41,7 +41,7 @@ GitHub Actions의 **Build Windows release artifact** 워크플로를 수동 실�
 `package.json` 버전과 태그를 일치시킨 뒤, macOS와 Windows 산출물을 한 공개 Release에 올립니다.
 
 ```bash
-VERSION=0.3.0
+VERSION=0.3.1
 git tag "v${VERSION}"
 git push origin main "v${VERSION}"
 gh release create "v${VERSION}" \
