@@ -19,8 +19,9 @@
     "dist:mac:unsigned:x64": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --x64 --publish never --config.mac.identity=null",
     "dist:mac:unsigned": "npm run dist:mac:prepare && npm run dist:mac:unsigned:arm64 && npm run dist:mac:unsigned:x64",
     "dist:win": "node scripts/ensure-canvas-binaries.mjs win && npm run icon && npm run build && electron-builder --win nsis --x64 --publish never",
-    "test": "node --test tests/*.test.mjs",
-    "ui:audit": "node scripts/audit-ui-css.mjs"
+    "test": "node --test tests/*.test.mjs && npm run ui:check",
+    "ui:audit": "node scripts/audit-ui-css.mjs",
+    "ui:check": "tsx --test --test-concurrency=1 tests/sidebar-ui-dom.test.tsx"
   },
   "dependencies": {
     "@assistant-ui/react": "0.15.20",
@@ -47,11 +48,13 @@
     "electron": "44.4.1",
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
+    "happy-dom": "^20.14.5",
     "js-yaml": "^4.3.2",
     "parse5": "^7.3.0",
     "postcss": "8.5.28",
     "postcss-selector-parser": "7.1.6",
     "postcss-value-parser": "^4.2.0",
+    "tsx": "^4.23.13",
     "typescript": "^5.9.0"
   },
   "overrides": {

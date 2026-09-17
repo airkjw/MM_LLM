@@ -58,6 +58,7 @@ const CONTRAST_PAIRS = [
   ["text-secondary", "bg", 4.5], ["text-secondary", "bg-sidebar", 4.5],
   ["text-tertiary", "bg", 4.5], ["text-tertiary", "bg-sidebar", 4.5],
   ["accent-text", "bg", 4.5], ["accent-text", "bg-sidebar", 4.5], ["accent-text", "bg-selected", 4.5],
+  ["accent-text", "accent-subtle", 4.5],
   ["on-accent", "accent", 4.5],
   ["danger", "danger-bg", 4.5], ["warning", "warning-bg", 4.5], ["info", "info-bg", 4.5],
   ["new", "new-bg", 4.5], ["border-control", "bg", 3], ["border-control", "bg-sidebar", 3],
@@ -513,23 +514,13 @@ export function auditCss(css) {
   }
   rejectStructuralOverrides(errors, root, ".send-button.stop", ["color", "background", "background-color"],
     new Set(["var(--color-text)", "var(--color-bg)"]));
-  if (!selectorHas(root, ".nav-item.active", (values) =>
+  if (!selectorHas(root, ".creation-tile.active", (values) =>
     values.get("color") === "var(--color-accent-text)" &&
-    values.get("background") === "var(--color-bg-selected)")) {
-    errors.push(".nav-item.active must use the audited accent-text/bg-selected pair");
+    values.get("background") === "var(--color-accent-subtle)")) {
+    errors.push(".creation-tile.active must use the audited accent-text/accent-subtle pair");
   }
-  rejectStructuralOverrides(errors, root, ".nav-item.active", ["color", "background", "background-color"],
-    new Set(["var(--color-accent-text)", "var(--color-bg-selected)"]));
-  if (!selectorHas(root, ".nav-item.active svg", (values) =>
-    values.get("color") === "var(--color-accent-text)")) {
-    errors.push(".nav-item.active svg must use the audited accent text color");
-  }
-  rejectStructuralOverrides(errors, root, ".nav-item.active svg", ["color"], new Set(["var(--color-accent-text)"]));
-  if (!selectorHas(root, ".nav-item.active small", (values) =>
-    values.get("color") === "var(--color-accent-text)")) {
-    errors.push(".nav-item.active small must use the audited accent text color");
-  }
-  rejectStructuralOverrides(errors, root, ".nav-item.active small", ["color"], new Set(["var(--color-accent-text)"]));
+  rejectStructuralOverrides(errors, root, ".creation-tile.active", ["color", "background", "background-color"],
+    new Set(["var(--color-accent-text)", "var(--color-accent-subtle)"]));
 
   const speakerTokens = Array.from({ length: 6 }, (_, index) => `var(--color-speaker-${index + 1})`);
   for (let index = 0; index < speakerTokens.length; index++) {

@@ -39,7 +39,9 @@ import {
   claudeAllowsSampling, claudeDefaultThinkingMode, claudeForbidsForcedToolChoice, claudeThinkingCapabilities,
   isClaudeModel, isGeminiModel, isOpenAiModel
 } from "../../shared/advanced-chat";
-import { Sidebar, type SidebarScreen } from "./components/Sidebar";
+import { Sidebar, type FocusReturnTarget, type SidebarScreen } from "./components/Sidebar";
+import { useDialogFocus } from "./use-focus-layer";
+import { useResponsiveSidebarState } from "./sidebar-responsive";
 import { ThemePersistence } from "./theme-persistence";
 
 type Screen = SidebarScreen;
@@ -64,76 +66,6 @@ async function readDroppedFiles(files: File[]): Promise<DroppedAttachment[]> {
   // Read sequentially so a valid 64MB batch cannot transiently double memory through Promise fan-out.
   for (const file of files) output.push({ name: file.name, bytes: await file.arrayBuffer() });
   return output;
-}
-
-function useDialogFocus<T extends HTMLElement = HTMLDivElement>(
-  active: boolean,
-  onClose: () => void,
-  canClose = true,
-  restoreFallback?: () => HTMLElement | null
-) {
-  const ref = useRef<T>(null);
-  const onCloseRef = useRef(onClose);
-  const canCloseRef = useRef(canClose);
-  const restoreFallbackRef = useRef(restoreFallback);
-  onCloseRef.current = onClose;
-  canCloseRef.current = canClose;
-  restoreFallbackRef.current = restoreFallback;
-  useEffect(() => {
-    if (!active) return;
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const fallbackContainer = opener?.closest<HTMLElement>(
-      '[role="dialog"], .sidebar, .thread-list, .main-area'
-    ) ?? null;
-    const dialog = ref.current;
-    const focusableSelector = [
-      'a[href]', 'button:not([disabled])', 'input:not([disabled]):not([type="hidden"])',
-      'textarea:not([disabled])', 'select:not([disabled])', 'summary',
-      '[contenteditable="true"]', '[tabindex]:not([tabindex="-1"])'
-    ].join(", ");
-    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
-      focusableSelector
-    ) ?? []);
-    const initial = focusable()[0];
-    if (initial) initial.focus(); else dialog?.focus();
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        if (canCloseRef.current) onCloseRef.current(); else dialog?.focus();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const items = focusable();
-      if (!items.length) { event.preventDefault(); dialog?.focus(); return; }
-      const first = items[0]; const last = items.at(-1)!;
-      if (!dialog?.contains(document.activeElement)) {
-        event.preventDefault();
-        (event.shiftKey ? last : first).focus();
-      }
-      else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    };
-    document.addEventListener("keydown", keydown);
-    return () => {
-      document.removeEventListener("keydown", keydown);
-      if (opener?.isConnected) {
-        opener.focus();
-        return;
-      }
-      const explicitFallback = restoreFallbackRef.current?.();
-      if (explicitFallback?.isConnected) {
-        explicitFallback.focus();
-        return;
-      }
-      const stableFallback = fallbackContainer?.isConnected
-        ? fallbackContainer.querySelector<HTMLElement>(focusableSelector) ?? fallbackContainer
-        : document.querySelector<HTMLElement>(
-          '[role="dialog"] button:not([disabled]), .sidebar-toggle:not([disabled]), .main-area [tabindex="0"]'
-        );
-      stableFallback?.focus();
-    };
-  }, [active]);
-  return ref;
 }
 
 function ModelPicker({
@@ -1690,7 +1622,7 @@ export default function App() {
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [thread, setThread] = useState<ThreadSnapshot | null>(null);
   const [modelId, setModelId] = useState("");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useResponsiveSidebarState();
   const [error, setError] = useState("");
   const [updateState, setUpdateState] = useState<UpdateState | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
@@ -1738,10 +1670,20 @@ export default function App() {
   }
   const renameInputRef = useRef<HTMLInputElement>(null);
   const pendingWorkspaceFocusRef = useRef(false);
+  const dialogReturnFocusRef = useRef<FocusReturnTarget | null>(null);
   const creditRefreshRef = useRef<{
     lastAt: number; timer: number | null; inFlight: Promise<void> | null;
   }>({ lastAt: 0, timer: null, inFlight: null });
   visibleThreadIdRef.current = thread?.id ?? null;
+
+  const rememberDialogReturn = useCallback((returnFocus?: FocusReturnTarget) => {
+    dialogReturnFocusRef.current = returnFocus ?? null;
+  }, []);
+  const dialogRestoreFallback = useCallback(() => dialogReturnFocusRef.current?.() ??
+    document.querySelector<HTMLElement>(
+      ".sidebar-mobile-open.visible:not([disabled]), .sidebar:not(.collapsed) .sidebar-toggle:not([disabled])"
+    ), []);
+
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const closeSearch = useCallback(() => setSearchOpen(false), []);
   const closeRename = useCallback(() => {
@@ -1749,27 +1691,33 @@ export default function App() {
   }, []);
   const closeKeyReplace = useCallback(() => { setKeyReplaceOpen(false); setReplacementKey(""); }, []);
   const closeProjects = useCallback(() => { if (!projectBusy) setProjectsOpen(false); }, [projectBusy]);
-  const settingsRef = useDialogFocus(settingsOpen, closeSettings, !settingsSaving);
-  const searchRef = useDialogFocus(searchOpen, closeSearch);
-  const renameRef = useDialogFocus<HTMLFormElement>(Boolean(renameDialog), closeRename, !renameDialog?.busy);
-  const keyReplaceRef = useDialogFocus(keyReplaceOpen, closeKeyReplace, !keyReplacing);
-  const projectsRef = useDialogFocus(projectsOpen, closeProjects, !projectBusy);
+  const settingsRef = useDialogFocus(settingsOpen, closeSettings, !settingsSaving, dialogRestoreFallback);
+  const searchRef = useDialogFocus(searchOpen, closeSearch, true, dialogRestoreFallback);
+  const renameRef = useDialogFocus<HTMLFormElement>(
+    Boolean(renameDialog), closeRename, !renameDialog?.busy, dialogRestoreFallback);
+  const keyReplaceRef = useDialogFocus(keyReplaceOpen, closeKeyReplace, !keyReplacing, dialogRestoreFallback);
+  const projectsRef = useDialogFocus(projectsOpen, closeProjects, !projectBusy, dialogRestoreFallback);
   const closeTools = useCallback(() => {
     if (compareBusy || bookmarkBusy) return;
     if (compareAttachments.length) void window.mmllm.discardAttachments(compareAttachments.map((item) => item.id));
     setCompareAttachments([]); setCompareConfirmed(false); setToolsOpen(false);
   }, [compareBusy, bookmarkBusy, compareAttachments]);
-  const toolsRef = useDialogFocus(toolsOpen, closeTools, !compareBusy && !bookmarkBusy);
-  const openSearch = useCallback(() => {
+  const toolsRef = useDialogFocus(
+    toolsOpen, closeTools, !compareBusy && !bookmarkBusy, dialogRestoreFallback);
+  const openSearch = useCallback((returnFocus?: FocusReturnTarget) => {
+    rememberDialogReturn(returnFocus);
     setSettingsOpen(false); setKeyReplaceOpen(false); setReplacementKey(""); setRenameDialog(null); setSearchOpen(true);
-  }, []);
-  const openSettings = useCallback(() => {
+  }, [rememberDialogReturn]);
+  const openSettings = useCallback((returnFocus?: FocusReturnTarget) => {
+    rememberDialogReturn(returnFocus);
     setSearchOpen(false); setKeyReplaceOpen(false); setReplacementKey(""); setRenameDialog(null); setSettingsOpen(true);
-  }, []);
-  const openKeyReplace = useCallback(() => {
+  }, [rememberDialogReturn]);
+  const openKeyReplace = useCallback((returnFocus?: FocusReturnTarget) => {
+    rememberDialogReturn(returnFocus);
     setSearchOpen(false); setSettingsOpen(false); setReplacementKey(""); setRenameDialog(null); setKeyReplaceOpen(true);
-  }, []);
-  const openWorkspaceTools = useCallback(async (tab: "compare" | "chatbot") => {
+  }, [rememberDialogReturn]);
+  const openWorkspaceTools = useCallback(async (tab: "compare" | "chatbot", returnFocus?: FocusReturnTarget) => {
+    if (returnFocus || !toolsOpen) rememberDialogReturn(returnFocus);
     setToolsTab(tab); setToolsOpen(true);
     if (tab === "chatbot") {
       const epoch = uiEpochRef.current;
@@ -1777,7 +1725,7 @@ export default function App() {
         if (epoch === uiEpochRef.current) setBookmarks(next); }
       catch (error) { if (epoch === uiEpochRef.current) setError(errorText(error)); }
     }
-  }, []);
+  }, [rememberDialogReturn, toolsOpen]);
 
   useEffect(() => {
     if (!renameDialog) return;
@@ -1845,12 +1793,13 @@ export default function App() {
     return epoch === uiEpochRef.current ? next : [];
   }, []);
 
-  const openProjectsPanel = useCallback(() => {
+  const openProjectsPanel = useCallback((returnFocus?: FocusReturnTarget) => {
+    rememberDialogReturn(returnFocus);
     const first = projects.find((item) => item.id === selectedProjectId) ?? projects[0];
     setSelectedProjectId(first?.id ?? null);
     setProjectDraft(first ? { name: first.name, instruction: first.instruction } : { name: "", instruction: "" });
     setProjectsOpen(true);
-  }, [projects, selectedProjectId]);
+  }, [projects, selectedProjectId, rememberDialogReturn]);
 
   const performCreditRefresh = useCallback((manual: boolean) => {
     const state = creditRefreshRef.current;
@@ -2333,7 +2282,8 @@ export default function App() {
     finally { setSettingsSaving(false); }
   }
 
-  function openRenameConversation(item: ThreadSummary) {
+  function openRenameConversation(item: ThreadSummary, returnFocus?: FocusReturnTarget) {
+    rememberDialogReturn(returnFocus);
     setSearchOpen(false); setSettingsOpen(false); setKeyReplaceOpen(false); setReplacementKey("");
     setRenameDialog({ thread: item, value: item.title, busy: false, error: "" });
   }
@@ -2411,13 +2361,9 @@ export default function App() {
   }} />;
 
   const nav = [
-    { id: "chat", label: "대화", icon: MessageCircle, count: llmModels.length },
-    { id: "image", label: "이미지", icon: ImageIcon,
-      count: session.models.filter((item) => item.type === "image").length },
-    { id: "audio", label: "오디오", icon: Mic2,
-      count: session.models.filter((item) => item.type === "audio").length },
-    { id: "video", label: "비디오", icon: Video,
-      count: session.models.filter((item) => item.type === "video").length }
+    { id: "image", label: "이미지", icon: ImageIcon },
+    { id: "audio", label: "오디오", icon: Mic2 },
+    { id: "video", label: "비디오", icon: Video }
   ] as const;
   const credits = session.credits;
   const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
@@ -2434,8 +2380,8 @@ export default function App() {
       workspace={{ open: sidebarOpen, screen, navItems: nav, projectCount: projects.length }}
       workspaceActions={{
         onToggle: () => setSidebarOpen((open) => !open), onNewThread: () => void newThread(),
-        onOpenProjects: openProjectsPanel, onOpenCompare: () => void openWorkspaceTools("compare"),
-        onOpenChatbot: () => void openWorkspaceTools("chatbot"), onScreenChange: setScreen
+        onOpenProjects: openProjectsPanel, onOpenCompare: (returnFocus) => void openWorkspaceTools("compare", returnFocus),
+        onOpenChatbot: (returnFocus) => void openWorkspaceTools("chatbot", returnFocus), onScreenChange: setScreen
       }}
       history={{ threadCount: threads.length, threadGroups, selectedThreadId: thread?.id }}
       historyActions={{
@@ -2448,7 +2394,7 @@ export default function App() {
       accountActions={{
         onRefreshCredits: () => void refreshCredits(true), onOpenKeyReplace: openKeyReplace,
         onRefreshModels: () => void refreshModels(),
-        onOpenSettings: () => { setSettingsDraft(appSettings); openSettings(); },
+        onOpenSettings: (returnFocus) => { setSettingsDraft(appSettings); openSettings(returnFocus); },
         onUpdateAction: () => void (updateState?.status === "ready"
           ? window.mmllm.installUpdate()
           : window.mmllm.checkForUpdates()).catch((error) => setError(errorText(error))),

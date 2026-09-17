@@ -118,23 +118,19 @@ expectMutationError("the stop-button semantic map", (source) => source.replace(
   ".send-button.stop, .send-button.stop:hover:not(:disabled) { background: var(--color-border); color: var(--color-text); }"
 ), /send-button\.stop/);
 expectMutationError("the active navigation contrast map", (source) => source.replace(
-  ".nav-item.active { color: var(--color-accent-text); background: var(--color-bg-selected); font-weight: 700; }",
-  ".nav-item.active { color: var(--color-text-tertiary); background: var(--color-bg-selected); font-weight: 700; }"
-), /nav-item\.active must use/);
-expectMutationError("the active navigation count contrast map", (source) => source.replace(
-  ".nav-item.active small { color: var(--color-accent-text); }",
-  ".nav-item.active small { color: var(--color-text-tertiary); }"
-), /nav-item\.active small/);
+  ".creation-tile.active { border-color: var(--color-accent); color: var(--color-accent-text); background: var(--color-accent-subtle); font-weight: 600; }",
+  ".creation-tile.active { border-color: var(--color-accent); color: var(--color-text-tertiary); background: var(--color-accent-subtle); font-weight: 600; }"
+), /creation-tile\.active must use/);
 expectMutationError("higher-specificity active navigation conflicts", (source) =>
-  `${source}\n.app-shell .nav-item.active small { color: var(--color-text-tertiary); }`, /audited-selector conflict/);
+  `${source}\n.app-shell .creation-tile.active { color: var(--color-text-tertiary); }`, /audited-selector conflict/);
 expectMutationError("escaped higher-specificity active navigation conflicts", (source) =>
-  `${source}\n.app-shell .nav-item.active small { color: v\\61 r(--color-text-tertiary); }`, /audited-selector conflict/);
-expectMutationError(":is active navigation count conflicts", (source) =>
-  `${source}\n:is(.nav-item.active) small { color: var(--color-text-tertiary); }`, /audited-selector conflict.*nav-item\.active small/);
-expectMutationError("typed active navigation count conflicts", (source) =>
-  `${source}\nbutton.nav-item.active small { color: var(--color-text-tertiary); }`, /audited-selector conflict.*nav-item\.active small/);
-expectMutationError("stateful active navigation count conflicts", (source) =>
-  `${source}\n.nav-item.active:hover small { color: var(--color-text-tertiary); }`, /audited-selector conflict.*nav-item\.active small/);
+  `${source}\n.app-shell .creation-tile.active { color: v\\61 r(--color-text-tertiary); }`, /audited-selector conflict/);
+expectMutationError(":is active navigation conflicts", (source) =>
+  `${source}\n:is(.creation-tile.active) { color: var(--color-text-tertiary); }`, /audited-selector conflict.*creation-tile\.active/);
+expectMutationError("typed active navigation conflicts", (source) =>
+  `${source}\nbutton.creation-tile.active { color: var(--color-text-tertiary); }`, /audited-selector conflict.*creation-tile\.active/);
+expectMutationError("stateful active navigation conflicts", (source) =>
+  `${source}\n.creation-tile.active:hover { color: var(--color-text-tertiary); }`, /audited-selector conflict.*creation-tile\.active/);
 expectMutationError("speaker token contrast failures", (source) => source.replace(
   /(--color-speaker-3:\s*)#14745B/, "$1#F1EFF5"
 ), /speaker-3\/bg/);
