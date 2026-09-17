@@ -10,8 +10,13 @@ const INDEX_PATH = new URL("../src/renderer/index.html", import.meta.url);
 const BOOTSTRAP_PATH = new URL("../src/renderer/public/theme-bootstrap.js", import.meta.url);
 const PRELOAD_PATH = new URL("../src/preload/index.ts", import.meta.url);
 const MAIN_PATH = new URL("../src/main/index.ts", import.meta.url);
-const css = readFileSync(CSS_PATH, "utf8");
-const app = readFileSync(APP_PATH, "utf8");
+
+function readSource(path) {
+  return readFileSync(path, "utf8").replaceAll("\r\n", "\n");
+}
+
+const css = readSource(CSS_PATH);
+const app = readSource(APP_PATH);
 
 function expectMutationError(name, mutate, pattern) {
   test(`UI audit rejects ${name}`, () => {
@@ -24,10 +29,10 @@ function expectMutationError(name, mutate, pattern) {
 
 function startupSources() {
   return {
-    index: readFileSync(INDEX_PATH, "utf8"),
-    bootstrap: readFileSync(BOOTSTRAP_PATH, "utf8"),
-    preload: readFileSync(PRELOAD_PATH, "utf8"),
-    main: readFileSync(MAIN_PATH, "utf8")
+    index: readSource(INDEX_PATH),
+    bootstrap: readSource(BOOTSTRAP_PATH),
+    preload: readSource(PRELOAD_PATH),
+    main: readSource(MAIN_PATH)
   };
 }
 
