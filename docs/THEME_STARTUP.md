@@ -1,0 +1,7 @@
+# Startup theme synchronization
+
+MM_LLM stores only the last resolved color scheme (`light` or `dark`) in `appearance.json` under Electron's user-data directory. It contains no account or API-key data and is intentionally kept when the user logs out.
+
+At startup the main process reads at most 128 bytes from that file. A missing, oversized, malformed, or extended record falls back to the operating-system theme. The resolved value sets `BrowserWindow.backgroundColor` and is forwarded as a whitelisted Electron `additionalArguments` value. The sandboxed preload validates the value and exposes only that non-sensitive bootstrap field through `contextBridge`. A blocking, self-hosted script in the document head applies `document.documentElement.dataset.theme` before the body is parsed and before the first renderer frame. This follows Electron's isolated preload bridge model without weakening CSP, sandboxing, context isolation, or navigation restrictions.
+
+When settings first load, the renderer reconciles the resolved preference with the startup theme once. The main process writes only when that resolved value differs from the persisted value, including the first run where no value exists. Repeated system-theme notifications therefore do not rewrite the file. Writes use a same-directory temporary file, owner-only permissions where supported, and atomic rename. Failed persistence is logged without exposing user data; the renderer reports a safe diagnostic and the previous complete record remains usable.

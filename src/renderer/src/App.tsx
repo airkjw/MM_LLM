@@ -40,6 +40,7 @@ import {
   isClaudeModel, isGeminiModel, isOpenAiModel
 } from "../../shared/advanced-chat";
 import { Sidebar, type SidebarScreen } from "./components/Sidebar";
+import { ThemePersistence } from "./theme-persistence";
 
 type Screen = SidebarScreen;
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
@@ -767,8 +768,7 @@ function ChatPanel({
         준비된 구간별 초안을 검토한 뒤 직접 전송합니다.
       </div>}
       <div className="panel-header">
-        <div><span className="eyebrow">MEDICAL MBA WORKSPACE</span>
-          <h2>{thread.title === "새 대화" ? "새로운 대화" : thread.title}</h2></div>
+        <div><h2>{thread.title === "새 대화" ? "새로운 대화" : thread.title}</h2></div>
         <div className="panel-actions">{!chatbotTarget && <><label className="web-mode"><Globe2 size={14} />
           <select value={thread.webSearchMode} disabled={isRunning || controlsPending || thread.purpose === "meeting-summary"}
             onChange={(event) => void setSearchMode(event.target.value as WebSearchMode)}>
@@ -1385,8 +1385,7 @@ function MediaPanel({
   }
 
   return <div className="media-panel">
-    <div className="panel-header media-header"><div><span className="eyebrow">CREATE WITH CHATKHU</span>
-      <h2>{titles[screen][0]}</h2></div>
+    <div className="panel-header media-header"><div><h2>{titles[screen][0]}</h2></div>
       <ModelPicker models={available} selected={modelId} onSelect={setModelId} disabled={busy} />
     </div>
     <div className="media-scroll">
@@ -1644,7 +1643,6 @@ function Login({ onLogin }: { onLogin: (state: SessionState) => Promise<void> })
     finally { setBusy(false); }
   }
   return <div className="login-page">
-    <div className="login-orb orb-one" /><div className="login-orb orb-two" />
     <div className="login-card">
       <div className="login-brand"><span className="brand-mark"><Sparkles size={24} /></span>
         <span>MM<span className="brand-underscore">_</span>LLM</span></div>
@@ -1734,6 +1732,10 @@ export default function App() {
   const summaryStartRef = useRef(false);
   const uiEpochRef = useRef(0);
   const visibleThreadIdRef = useRef<string | null>(null);
+  const themePersistenceRef = useRef<ThemePersistence | null>(null);
+  if (!themePersistenceRef.current) {
+    themePersistenceRef.current = new ThemePersistence((theme) => window.mmllm.setAppliedTheme(theme));
+  }
   const renameInputRef = useRef<HTMLInputElement>(null);
   const pendingWorkspaceFocusRef = useRef(false);
   const creditRefreshRef = useRef<{
@@ -1805,15 +1807,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const preference = appSettings?.theme ?? "system";
+    if (!appSettings) return;
+    const preference = appSettings.theme;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      document.documentElement.dataset.theme = preference === "system"
-        ? media.matches ? "dark" : "light" : preference;
+      const appliedTheme = preference === "system" ? media.matches ? "dark" : "light" : preference;
+      document.documentElement.dataset.theme = appliedTheme;
       document.documentElement.dataset.themePreference = preference;
+      void themePersistenceRef.current?.sync(appliedTheme).catch((error) => {
+        console.warn("마지막 화면 테마를 저장하지 못했습니다.", error instanceof Error ? error.name : "unknown");
+      });
     };
     apply(); media.addEventListener("change", apply);
-    document.documentElement.dataset.fontSize = appSettings?.fontSize ?? "medium";
+    document.documentElement.dataset.fontSize = appSettings.fontSize;
     return () => media.removeEventListener("change", apply);
   }, [appSettings]);
 

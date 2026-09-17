@@ -4,6 +4,14 @@ import type {
   PickedAttachment, VideoRequest
 } from "../shared/contracts";
 
+const initialThemeArgument = process.argv.find((argument) => argument.startsWith("--mmllm-initial-theme="));
+const initialThemeValue = initialThemeArgument?.slice("--mmllm-initial-theme=".length);
+const initialTheme = initialThemeValue === "light" || initialThemeValue === "dark" ? initialThemeValue : null;
+
+// Preload runs before document parsing. Expose only the validated, non-sensitive bootstrap value;
+// a blocking self-hosted head script applies it before the first renderer frame.
+contextBridge.exposeInMainWorld("mmllmBootstrap", Object.freeze({ initialTheme }));
+
 const desktopApi: DesktopApi = {
   getSession: () => ipcRenderer.invoke("session:get"),
   login: (key) => ipcRenderer.invoke("session:login", key),
@@ -13,6 +21,7 @@ const desktopApi: DesktopApi = {
   getCredits: (force = false) => ipcRenderer.invoke("credits:get", force),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (settings) => ipcRenderer.invoke("settings:update", settings),
+  setAppliedTheme: (theme) => ipcRenderer.invoke("appearance:set-theme", theme),
   listThreads: () => ipcRenderer.invoke("threads:list"),
   createThread: (request) => ipcRenderer.invoke("threads:create", request),
   loadThread: (id) => ipcRenderer.invoke("threads:load", id),

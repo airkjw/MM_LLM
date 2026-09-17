@@ -344,6 +344,7 @@ export type DesktopApi = {
   getCredits(force?: boolean): Promise<CreditBalance>;
   getSettings(): Promise<AppSettings>;
   updateSettings(settings: AppSettings): Promise<AppSettings>;
+  setAppliedTheme(theme: "light" | "dark"): Promise<void>;
   listThreads(): Promise<ThreadSummary[]>;
   createThread(request: CreateThreadRequest): Promise<ThreadSnapshot>;
   loadThread(id: string): Promise<ThreadSnapshot>;

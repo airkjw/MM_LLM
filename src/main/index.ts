@@ -1,5 +1,5 @@
 import {
-  app, BrowserWindow, dialog, ipcMain, protocol, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent
+  app, BrowserWindow, dialog, ipcMain, nativeTheme, protocol, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent
 } from "electron";
 import { createReadStream, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
@@ -66,6 +66,8 @@ import {
 import { providerRoute } from "../shared/advanced-chat";
 import { CompareTextBudget } from "../shared/compare-limits";
 import { completeJournaledProjectDeletion } from "../shared/project-delete-recovery";
+import { isAppliedTheme, readAppliedTheme, writeAppliedTheme } from "./theme-state";
+import { applyWindowTheme } from "./theme-application";
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "mmllm", privileges: { secure: true, standard: true, supportFetchAPI: true } }
@@ -77,6 +79,7 @@ if (process.env.MM_LLM_MOCK === "1" && !app.isPackaged) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let lastAppliedTheme: "light" | "dark" | null = null;
 const activeRuns = new Map<string, AbortController>();
 const backgroundQueues = new Map<string, Promise<unknown>>();
 let activeMediaRuns = 0;
@@ -382,6 +385,19 @@ function registerHandlers(): void {
     const defaultInstruction = typeof raw.defaultInstruction === "string"
       ? raw.defaultInstruction.trim().slice(0, 12_000) : "";
     return saveSettings({ defaultInstruction, theme, fontSize } as AppSettings);
+  });
+  ipcMain.handle("appearance:set-theme", async (event, rawTheme: unknown) => {
+    trustedInvoke(event);
+    if (!isAppliedTheme(rawTheme)) throw new Error("화면 테마가 올바르지 않습니다.");
+    try {
+      lastAppliedTheme = applyWindowTheme(rawTheme, lastAppliedTheme, {
+        setBackgroundColor: (color) => mainWindow?.setBackgroundColor(color),
+        persist: (theme) => writeAppliedTheme(app.getPath("userData"), theme)
+      });
+    } catch (error) {
+      console.warn(`[appearance] Failed to persist the last applied theme (${error instanceof Error ? error.name : "unknown"}).`);
+      throw new Error("화면 테마 상태를 저장하지 못했습니다.");
+    }
   });
   ipcMain.handle("threads:list", async (event) => {
     trustedInvoke(event); assertSessionStable();
@@ -1407,12 +1423,20 @@ async function createWindow(): Promise<void> {
     : work.x + Math.round((work.width - width) / 2);
   const y = saved ? Math.max(work.y, Math.min(saved.y, work.y + work.height - height))
     : work.y + Math.round((work.height - height) / 2);
+  const persistedTheme = readAppliedTheme(app.getPath("userData"));
+  const initialTheme = persistedTheme ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light");
+  // Keep the persisted value separate from the OS fallback. The first settings sync may
+  // legitimately persist that fallback, but subsequent identical updates must not rewrite it.
+  lastAppliedTheme = persistedTheme;
   mainWindow = new BrowserWindow({
     x, y, width, height, minWidth: 680, minHeight: 620,
     title: "MM_LLM",
-    backgroundColor: "#f7f4f0",
+    backgroundColor: initialTheme === "dark" ? "#18171C" : "#FFFFFF",
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
+      // Electron forwards additionalArguments to the sandboxed preload's process.argv. The
+      // preload whitelists this exact value and applies data-theme before renderer scripts run.
+      additionalArguments: [`--mmllm-initial-theme=${initialTheme}`],
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
