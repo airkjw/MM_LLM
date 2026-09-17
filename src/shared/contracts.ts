@@ -226,8 +226,18 @@ export type CompareRun = {
   webSearchMode: WebSearchMode;
   createdAt: string;
   attachmentNames: string[];
+  /** Shared public web evidence stored in the encrypted local workspace record. */
+  sharedEvidence?: string;
   results: Array<{ modelId: string; status: "running" | "completed" | "incomplete" | "failed" | "cancelled";
     text: string; usage?: TokenUsage; error?: string }>;
+  synthesis?: {
+    modelId: string;
+    status: "running" | "completed" | "incomplete" | "failed" | "cancelled";
+    text: string;
+    createdAt: string;
+    usage?: TokenUsage;
+    error?: string;
+  };
 };
 
 export type CompareRequest = {
@@ -242,6 +252,12 @@ export type CompareEvent =
   | { type: "snapshot"; run: CompareRun }
   | { type: "delta"; runId: string; modelId: string; text: string }
   | { type: "status"; runId: string; modelId: string; status: CompareRun["results"][number]["status"] }
+  | { type: "done"; run: CompareRun }
+  | { type: "error"; message: string; run?: CompareRun };
+
+export type CompareSynthesisEvent =
+  | { type: "snapshot"; run: CompareRun }
+  | { type: "delta"; runId: string; text: string }
   | { type: "done"; run: CompareRun }
   | { type: "error"; message: string; run?: CompareRun };
 
@@ -344,7 +360,7 @@ export type DesktopApi = {
   getCredits(force?: boolean): Promise<CreditBalance>;
   getSettings(): Promise<AppSettings>;
   updateSettings(settings: AppSettings): Promise<AppSettings>;
-  setAppliedTheme(theme: "light" | "dark"): Promise<void>;
+  setThemePreference(theme: AppSettings["theme"]): Promise<void>;
   listThreads(): Promise<ThreadSummary[]>;
   createThread(request: CreateThreadRequest): Promise<ThreadSnapshot>;
   loadThread(id: string): Promise<ThreadSnapshot>;
@@ -377,6 +393,7 @@ export type DesktopApi = {
   removeProjectDocument(projectId: string, documentId: string): Promise<void>;
   listCompareRuns(): Promise<CompareRun[]>;
   streamCompare(request: CompareRequest, onEvent: (event: CompareEvent) => void): () => void;
+  streamCompareSynthesis(runId: string, onEvent: (event: CompareSynthesisEvent) => void): () => void;
   continueCompare(runId: string, modelId: string): Promise<ThreadSnapshot>;
   listChatbotBookmarks(): Promise<ChatbotBookmark[]>;
   saveChatbotBookmark(input: { alias: string; chatbotId: string }): Promise<ChatbotBookmark>;

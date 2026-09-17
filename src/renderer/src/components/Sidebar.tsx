@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -83,7 +83,8 @@ export function AccountMenu({ model, actions, restoreFallback }: {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const { ref: popoverRef, requestClose } = useFocusLayer<HTMLDivElement>({
-    active: open, mode: "nonmodal", onClose: () => setOpen(false), closeOnOutside: true, restoreTo: triggerRef
+    active: open, mode: "nonmodal", onClose: () => setOpen(false), closeOnOutside: true,
+    restoreTo: triggerRef, restoreFallback
   });
   const { credits, updateState } = model;
   const { quota, remaining, empty, low, source } = creditBalancePresentation(credits);
@@ -124,9 +125,6 @@ export function AccountMenu({ model, actions, restoreFallback }: {
           {updateState?.status === "ready" ? <Download size={16} /> : <RefreshCw size={16} />}{updateText}
           {updateState?.status === "ready" && <span className="sr-only">새 업데이트를 설치할 수 있습니다.</span>}
         </button>}
-        <div className="update-live">{
-          updateState && ["checking", "downloading", "ready", "latest"].includes(updateState.status) ? updateText : ""
-        }</div>
         {updateState?.status === "error" && <span className="update-error"
           title={updateState.message}>업데이트 확인에 실패했습니다. 다시 시도해 주세요.</span>}
         <button type="button" className="logout-action" onClick={() => closeThen(actions.onLogout)}>
@@ -161,7 +159,7 @@ function ThreadActions({ item, actions, restoreFallback, compact }: {
   item: ThreadSummary; actions: SidebarHistoryActions; restoreFallback: FocusReturnTarget; compact: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ top: 0, left: 0 });
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const { ref: layerRef, requestClose } = useFocusLayer<HTMLDivElement>({
     active: open, mode: "menu", onClose: () => setOpen(false), closeOnOutside: true,
@@ -173,15 +171,20 @@ function ThreadActions({ item, actions, restoreFallback, compact }: {
     requestClose("programmatic", false); action(returnFocus);
   };
   const toggle = () => {
-    if (!open) {
-      const rect = triggerRef.current?.getBoundingClientRect();
-      if (rect) setPosition({
-        top: rect.bottom + 164 <= window.innerHeight ? rect.bottom + 4 : Math.max(8, rect.top - 164),
-        left: Math.max(8, rect.right - 188)
-      });
-    }
-    if (open) requestClose("programmatic", true); else setOpen(true);
+    if (open) requestClose("programmatic", true);
+    else { setPosition(null); setOpen(true); }
   };
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current || !layerRef.current) return;
+    const trigger = triggerRef.current.getBoundingClientRect();
+    const menu = layerRef.current.getBoundingClientRect();
+    const margin = 8; const gap = 4;
+    const top = window.innerHeight - trigger.bottom - gap >= menu.height
+      ? trigger.bottom + gap : Math.max(margin, trigger.top - menu.height - gap);
+    const left = Math.min(Math.max(margin, trigger.right - menu.width),
+      Math.max(margin, window.innerWidth - menu.width - margin));
+    setPosition({ top, left });
+  }, [open, layerRef]);
   useEffect(() => {
     if (!open) return;
     const close = () => requestClose("programmatic", true);
@@ -195,7 +198,7 @@ function ThreadActions({ item, actions, restoreFallback, compact }: {
   }, [open, requestClose]);
   const menu = open ? <div className="thread-action-popover" data-sidebar-layer="thread-actions"
     role="menu" aria-label={`${item.title} 대화 작업`}
-    ref={layerRef} tabIndex={-1} style={position}>
+    ref={layerRef} tabIndex={-1} style={position ?? { top: 0, left: 0, visibility: "hidden" }}>
     <button type="button" role="menuitem" tabIndex={0} onClick={() => run(() => actions.onPinThread(item))}>
       {item.pinned ? <PinOff size={15} /> : <Pin size={15} />}{item.pinned ? "고정 해제" : "고정"}</button>
     <button type="button" role="menuitem" tabIndex={-1} onClick={() => openDialog((target) => actions.onRenameThread(item, target))}><Edit3 size={15} />이름 변경</button>
@@ -257,8 +260,10 @@ export function Sidebar({ workspace, workspaceActions, history, historyActions, 
       return () => window.cancelAnimationFrame(frame);
     }
   }, [compact, open]);
-  const restoreAfterCompactClose = () => mobileOpenRef.current;
-  const restoreAfterThreadCommand = () => compact ? mobileOpenRef.current : threadListRef.current;
+  const desktopToggle = () => sidebarRef.current?.querySelector<HTMLElement>(".sidebar-toggle") ?? null;
+  const restoreAfterCompactClose = () => compact ? mobileOpenRef.current : desktopToggle();
+  const restoreAfterThreadCommand = () => compact ? mobileOpenRef.current
+    : threadListRef.current?.isConnected ? threadListRef.current : desktopToggle();
   const returnTo = (source: { current: HTMLElement | null }): FocusReturnTarget => () =>
     source.current?.isConnected ? source.current : restoreAfterCompactClose();
   const runNavigation = (action: () => void, restore = true) => {
@@ -273,10 +278,10 @@ export function Sidebar({ workspace, workspaceActions, history, historyActions, 
   const navigableHistoryActions: SidebarHistoryActions = {
     onOpenSearch: (returnFocus) => runDialogNavigation(historyActions.onOpenSearch, returnFocus),
     onSelectThread: (id) => runNavigation(() => historyActions.onSelectThread(id)),
-    onPinThread: (item) => runNavigation(() => historyActions.onPinThread(item), true),
+    onPinThread: historyActions.onPinThread,
     onRenameThread: (item, returnFocus) => runDialogNavigation(
       (target) => historyActions.onRenameThread(item, target), returnFocus),
-    onExportThread: (item) => runNavigation(() => historyActions.onExportThread(item), true),
+    onExportThread: historyActions.onExportThread,
     onDeleteThread: (id) => runNavigation(() => historyActions.onDeleteThread(id), true)
   };
   const navigableAccountActions: SidebarAccountActions = {

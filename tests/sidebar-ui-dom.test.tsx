@@ -5,6 +5,7 @@ import type { Root } from "react-dom/client";
 import * as React from "react";
 import type { ReactNode } from "react";
 import { Image as ImageIcon } from "lucide-react";
+import { appShortcutBlocked, hasBlockingModal } from "../src/renderer/src/shortcut-policy.ts";
 
 const { act, useRef, useState } = React;
 
@@ -224,6 +225,8 @@ test("account popover is nonmodal: Tab is free, Escape restores, and outside foc
   const dialog = document.querySelector<HTMLElement>('.account-popover[role="dialog"]')!;
   assert.ok(dialog);
   assert.equal(dialog.getAttribute("aria-modal"), "false");
+  assert.equal(hasBlockingModal(document), false, "the account popover cannot suppress global shortcuts");
+  assert.equal(appShortcutBlocked(document, "k"), false);
   const last = [...dialog.querySelectorAll<HTMLButtonElement>("button")].at(-1)!;
   last.focus();
   const tab = await key("Tab");
@@ -238,6 +241,15 @@ test("account popover is nonmodal: Tab is free, Escape restores, and outside foc
   await act(async () => outside.dispatchEvent(new browser.Event("pointerdown", { bubbles: true })));
   assert.equal(document.querySelector(".account-popover"), null);
   assert.equal(document.activeElement, outside, "outside pointer target keeps focus");
+});
+
+test("collapsing the desktop sidebar from an open account popover restores the visible toggle", async () => {
+  await render(<Harness />);
+  await click(byLabel(/설정·계정/));
+  const toggle = byLabel("사이드바 닫기");
+  await click(toggle);
+  assert.ok(document.querySelector(".sidebar")?.classList.contains("collapsed"));
+  assert.ok(document.activeElement === byLabel("사이드바 펼치기"), "focus returns to the visible desktop toggle");
 });
 
 test("account nonmodal shares the compact parent boundary across repeated Tab and Shift+Tab", async () => {
@@ -305,6 +317,22 @@ test("compact thread menu remains inside its aria-modal sidebar subtree", async 
   assert.ok(sidebar.contains(menu), "compact modal owns every interactive menu descendant");
 });
 
+test("compact pin and export commands keep the sidebar open", async () => {
+  setCompact(true);
+  await render(<Harness initialOpen />);
+  await click(byLabel("첫 대화 대화 작업"));
+  await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    .find((item) => item.textContent?.includes("고정"))!);
+  assert.deepEqual(calls, ["pin"]);
+  assert.ok(!document.querySelector(".sidebar")?.classList.contains("collapsed"));
+
+  await click(byLabel("첫 대화 대화 작업"));
+  await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+    .find((item) => item.textContent?.includes("Markdown"))!);
+  assert.deepEqual(calls, ["pin", "export"]);
+  assert.ok(!document.querySelector(".sidebar")?.classList.contains("collapsed"));
+});
+
 test("thread commands, scroll, resize, and deletion restore a stable focus target", async () => {
   await render(<Harness removeOnDelete />);
   let trigger = byLabel("첫 대화 대화 작업");
@@ -336,6 +364,8 @@ test("compact sidebar is modal/trapped, restores its toggle, and closes before n
   await render(<Harness initialOpen />);
   const sidebar = document.querySelector<HTMLElement>('.sidebar[role="dialog"]')!;
   assert.ok(sidebar); assert.equal(sidebar.getAttribute("aria-modal"), "true");
+  assert.equal(appShortcutBlocked(document, "n"), true);
+  assert.equal(appShortcutBlocked(document, "b"), false, "Ctrl/Cmd+B remains available to close the compact sidebar");
   const focusables = [...sidebar.querySelectorAll<HTMLButtonElement>("button:not([disabled])")];
   focusables.at(-1)!.focus();
   const tab = await key("Tab");
@@ -397,7 +427,8 @@ for (const [route, launch] of compactDialogRoutes) {
     assert.ok(document.querySelector(".sidebar")?.classList.contains("collapsed"));
     await key("Escape");
     const mobile = byLabel("사이드바 열기");
-    assert.ok(document.activeElement === mobile, `${route} did not restore the compact opener`);
+    const active = document.activeElement as HTMLElement | null;
+    assert.ok(active === mobile, `${route} did not restore the compact opener; active=${active?.getAttribute("aria-label") ?? active?.className ?? active?.tagName}`);
     assert.deepEqual(calls, [route]);
   });
 }

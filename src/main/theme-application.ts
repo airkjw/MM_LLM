@@ -1,22 +1,30 @@
-import type { AppliedTheme } from "./theme-state";
+import type { ThemePreference } from "./theme-state";
+
+export type AppliedTheme = "light" | "dark";
 
 export type ThemeApplication = {
   setBackgroundColor(color: string): void;
-  persist(theme: AppliedTheme): void;
+  persist(preference: ThemePreference): void;
 };
 
 export function backgroundColorForTheme(theme: AppliedTheme): string {
   return theme === "dark" ? "#18171C" : "#FFFFFF";
 }
 
+export function resolveThemePreference(preference: ThemePreference, systemIsDark: boolean): AppliedTheme {
+  return preference === "system" ? systemIsDark ? "dark" : "light" : preference;
+}
+
 /** Apply the live native color before the fallible startup-state write. */
 export function applyWindowTheme(
-  theme: AppliedTheme,
-  lastPersistedTheme: AppliedTheme | null,
+  preference: ThemePreference,
+  systemIsDark: boolean,
+  lastPersistedPreference: ThemePreference | null,
   application: ThemeApplication
-): AppliedTheme | null {
+): ThemePreference | null {
+  const theme = resolveThemePreference(preference, systemIsDark);
   application.setBackgroundColor(backgroundColorForTheme(theme));
-  if (theme === lastPersistedTheme) return lastPersistedTheme;
-  application.persist(theme);
-  return theme;
+  if (preference === lastPersistedPreference) return lastPersistedPreference;
+  application.persist(preference);
+  return preference;
 }

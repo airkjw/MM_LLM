@@ -95,6 +95,9 @@ expectMutationError("escaped local color token redefinition", (source) =>
 expectMutationError("additional light theme roots", (source) => `${source}\n:root { color-scheme: light; }`, /exactly one :root/);
 expectMutationError("additional equivalent dark theme roots", (source) =>
   `${source}\n:root[data-theme='dark'] { color-scheme: dark; }`, /exactly one dark theme root/);
+expectMutationError("missing theme roots without crashing", (source) => source.replace(
+  /:root\s*\{[^}]*\}/, ""
+), /exactly one :root/);
 expectMutationError("asymmetric theme tokens", (source) => source.replace(
   "  --color-speaker-6: #F2A89A;\n", ""
 ), /same color tokens/);

@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import type {
   AppSettings, AudioRequest, ChatAdvancedSettings, ChatEvent, ChatRequest,
-  ChatbotBookmark, ChatbotUsageReport, CompareEvent, CompareRun, DroppedAttachment, GatewayModel, MediaResult, PendingMediaJob,
+  ChatbotBookmark, ChatbotUsageReport, CompareEvent, CompareRun, CompareSynthesisEvent, DroppedAttachment, GatewayModel, MediaResult, PendingMediaJob,
   PickedAttachment, ProjectSummary, PublicMessage, ReasoningMode, SessionState, ThreadSearchResult,
   ThreadSnapshot, ThreadSummary, UpdateState, WebSearchMode
 } from "../../shared/contracts";
@@ -43,6 +43,8 @@ import { Sidebar, type FocusReturnTarget, type SidebarScreen } from "./component
 import { useDialogFocus } from "./use-focus-layer";
 import { useResponsiveSidebarState } from "./sidebar-responsive";
 import { ThemePersistence } from "./theme-persistence";
+import { appShortcutBlocked, hasBlockingModal } from "./shortcut-policy";
+import { canSynthesizeCompare, COMPARE_SYNTHESIS_MODEL_ID } from "../../shared/compare-synthesis";
 
 type Screen = SidebarScreen;
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
@@ -308,7 +310,7 @@ function ChatKeyboardShortcuts({ messages, running, stop }: {
   const aui = useAui();
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (document.querySelector('[role="dialog"]')) return;
+      if (hasBlockingModal(document)) return;
       if (event.key === "Escape" && running) { event.preventDefault(); stop(); return; }
       if ((event.metaKey || event.ctrlKey) && event.key === "ArrowUp" && !running) {
         const target = event.target as HTMLElement | null;
@@ -1651,11 +1653,13 @@ export default function App() {
   const [compareConfirmed, setCompareConfirmed] = useState(false);
   const [compareRun, setCompareRun] = useState<CompareRun | null>(null);
   const [compareBusy, setCompareBusy] = useState(false);
+  const [compareSynthesisBusy, setCompareSynthesisBusy] = useState(false);
   const [bookmarks, setBookmarks] = useState<ChatbotBookmark[]>([]);
   const [bookmarkDraft, setBookmarkDraft] = useState({ alias: "", chatbotId: "" });
   const [bookmarkBusy, setBookmarkBusy] = useState(false);
   const [chatbotUsage, setChatbotUsage] = useState<{ bookmarkId: string; report: ChatbotUsageReport } | null>(null);
   const compareStopRef = useRef<null | (() => void)>(null);
+  const compareSynthesisStopRef = useRef<null | (() => void)>(null);
   const workspaceGateRef = useRef(new LatestRequestGate());
   const selectGateRef = useRef(new LatestRequestGate());
   const actionGatesRef = useRef(new Map<string, LatestRequestGate>());
@@ -1666,7 +1670,7 @@ export default function App() {
   const visibleThreadIdRef = useRef<string | null>(null);
   const themePersistenceRef = useRef<ThemePersistence | null>(null);
   if (!themePersistenceRef.current) {
-    themePersistenceRef.current = new ThemePersistence((theme) => window.mmllm.setAppliedTheme(theme));
+    themePersistenceRef.current = new ThemePersistence((theme) => window.mmllm.setThemePreference(theme));
   }
   const renameInputRef = useRef<HTMLInputElement>(null);
   const pendingWorkspaceFocusRef = useRef(false);
@@ -1698,12 +1702,12 @@ export default function App() {
   const keyReplaceRef = useDialogFocus(keyReplaceOpen, closeKeyReplace, !keyReplacing, dialogRestoreFallback);
   const projectsRef = useDialogFocus(projectsOpen, closeProjects, !projectBusy, dialogRestoreFallback);
   const closeTools = useCallback(() => {
-    if (compareBusy || bookmarkBusy) return;
+    if (compareBusy || compareSynthesisBusy || bookmarkBusy) return;
     if (compareAttachments.length) void window.mmllm.discardAttachments(compareAttachments.map((item) => item.id));
     setCompareAttachments([]); setCompareConfirmed(false); setToolsOpen(false);
-  }, [compareBusy, bookmarkBusy, compareAttachments]);
+  }, [compareBusy, compareSynthesisBusy, bookmarkBusy, compareAttachments]);
   const toolsRef = useDialogFocus(
-    toolsOpen, closeTools, !compareBusy && !bookmarkBusy, dialogRestoreFallback);
+    toolsOpen, closeTools, !compareBusy && !compareSynthesisBusy && !bookmarkBusy, dialogRestoreFallback);
   const openSearch = useCallback((returnFocus?: FocusReturnTarget) => {
     rememberDialogReturn(returnFocus);
     setSettingsOpen(false); setKeyReplaceOpen(false); setReplacementKey(""); setRenameDialog(null); setSearchOpen(true);
@@ -1755,6 +1759,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    document.documentElement.dataset.fontSize = appSettings?.fontSize ?? "medium";
     if (!appSettings) return;
     const preference = appSettings.theme;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -1762,12 +1767,11 @@ export default function App() {
       const appliedTheme = preference === "system" ? media.matches ? "dark" : "light" : preference;
       document.documentElement.dataset.theme = appliedTheme;
       document.documentElement.dataset.themePreference = preference;
-      void themePersistenceRef.current?.sync(appliedTheme).catch((error) => {
-        console.warn("마지막 화면 테마를 저장하지 못했습니다.", error instanceof Error ? error.name : "unknown");
+      void themePersistenceRef.current?.sync(preference).catch((error) => {
+        console.warn("화면 테마 설정을 저장하지 못했습니다.", error instanceof Error ? error.name : "unknown");
       });
     };
     apply(); media.addEventListener("change", apply);
-    document.documentElement.dataset.fontSize = appSettings.fontSize;
     return () => media.removeEventListener("change", apply);
   }, [appSettings]);
 
@@ -1886,7 +1890,9 @@ export default function App() {
     setSession(null); setThreads([]); setProjects([]); setProjectsOpen(false); setSelectedProjectId(null);
     setProjectBusy(false);
     compareStopRef.current?.(); compareStopRef.current = null;
-    setProjectDraft({ name: "", instruction: "" }); setToolsOpen(false); setCompareBusy(false); setCompareRun(null);
+    compareSynthesisStopRef.current?.(); compareSynthesisStopRef.current = null;
+    setProjectDraft({ name: "", instruction: "" }); setToolsOpen(false); setCompareBusy(false);
+    setCompareSynthesisBusy(false); setCompareRun(null);
     setCompareAttachments([]); setBookmarks([]); setThread(null); setModelId(""); setScreen("chat");
     setAppSettings(null); setSettingsDraft(null); setSettingsOpen(false); setSettingsSaving(false);
     setSearchOpen(false); setSearchQuery(""); setSearchResults([]); setRenameDialog(null);
@@ -2068,7 +2074,7 @@ export default function App() {
   }
 
   async function startCompare() {
-    if (compareBusy) return;
+    if (compareBusy || compareSynthesisBusy) return;
     if (compareModels.length < 2 || compareModels.length > 3) { setError("서로 다른 모델을 2~3개 선택해 주세요."); return; }
     if (compareAttachments.length && !compareConfirmed) { setError("첨부 자료의 비식별화를 확인해 주세요."); return; }
     const gateKey = "workspace:compare";
@@ -2093,7 +2099,39 @@ export default function App() {
     });
   }
 
+  async function startCompareSynthesis() {
+    if (!compareRun || compareBusy || compareSynthesisBusy) return;
+    if (!canSynthesizeCompare(compareRun)) {
+      setError("종합분석에는 완료되었거나 일부 생성된 답변이 2개 이상 필요합니다."); return;
+    }
+    const key = `compare:synthesis:${compareRun.id}`;
+    const gate = actionGatesRef.current.get(key) ?? new LatestRequestGate();
+    actionGatesRef.current.set(key, gate);
+    const request = gate.begin(); const epoch = uiEpochRef.current;
+    setCompareSynthesisBusy(true); setError("");
+    compareSynthesisStopRef.current = window.mmllm.streamCompareSynthesis(compareRun.id,
+      (event: CompareSynthesisEvent) => {
+        if (!gate.isLatest(request) || epoch !== uiEpochRef.current) return;
+        if (event.type === "snapshot" || event.type === "done") {
+          setCompareRun({ ...event.run, results: event.run.results.map((item) => ({ ...item })),
+            synthesis: event.run.synthesis ? { ...event.run.synthesis } : undefined });
+        } else if (event.type === "delta") {
+          setCompareRun((current) => current?.synthesis ? { ...current,
+            synthesis: { ...current.synthesis, text: current.synthesis.text + event.text } } : current);
+        }
+        if (event.type === "done" || event.type === "error") {
+          setCompareSynthesisBusy(false); compareSynthesisStopRef.current = null; void refreshCredits(false);
+          if (event.type === "error") {
+            if (event.run) setCompareRun({ ...event.run, results: event.run.results.map((item) => ({ ...item })),
+              synthesis: event.run.synthesis ? { ...event.run.synthesis } : undefined });
+            if (!/중단|창이 닫/.test(event.message)) setError(event.message);
+          }
+        }
+      });
+  }
+
   async function continueCompare(runId: string, selectedModel: string) {
+    if (compareBusy || compareSynthesisBusy) return;
     const key = `compare:continue:${runId}:${selectedModel}`;
     const gate = actionGatesRef.current.get(key) ?? new LatestRequestGate();
     actionGatesRef.current.set(key, gate);
@@ -2340,10 +2378,10 @@ export default function App() {
     if (!session?.authenticated) return;
     const keydown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
-      if (document.querySelector('[role="dialog"]')) return;
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
       const key = event.key.toLowerCase();
+      if (appShortcutBlocked(document, key)) return;
       if (key === "n") { event.preventDefault(); void newThread(); }
       if (key === "k") { event.preventDefault(); openSearch(); }
       if (key === "b") { event.preventDefault(); setSidebarOpen((open) => !open); }
@@ -2366,6 +2404,9 @@ export default function App() {
     { id: "video", label: "비디오", icon: Video }
   ] as const;
   const credits = session.credits;
+  const compareSynthesisReady = !compareBusy && canSynthesizeCompare(compareRun);
+  const compareSynthesisModelAvailable = session.models.some((item) =>
+    item.type === "llm" && item.id === COMPARE_SYNTHESIS_MODEL_ID);
   const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
   const startWeek = new Date(startToday); startWeek.setDate(startWeek.getDate() - 7);
   const unpinned = threads.filter((item) => !item.pinned);
@@ -2421,55 +2462,81 @@ export default function App() {
             {renameDialog.busy ? "저장 중…" : "저장"}</button></div>
       </form></div>}
       {toolsOpen && <div className="dialog-backdrop" onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !compareBusy && !bookmarkBusy) closeTools();
+        if (event.target === event.currentTarget && !compareBusy && !compareSynthesisBusy && !bookmarkBusy) closeTools();
       }}><div className="dialog-card workspace-tools-dialog" role="dialog" aria-modal="true"
         aria-labelledby="workspace-tools-title" ref={toolsRef} tabIndex={-1}>
         <div className="dialog-title"><Sparkles size={21} /><h3 id="workspace-tools-title">워크스페이스 도구</h3></div>
         <div className="workspace-tool-tabs" role="tablist">
           <button type="button" role="tab" aria-selected={toolsTab === "compare"}
-            className={toolsTab === "compare" ? "selected" : ""} onClick={() => setToolsTab("compare")}>
+            className={toolsTab === "compare" ? "selected" : ""} disabled={compareBusy || compareSynthesisBusy}
+            onClick={() => setToolsTab("compare")}>
             <Columns3 size={15} /> 모델 비교</button>
           <button type="button" role="tab" aria-selected={toolsTab === "chatbot"}
-            className={toolsTab === "chatbot" ? "selected" : ""} onClick={() => void openWorkspaceTools("chatbot")}>
+            className={toolsTab === "chatbot" ? "selected" : ""} disabled={compareBusy || compareSynthesisBusy}
+            onClick={() => void openWorkspaceTools("chatbot")}>
             <Bot size={15} /> Studio Chatbot</button>
         </div>
         {toolsTab === "compare" ? <section className="compare-panel" role="tabpanel">
           <p>같은 질문과 준비된 자료를 2~3개 모델에 각각 전송합니다. 웹 근거는 한 번만 조사해 모든 모델에 동일하게 제공합니다.</p>
           <label className="settings-field">질문
-            <textarea value={comparePrompt} maxLength={100000} disabled={compareBusy}
+            <textarea value={comparePrompt} maxLength={100000} disabled={compareBusy || compareSynthesisBusy}
               onChange={(event) => setComparePrompt(event.target.value)} placeholder="비교할 질문을 입력하세요" />
           </label>
           <fieldset className="compare-models"><legend>모델 2~3개</legend>{llmModels.map((model) => <label key={model.id}>
-            <input type="checkbox" checked={compareModels.includes(model.id)} disabled={compareBusy ||
+            <input type="checkbox" checked={compareModels.includes(model.id)} disabled={compareBusy || compareSynthesisBusy ||
               !compareModels.includes(model.id) && compareModels.length >= 3} onChange={(event) => setCompareModels((items) =>
                 event.target.checked ? [...items, model.id] : items.filter((id) => id !== model.id))} />
             <span>{modelLabel(model.id)}</span></label>)}</fieldset>
-          <div className="compare-controls"><label>웹 근거<select value={compareMode} disabled={compareBusy}
+          <div className="compare-controls"><label>웹 근거<select value={compareMode} disabled={compareBusy || compareSynthesisBusy}
             onChange={(event) => setCompareMode(event.target.value as WebSearchMode)}>
             <option value="always">항상 검색 · 공통 1회</option><option value="auto">필요할 때 검색</option>
             <option value="deep">딥리서치 · 최대 5회 조사 + 모델별 합성</option><option value="off">검색 안 함</option>
-          </select></label><button type="button" className="secondary-button" disabled={compareBusy}
+          </select></label><button type="button" className="secondary-button" disabled={compareBusy || compareSynthesisBusy}
             onClick={() => void addCompareAttachment()}><Paperclip size={14} /> 첨부</button></div>
           {compareAttachments.length > 0 && <><div className="attachment-row">{compareAttachments.map((item) =>
-            <span className="attachment-chip" key={item.id}>{item.name}<button type="button" disabled={compareBusy}
+            <span className="attachment-chip" key={item.id}>{item.name}<button type="button" disabled={compareBusy || compareSynthesisBusy}
               onClick={() => { void window.mmllm.discardAttachments([item.id]);
                 setCompareAttachments((items) => items.filter((value) => value.id !== item.id)); }}><X size={12} /></button></span>)}</div>
-            <label className="deid-check"><input type="checkbox" checked={compareConfirmed} disabled={compareBusy}
+            <label className="deid-check"><input type="checkbox" checked={compareConfirmed} disabled={compareBusy || compareSynthesisBusy}
               onChange={(event) => setCompareConfirmed(event.target.checked)} />
               환자 식별정보나 개인정보를 제거했습니다. 자료는 선택한 모델 수만큼 외부 전송·과금될 수 있습니다.</label></>}
           <div className="compare-run-actions">{compareBusy
             ? <button type="button" className="secondary-button" onClick={() => compareStopRef.current?.()}><Square size={14} /> 중단</button>
-            : <button type="button" className="primary-button" disabled={!comparePrompt.trim() || compareModels.length < 2}
+            : <button type="button" className="primary-button" disabled={compareSynthesisBusy || !comparePrompt.trim() || compareModels.length < 2}
               onClick={() => void startCompare()}><Columns3 size={15} /> 비교 실행</button>}</div>
-          {compareRun && <div className="compare-results" aria-live="polite">{compareRun.results.map((result) => <article key={result.modelId}>
+          {compareRun && <><div className="compare-results" aria-live="polite">{compareRun.results.map((result) => <article key={result.modelId}>
             <header><strong>{modelLabel(result.modelId)}</strong><span>{result.status}</span></header>
             <div className="compare-result-body">{result.error
               ? <span className="compare-result-plain">{result.error}</span>
               : result.text ? <MarkdownText text={result.text} />
                 : <span className="compare-result-plain">응답을 기다리는 중…</span>}</div>
             {result.text && result.status !== "running" && <button type="button" className="secondary-button"
+              disabled={compareBusy || compareSynthesisBusy}
               onClick={() => void continueCompare(compareRun.id, result.modelId)}>이 모델과 대화 이어가기</button>}
-          </article>)}</div>}
+          </article>)}</div>
+          {compareSynthesisReady && <div className="compare-synthesis-actions">
+            <button type="button" className={compareSynthesisBusy ? "secondary-button" : "primary-button"}
+              disabled={!compareSynthesisModelAvailable}
+              onClick={() => compareSynthesisBusy ? compareSynthesisStopRef.current?.() : void startCompareSynthesis()}>
+              {compareSynthesisBusy ? <><Square size={14} /> 종합분석 중단</> : <><Sparkles size={15} />
+                {compareRun.synthesis?.text ? "다시 분석" : "종합분석"}</>}
+            </button>
+            <small>{compareSynthesisModelAvailable
+              ? "GPT-5.6 Sol이 답변 A·B·C의 차이와 근거를 검토합니다. 실행 시 추가 크레딧이 사용됩니다."
+              : "현재 API 키에서 GPT-5.6 Sol을 사용할 수 없어 종합분석을 실행할 수 없습니다."}</small>
+          </div>}
+          {compareRun.synthesis && <section className="compare-synthesis" aria-live="polite">
+            <header><span><Sparkles size={16} /><strong>{modelLabel(compareRun.synthesis.modelId)} 종합 분석</strong></span>
+              <span>{compareRun.synthesis.status}</span></header>
+            <div className="compare-synthesis-legend">{compareRun.results.map((result, index) =>
+              <span key={result.modelId}>답변 {String.fromCharCode(65 + index)} · {modelLabel(result.modelId)}</span>)}</div>
+            <div className="compare-synthesis-body">{compareRun.synthesis.text
+              ? <MarkdownText text={compareRun.synthesis.text} />
+              : <span className="compare-result-plain">{compareRun.synthesis.error ?? "종합분석 응답을 기다리는 중…"}</span>}</div>
+            {compareRun.synthesis.error && compareRun.synthesis.text &&
+              <div className="compare-synthesis-warning" role="status">{compareRun.synthesis.error}</div>}
+          </section>}
+          </>}
         </section> : <section className="chatbot-panel" role="tabpanel">
           <div className="audit-notice" role="note"><ShieldCheck size={16} />Studio Chatbot은 원격 서비스에 대화 감사 로그를 저장할 수 있습니다.
             모델·전역/프로젝트 지침·첨부는 전송하지 않고 문서화된 텍스트 메시지만 보냅니다.</div>
@@ -2494,7 +2561,7 @@ export default function App() {
               <pre>{JSON.stringify(chatbotUsage.report.data, null, 2)}</pre></details></section>}
         </section>}
         <div className="dialog-actions"><button type="button" className="secondary-button" onClick={closeTools}
-          disabled={compareBusy || bookmarkBusy}>닫기</button></div>
+          disabled={compareBusy || compareSynthesisBusy || bookmarkBusy}>닫기</button></div>
       </div></div>}
       {projectsOpen && <div className="dialog-backdrop" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !projectBusy) closeProjects();

@@ -5,36 +5,35 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isAppliedTheme, readAppliedTheme, writeAppliedTheme } from "../src/main/theme-state.ts";
-import { applyWindowTheme } from "../src/main/theme-application.ts";
+import { isThemePreference, readThemePreference, writeThemePreference } from "../src/main/theme-state.ts";
+import { applyWindowTheme, resolveThemePreference } from "../src/main/theme-application.ts";
 import { ThemePersistence } from "../src/renderer/src/theme-persistence.ts";
 
-test("appearance state accepts only the two applied themes", () => {
-  assert.equal(isAppliedTheme("light"), true);
-  assert.equal(isAppliedTheme("dark"), true);
-  for (const value of ["system", "", null, { theme: "dark" }]) assert.equal(isAppliedTheme(value), false);
+test("appearance state accepts the three theme preferences", () => {
+  for (const value of ["system", "light", "dark"]) assert.equal(isThemePreference(value), true);
+  for (const value of ["", null, { preference: "dark" }]) assert.equal(isThemePreference(value), false);
 });
 
 test("appearance state is bounded, atomic, owner-only, and rejects malformed records", () => {
   const root = mkdtempSync(join(tmpdir(), "mmllm-theme-"));
   try {
-    assert.equal(readAppliedTheme(root), null);
-    writeAppliedTheme(root, "dark");
-    assert.equal(readAppliedTheme(root), "dark");
-    assert.deepEqual(JSON.parse(readFileSync(join(root, "appearance.json"), "utf8")), { theme: "dark" });
+    assert.equal(readThemePreference(root), null);
+    writeThemePreference(root, "system");
+    assert.equal(readThemePreference(root), "system");
+    assert.deepEqual(JSON.parse(readFileSync(join(root, "appearance.json"), "utf8")), { preference: "system" });
     if (process.platform !== "win32") {
       const mode = statSync(join(root, "appearance.json")).mode & 0o777;
       assert.equal(mode, 0o600);
     }
-    writeAppliedTheme(root, "light");
-    assert.equal(readAppliedTheme(root), "light");
-    writeFileSync(join(root, "appearance.json"), JSON.stringify({ theme: "dark", extra: true }));
-    assert.equal(readAppliedTheme(root), null);
-    writeFileSync(join(root, "appearance.json"), JSON.stringify({ theme: "system" }));
-    assert.equal(readAppliedTheme(root), null);
+    writeThemePreference(root, "light");
+    assert.equal(readThemePreference(root), "light");
+    writeFileSync(join(root, "appearance.json"), JSON.stringify({ preference: "dark", extra: true }));
+    assert.equal(readThemePreference(root), null);
+    writeFileSync(join(root, "appearance.json"), JSON.stringify({ theme: "dark" }));
+    assert.equal(readThemePreference(root), null, "v0.3.0의 해석된 테마 값은 선호값으로 오인하지 않습니다.");
     writeFileSync(join(root, "appearance.json"), "{".repeat(129));
     assert.equal(statSync(join(root, "appearance.json")).size, 129);
-    assert.equal(readAppliedTheme(root), null, "oversized files are rejected before their contents are read");
+    assert.equal(readThemePreference(root), null, "oversized files are rejected before their contents are read");
   } finally {
     chmodSync(root, 0o700);
     rmSync(root, { recursive: true, force: true });
@@ -44,49 +43,56 @@ test("appearance state is bounded, atomic, owner-only, and rejects malformed rec
 test("appearance state removes its temporary file when atomic rename fails", () => {
   const root = mkdtempSync(join(tmpdir(), "mmllm-theme-rename-"));
   try {
-    writeAppliedTheme(root, "dark");
+    writeThemePreference(root, "dark");
     let cleanedPath = "";
-    assert.throws(() => writeAppliedTheme(root, "light", {
+    assert.throws(() => writeThemePreference(root, "light", {
       rename() { throw new Error("simulated rename failure"); },
       unlink(path) { cleanedPath = path; unlinkSync(path); }
     }), /simulated rename failure/);
     assert.match(cleanedPath, /appearance\.json\..+\.tmp$/);
-    assert.equal(readAppliedTheme(root), "dark", "the previous complete record survives");
+    assert.equal(readThemePreference(root), "dark", "the previous complete record survives");
     assert.deepEqual(readdirSync(root), ["appearance.json"], "no temporary file remains");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("live window theme changes even when appearance persistence fails, and the same theme can retry", () => {
+test("theme preferences resolve against the current OS theme", () => {
+  assert.equal(resolveThemePreference("system", true), "dark");
+  assert.equal(resolveThemePreference("system", false), "light");
+  assert.equal(resolveThemePreference("dark", false), "dark");
+  assert.equal(resolveThemePreference("light", true), "light");
+});
+
+test("live window theme changes even when preference persistence fails, and the same preference can retry", () => {
   const backgrounds = [];
   let writes = 0;
   const failing = {
     setBackgroundColor: (color) => backgrounds.push(color),
     persist() { writes++; throw new Error("disk unavailable"); }
   };
-  assert.throws(() => applyWindowTheme("dark", null, failing), /disk unavailable/);
+  assert.throws(() => applyWindowTheme("system", true, null, failing), /disk unavailable/);
   assert.deepEqual(backgrounds, ["#18171C"]);
   assert.equal(writes, 1);
 
   let persisted = null;
-  const recovered = applyWindowTheme("dark", persisted, {
+  const recovered = applyWindowTheme("system", true, persisted, {
     setBackgroundColor: (color) => backgrounds.push(color),
     persist(theme) { writes++; persisted = theme; }
   });
-  assert.equal(recovered, "dark");
-  assert.equal(persisted, "dark");
+  assert.equal(recovered, "system");
+  assert.equal(persisted, "system");
   assert.equal(writes, 2);
   assert.deepEqual(backgrounds, ["#18171C", "#18171C"]);
 });
 
-test("live window background still updates for an already persisted theme without rewriting it", () => {
+test("live window background still updates for an already persisted preference without rewriting it", () => {
   const backgrounds = [];
   let writes = 0;
-  assert.equal(applyWindowTheme("light", "light", {
+  assert.equal(applyWindowTheme("system", false, "system", {
     setBackgroundColor: (color) => backgrounds.push(color),
     persist() { writes++; }
-  }), "light");
+  }), "system");
   assert.deepEqual(backgrounds, ["#FFFFFF"]);
   assert.equal(writes, 0);
 });

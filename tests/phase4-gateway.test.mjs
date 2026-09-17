@@ -22,6 +22,11 @@ import { BufferedChatbotTextSanitizer, chatbotFileExpiry, detectChatbotDocument,
 import { assertDroppedFileBatch } from "../src/shared/drop-limits.ts";
 import { completeJournaledProjectDeletion } from "../src/shared/project-delete-recovery.ts";
 import { CompareTextBudget, MAX_COMPARE_RESULT_BYTES } from "../src/shared/compare-limits.ts";
+import {
+  boundedCompareEvidence, buildCompareSynthesisMessages, canSynthesizeCompare, COMPARE_SYNTHESIS_MODEL_ID,
+  compareSynthesisCandidates, CompareSynthesisTextBudget, MAX_COMPARE_SHARED_EVIDENCE_BYTES,
+  MAX_COMPARE_SYNTHESIS_RESULT_BYTES
+} from "../src/shared/compare-synthesis.ts";
 import { chatbotRequestBody, chatbotUsageSummary, normalizeChatbotUsage } from "../src/shared/chatbot-adapter.ts";
 import { fitWorkspaceState } from "../src/shared/workspace-storage-policy.ts";
 
@@ -355,6 +360,44 @@ test("compare results enforce per-model and aggregate encrypted-store budgets", 
   const budget = new CompareTextBudget(); budget.accept("a", "hello"); budget.accept("b", "world");
   assert.equal(budget.totalBytes(), 10);
   assert.throws(() => budget.accept("a", "x".repeat(MAX_COMPARE_RESULT_BYTES)), /2MB/);
+});
+
+test("compare synthesis anonymizes candidates and requires at least two usable answers", () => {
+  const run = {
+    id: "run", prompt: "어떤 전략이 타당한가?", modelIds: ["gpt-5.6-sol", "claude-opus-5", "gemini-3.8-flash"],
+    webSearchMode: "always", createdAt: "2026-09-17T00:00:00Z", attachmentNames: ["자료.pdf"],
+    sharedEvidence: "공식 근거 https://example.edu/source",
+    results: [
+      { modelId: "gpt-5.6-sol", status: "completed", text: "첫 번째 주장" },
+      { modelId: "claude-opus-5", status: "incomplete", text: "두 번째 주장" },
+      { modelId: "gemini-3.8-flash", status: "failed", text: "" }
+    ]
+  };
+  assert.equal(COMPARE_SYNTHESIS_MODEL_ID, "gpt-5.6-sol");
+  assert.deepEqual(compareSynthesisCandidates(run).map(({ label, modelId }) => ({ label, modelId })), [
+    { label: "A", modelId: "gpt-5.6-sol" }, { label: "B", modelId: "claude-opus-5" }
+  ]);
+  assert.equal(canSynthesizeCompare(run), true);
+  assert.equal(canSynthesizeCompare({ ...run, results: run.results.map((item, index) =>
+    index === 0 ? { ...item, status: "running" } : item) }), false);
+  const messages = buildCompareSynthesisMessages(run);
+  assert.equal(messages[0].role, "system");
+  assert.match(messages[0].content, /다수결/);
+  assert.match(messages[0].content, /근거 부족/);
+  assert.match(messages[1].content, /첫 번째 주장/);
+  assert.match(messages[1].content, /두 번째 주장/);
+  assert.doesNotMatch(messages[1].content, /gpt-5\.6-sol|claude-opus-5/);
+  assert.throws(() => buildCompareSynthesisMessages({ ...run,
+    results: [{ modelId: "a", status: "completed", text: "하나" }] }), /2개 이상/);
+});
+
+test("compare synthesis bounds persisted evidence and generated output", () => {
+  const evidence = boundedCompareEvidence("가".repeat(MAX_COMPARE_SHARED_EVIDENCE_BYTES));
+  assert.ok(Buffer.byteLength(evidence, "utf8") <= MAX_COMPARE_SHARED_EVIDENCE_BYTES);
+  assert.match(evidence, /이후 내용 생략/);
+  const budget = new CompareSynthesisTextBudget(); budget.accept("정상 결과");
+  assert.equal(budget.totalBytes(), Buffer.byteLength("정상 결과"));
+  assert.throws(() => budget.accept("x".repeat(MAX_COMPARE_SYNTHESIS_RESULT_BYTES)), /256KB/);
 });
 
 test("provider request shapes keep Claude and Responses routes isolated", () => {

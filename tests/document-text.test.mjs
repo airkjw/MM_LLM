@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
-import { createCanvas } from "@napi-rs/canvas";
+import { createCanvas, GlobalFonts } from "@napi-rs/canvas";
 import { acquireOcrSlot, assertZipExpandedSize, extractDocx, extractPdf, extractXlsx, pageNeedsOcr } from "../src/main/document-text.ts";
+
+const testFontFamily = "MM LLM Test Sans";
+GlobalFonts.registerFromPath(fileURLToPath(new URL(
+  "../node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf", import.meta.url
+)), testFontFamily);
 
 test("an Excel attachment keeps sheet names and cell values", async () => {
   const workbook = new ExcelJS.Workbook();
@@ -58,7 +64,7 @@ function scannedPdf(text) {
   context.fillStyle = "white";
   context.fillRect(0, 0, 1000, 240);
   context.fillStyle = "black";
-  context.font = "64px sans-serif";
+  context.font = `64px "${testFontFamily}"`;
   context.fillText(text, 45, 145);
   const image = canvas.toBuffer("image/jpeg");
   const content = Buffer.from("q 1000 0 0 240 0 0 cm /Im0 Do Q");
@@ -85,7 +91,7 @@ function scannedPdf(text) {
 function mixedPdf() {
   const canvas = createCanvas(1000, 240); const context = canvas.getContext("2d");
   context.fillStyle = "white"; context.fillRect(0, 0, 1000, 240);
-  context.fillStyle = "black"; context.font = "64px sans-serif"; context.fillText("SCANNED PAGE OCR", 45, 145);
+  context.fillStyle = "black"; context.font = `64px "${testFontFamily}"`; context.fillText("SCANNED PAGE OCR", 45, 145);
   const image = canvas.toBuffer("image/jpeg");
   const textStream = Buffer.from("BT /F1 18 Tf 30 200 Td (Selectable Medical MBA) Tj ET");
   const imageStream = Buffer.from("q 1000 0 0 240 0 0 cm /Im0 Do Q");

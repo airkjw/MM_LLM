@@ -1,4 +1,4 @@
-export type AppliedTheme = "light" | "dark";
+export type ThemePreference = "system" | "light" | "dark";
 
 type Waiter = {
   version: number;
@@ -11,16 +11,16 @@ type Waiter = {
  * A failed write never updates `persisted`, so the same theme remains retryable.
  */
 export class ThemePersistence {
-  private persisted: AppliedTheme | null = null;
-  private desired: AppliedTheme | null = null;
+  private persisted: ThemePreference | null = null;
+  private desired: ThemePreference | null = null;
   private version = 0;
   private running: Promise<void> | null = null;
   private waiters: Waiter[] = [];
-  private readonly save: (theme: AppliedTheme) => Promise<void>;
+  private readonly save: (theme: ThemePreference) => Promise<void>;
 
-  constructor(save: (theme: AppliedTheme) => Promise<void>) { this.save = save; }
+  constructor(save: (theme: ThemePreference) => Promise<void>) { this.save = save; }
 
-  sync(theme: AppliedTheme): Promise<void> {
+  sync(theme: ThemePreference): Promise<void> {
     if (!this.running && this.persisted === theme) return Promise.resolve();
 
     this.desired = theme;

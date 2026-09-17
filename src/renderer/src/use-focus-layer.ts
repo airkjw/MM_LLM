@@ -14,7 +14,8 @@ type RestoreDecision = { reason: FocusLayerCloseReason; restore?: boolean };
 function usableFocusTarget(target: HTMLElement | null | undefined): target is HTMLElement {
   if (!target?.isConnected || target === document.body || target === document.documentElement) return false;
   if (target.closest("[hidden], [aria-hidden='true']")) return false;
-  if (target.closest(".sidebar.collapsed")) return false;
+  const collapsedSidebar = target.closest<HTMLElement>(".sidebar.collapsed");
+  if (collapsedSidebar && (!target.matches(".sidebar-toggle") || collapsedSidebar.dataset.compact === "true")) return false;
   if (target.matches(".sidebar-mobile-open:not(.visible)")) return false;
   if (target instanceof HTMLButtonElement && target.disabled) return false;
   return true;
@@ -162,7 +163,8 @@ export function useFocusLayer<T extends HTMLElement>({
       document.removeEventListener("pointerdown", pointerdown);
       layer?.removeAttribute("data-focus-layer");
       const decision = closeDecisionRef.current ?? { reason: "programmatic" as const };
-      const shouldRestore = decision.restore ?? mode === "modal";
+      const shouldRestore = decision.restore ?? (mode === "modal" || mode === "nonmodal" &&
+        !restoreToRef.current?.current?.isConnected && Boolean(restoreFallbackRef.current));
       if (!shouldRestore) return;
       const explicit = restoreToRef.current?.current;
       if (usableFocusTarget(explicit)) { explicit.focus(); return; }

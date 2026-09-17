@@ -7,7 +7,7 @@ import { Readable } from "node:stream";
 import { join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
-  AppSettings, AudioRequest, ChatEvent, ChatRequest, CompareEvent, CompareRequest, CompareRun, CreateThreadRequest,
+  AppSettings, AudioRequest, ChatEvent, ChatRequest, CompareEvent, CompareRequest, CompareRun, CompareSynthesisEvent, CreateThreadRequest,
   ImageRequest, MediaResult, PendingMediaJob, PickedAttachment, PublicMessage, ReasoningMode, SessionState,
   TokenUsage, VideoRequest, WebSearchMode
 } from "../shared/contracts";
@@ -65,9 +65,13 @@ import {
 } from "./workspace-runs";
 import { providerRoute } from "../shared/advanced-chat";
 import { CompareTextBudget } from "../shared/compare-limits";
+import {
+  boundedCompareEvidence, buildCompareSynthesisMessages, canSynthesizeCompare, COMPARE_SYNTHESIS_MODEL_ID,
+  CompareSynthesisTextBudget
+} from "../shared/compare-synthesis";
 import { completeJournaledProjectDeletion } from "../shared/project-delete-recovery";
-import { isAppliedTheme, readAppliedTheme, writeAppliedTheme } from "./theme-state";
-import { applyWindowTheme } from "./theme-application";
+import { isThemePreference, readThemePreference, writeThemePreference, type ThemePreference } from "./theme-state";
+import { applyWindowTheme, backgroundColorForTheme, resolveThemePreference } from "./theme-application";
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "mmllm", privileges: { secure: true, standard: true, supportFetchAPI: true } }
@@ -79,8 +83,9 @@ if (process.env.MM_LLM_MOCK === "1" && !app.isPackaged) {
 }
 
 let mainWindow: BrowserWindow | null = null;
-let lastAppliedTheme: "light" | "dark" | null = null;
+let lastThemePreference: ThemePreference | null = null;
 const activeRuns = new Map<string, AbortController>();
+const activeCompareSyntheses = new Set<string>();
 const backgroundQueues = new Map<string, Promise<unknown>>();
 let activeMediaRuns = 0;
 let activeModelRefreshes = 0;
@@ -388,14 +393,14 @@ function registerHandlers(): void {
   });
   ipcMain.handle("appearance:set-theme", async (event, rawTheme: unknown) => {
     trustedInvoke(event);
-    if (!isAppliedTheme(rawTheme)) throw new Error("화면 테마가 올바르지 않습니다.");
+    if (!isThemePreference(rawTheme)) throw new Error("화면 테마가 올바르지 않습니다.");
     try {
-      lastAppliedTheme = applyWindowTheme(rawTheme, lastAppliedTheme, {
+      lastThemePreference = applyWindowTheme(rawTheme, nativeTheme.shouldUseDarkColors, lastThemePreference, {
         setBackgroundColor: (color) => mainWindow?.setBackgroundColor(color),
-        persist: (theme) => writeAppliedTheme(app.getPath("userData"), theme)
+        persist: (preference) => writeThemePreference(app.getPath("userData"), preference)
       });
     } catch (error) {
-      console.warn(`[appearance] Failed to persist the last applied theme (${error instanceof Error ? error.name : "unknown"}).`);
+      console.warn(`[appearance] Failed to persist the theme preference (${error instanceof Error ? error.name : "unknown"}).`);
       throw new Error("화면 테마 상태를 저장하지 못했습니다.");
     }
   });
@@ -1026,6 +1031,7 @@ function registerHandlers(): void {
           attachments: prepared.names, createdAt: new Date().toISOString() };
         run = { id: randomUUID(), prompt, modelIds, webSearchMode: request.webSearchMode,
           createdAt: new Date().toISOString(), attachmentNames: prepared.names,
+          sharedEvidence: boundedCompareEvidence(evidence),
           results: modelIds.map((modelId) => ({ modelId, status: "running", text: "" })) };
         await upsertCompareRun(getActiveProfileId(), run); send({ type: "snapshot", run });
         const compareBudget = new CompareTextBudget();
@@ -1063,6 +1069,78 @@ function registerHandlers(): void {
         if (run) await upsertCompareRun(getActiveProfileId(), run).catch(() => undefined);
         send({ type: "error", message: error instanceof Error ? error.message : "모델 비교에 실패했습니다.", run }, true);
       } finally { discardAttachments(attachmentIds); activeRuns.delete(activeId); port.close(); }
+    })();
+  });
+
+  ipcMain.on("compare:synthesize", (event, rawRunId: unknown) => {
+    const [port] = event.ports; if (!port) return; port.start();
+    const fail = (message: string, run?: CompareRun) => {
+      port.postMessage({ type: "error", message, ...(run ? { run } : {}) } satisfies CompareSynthesisEvent); port.close();
+    };
+    if (!trustedEvent(event) || sessionTransitions.isActive()) {
+      fail("계정 전환이 끝난 뒤 다시 시도해 주세요."); return;
+    }
+    let runId: string; let profileId: string;
+    try { runId = shortString(rawRunId, 100, "비교 실행"); profileId = getActiveProfileId(); }
+    catch (error) { fail(error instanceof Error ? error.message : "종합분석 요청이 올바르지 않습니다."); return; }
+    const synthesisKey = `${profileId}:${runId}`;
+    if (activeCompareSyntheses.has(synthesisKey)) { fail("이 비교의 종합분석이 이미 진행 중입니다."); return; }
+    activeCompareSyntheses.add(synthesisKey);
+    const abort = new AbortController(); const activeId = randomUUID(); activeRuns.set(activeId, abort);
+    port.on("message", (message) => {
+      if (isRecord(message.data) && message.data.type === "cancel") abort.abort(new Error("종합분석을 중단했습니다."));
+    });
+    port.once("close", () => abort.abort(new Error("모델 비교 창이 닫혔습니다.")));
+    const send = (message: CompareSynthesisEvent, force = false) => {
+      if (force || !abort.signal.aborted) port.postMessage(message);
+    };
+    void (async () => {
+      let run: CompareRun | undefined;
+      try {
+        run = (await listCompareRuns(profileId)).find((item) => item.id === runId);
+        if (!run) throw new Error("종합분석할 비교 결과를 찾을 수 없습니다.");
+        if (!canSynthesizeCompare(run)) {
+          throw new Error("종합분석에는 완료되었거나 일부 생성된 답변이 2개 이상 필요합니다.");
+        }
+        assertModel(COMPARE_SYNTHESIS_MODEL_ID, "llm");
+        if (!run.sharedEvidence && run.webSearchMode !== "off") {
+          run.sharedEvidence = boundedCompareEvidence(
+            await prepareSharedWebEvidence(run.prompt, run.webSearchMode, abort)
+          );
+        }
+        run.synthesis = { modelId: COMPARE_SYNTHESIS_MODEL_ID, status: "running", text: "",
+          createdAt: new Date().toISOString() };
+        await upsertCompareRun(profileId, run); send({ type: "snapshot", run: structuredClone(run) });
+
+        const budget = new CompareSynthesisTextBudget(); let lastPersistedBytes = 0;
+        for await (const item of streamChat(COMPARE_SYNTHESIS_MODEL_ID,
+          buildCompareSynthesisMessages(run), run.prompt, abort, { mode: "off" },
+          { reasoningMode: "deep", advanced: { maxOutputTokens: 16_000,
+            responses: { reasoningSummary: "none" } } })) {
+          if (item.type === "delta") {
+            budget.accept(item.text); run.synthesis.text += item.text;
+            send({ type: "delta", runId, text: item.text });
+            if (budget.totalBytes() - lastPersistedBytes >= 64 * 1024) {
+              lastPersistedBytes = budget.totalBytes(); await upsertCompareRun(profileId, structuredClone(run));
+            }
+          } else if (item.type === "usage") run.synthesis.usage = item.usage;
+        }
+        run.synthesis.status = "completed"; delete run.synthesis.error;
+        await upsertCompareRun(profileId, run); resetCreditCache();
+        send({ type: "done", run: structuredClone(run) }, true);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "종합분석에 실패했습니다.";
+        if (run?.synthesis) {
+          run.synthesis.status = abort.signal.aborted
+            ? run.synthesis.text ? "incomplete" : "cancelled"
+            : run.synthesis.text ? "incomplete" : "failed";
+          run.synthesis.error = message;
+          await upsertCompareRun(profileId, run).catch(() => undefined);
+        }
+        resetCreditCache(); send({ type: "error", message, ...(run ? { run: structuredClone(run) } : {}) }, true);
+      } finally {
+        activeCompareSyntheses.delete(synthesisKey); activeRuns.delete(activeId); port.close();
+      }
     })();
   });
 
@@ -1423,11 +1501,9 @@ async function createWindow(): Promise<void> {
     : work.x + Math.round((work.width - width) / 2);
   const y = saved ? Math.max(work.y, Math.min(saved.y, work.y + work.height - height))
     : work.y + Math.round((work.height - height) / 2);
-  const persistedTheme = readAppliedTheme(app.getPath("userData"));
-  const initialTheme = persistedTheme ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light");
-  // Keep the persisted value separate from the OS fallback. The first settings sync may
-  // legitimately persist that fallback, but subsequent identical updates must not rewrite it.
-  lastAppliedTheme = persistedTheme;
+  const persistedPreference = readThemePreference(app.getPath("userData"));
+  const initialTheme = resolveThemePreference(persistedPreference ?? "system", nativeTheme.shouldUseDarkColors);
+  lastThemePreference = persistedPreference;
   mainWindow = new BrowserWindow({
     x, y, width, height, minWidth: 680, minHeight: 620,
     title: "MM_LLM",
@@ -1445,6 +1521,12 @@ async function createWindow(): Promise<void> {
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
+  const updateSystemBackground = () => {
+    if (lastThemePreference !== "system" || !mainWindow) return;
+    const theme = resolveThemePreference("system", nativeTheme.shouldUseDarkColors);
+    mainWindow.setBackgroundColor(backgroundColorForTheme(theme));
+  };
+  nativeTheme.on("updated", updateSystemBackground);
   if (saved?.maximized) mainWindow.maximize();
   let closeCleanupStarted = false;
   mainWindow.on("close", (event) => {
@@ -1466,6 +1548,7 @@ async function createWindow(): Promise<void> {
     void cleanup.finally(() => { if (!closingWindow.isDestroyed()) closingWindow.destroy(); });
   });
   mainWindow.on("closed", () => {
+    nativeTheme.removeListener("updated", updateSystemBackground);
     clearAttachments(); mainWindow = null;
   });
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {

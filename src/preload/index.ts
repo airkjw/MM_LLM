@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
-  AudioRequest, ChatEvent, ChatRequest, CompareEvent, CompareRequest, DesktopApi, DroppedAttachment, ImageRequest,
+  AudioRequest, ChatEvent, ChatRequest, CompareEvent, CompareRequest, CompareSynthesisEvent, DesktopApi, DroppedAttachment, ImageRequest,
   PickedAttachment, VideoRequest
 } from "../shared/contracts";
 
@@ -21,7 +21,7 @@ const desktopApi: DesktopApi = {
   getCredits: (force = false) => ipcRenderer.invoke("credits:get", force),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (settings) => ipcRenderer.invoke("settings:update", settings),
-  setAppliedTheme: (theme) => ipcRenderer.invoke("appearance:set-theme", theme),
+  setThemePreference: (theme) => ipcRenderer.invoke("appearance:set-theme", theme),
   listThreads: () => ipcRenderer.invoke("threads:list"),
   createThread: (request) => ipcRenderer.invoke("threads:create", request),
   loadThread: (id) => ipcRenderer.invoke("threads:load", id),
@@ -55,6 +55,16 @@ const desktopApi: DesktopApi = {
     };
     port1.addEventListener("message", receive); port1.start();
     ipcRenderer.postMessage("compare:stream", request, [port2]);
+    return () => { if (!stopped) port1.postMessage({ type: "cancel" }); };
+  },
+  streamCompareSynthesis(runId: string, onEvent: (event: CompareSynthesisEvent) => void) {
+    const { port1, port2 } = new MessageChannel(); let stopped = false;
+    const cleanup = () => { if (stopped) return; stopped = true; port1.removeEventListener("message", receive); port1.close(); };
+    const receive = (event: MessageEvent<CompareSynthesisEvent>) => {
+      onEvent(event.data); if (event.data.type === "done" || event.data.type === "error") cleanup();
+    };
+    port1.addEventListener("message", receive); port1.start();
+    ipcRenderer.postMessage("compare:synthesize", runId, [port2]);
     return () => { if (!stopped) port1.postMessage({ type: "cancel" }); };
   },
   continueCompare: (runId, modelId) => ipcRenderer.invoke("compare:continue", runId, modelId),

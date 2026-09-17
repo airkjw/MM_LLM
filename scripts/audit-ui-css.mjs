@@ -348,6 +348,7 @@ export function auditCss(css) {
   const darkRoots = matchingRootRules(root, ':root[data-theme="dark"]');
   if (lightRoots.length !== 1) errors.push(`Expected exactly one :root theme block; found ${lightRoots.length}`);
   if (darkRoots.length !== 1) errors.push(`Expected exactly one dark theme root; found ${darkRoots.length}`);
+  if (!lightRoots.length || !darkRoots.length) return { errors, metrics: {}, contrasts: {} };
   const lightRule = rootRule(root, ":root");
   const darkRule = rootRule(root, ':root[data-theme="dark"]');
   if (lightRule.parent?.type !== "root" || darkRule.parent?.type !== "root" ||
@@ -437,7 +438,12 @@ export function auditCss(css) {
     errors.push(`Expected only the composer fade gradient; found ${gradients.length}`);
   }
 
-  const smallRule = rootRule(root, ':root[data-font-size="small"]');
+  const smallRules = matchingRootRules(root, ':root[data-font-size="small"]');
+  if (!smallRules.length) {
+    errors.push('Missing CSS rule: :root[data-font-size="small"]');
+    return { errors, metrics: {}, contrasts };
+  }
+  const smallRule = smallRules[0];
   const smallRootPixels = Number.parseFloat(declarations(smallRule).get("font-size") ?? "0");
   if (smallRootPixels < 15) errors.push(`Small root font must be at least 15px; found ${smallRootPixels}px`);
   const typography = new Map(TYPOGRAPHY_TOKENS.map((token) => [token, declarations(lightRule).get(token)]));

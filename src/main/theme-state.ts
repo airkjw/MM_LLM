@@ -4,7 +4,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-export type AppliedTheme = "light" | "dark";
+export type ThemePreference = "system" | "light" | "dark";
 
 const THEME_STATE_FILE = "appearance.json";
 const MAX_THEME_STATE_BYTES = 128;
@@ -19,8 +19,8 @@ const defaultThemeStateIo: ThemeStateIo = {
   unlink: unlinkSync
 };
 
-export function isAppliedTheme(value: unknown): value is AppliedTheme {
-  return value === "light" || value === "dark";
+export function isThemePreference(value: unknown): value is ThemePreference {
+  return value === "system" || value === "light" || value === "dark";
 }
 
 function themeStatePath(userData: string): string {
@@ -28,10 +28,10 @@ function themeStatePath(userData: string): string {
 }
 
 /**
- * Reads only the non-sensitive, last applied color scheme used to avoid a startup flash.
+ * Reads only the non-sensitive color-scheme preference used to avoid a startup flash.
  * A missing, malformed, or extended record is ignored and the caller uses the OS theme.
  */
-export function readAppliedTheme(userData: string): AppliedTheme | null {
+export function readThemePreference(userData: string): ThemePreference | null {
   let descriptor: number | null = null;
   try {
     descriptor = openSync(themeStatePath(userData), "r");
@@ -44,8 +44,8 @@ export function readAppliedTheme(userData: string): AppliedTheme | null {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
     const record = parsed as Record<string, unknown>;
-    if (Object.keys(record).length !== 1 || !isAppliedTheme(record.theme)) return null;
-    return record.theme;
+    if (Object.keys(record).length !== 1 || !isThemePreference(record.preference)) return null;
+    return record.preference;
   } catch {
     return null;
   } finally {
@@ -56,13 +56,15 @@ export function readAppliedTheme(userData: string): AppliedTheme | null {
 }
 
 /** Atomic write with owner-only permissions where the platform supports POSIX modes. */
-export function writeAppliedTheme(userData: string, theme: AppliedTheme, io: ThemeStateIo = defaultThemeStateIo): void {
-  if (!isAppliedTheme(theme)) throw new Error("화면 테마가 올바르지 않습니다.");
+export function writeThemePreference(
+  userData: string, preference: ThemePreference, io: ThemeStateIo = defaultThemeStateIo
+): void {
+  if (!isThemePreference(preference)) throw new Error("화면 테마가 올바르지 않습니다.");
   mkdirSync(userData, { recursive: true, mode: 0o700 });
   const target = themeStatePath(userData);
   const temporary = `${target}.${randomUUID()}.tmp`;
   try {
-    writeFileSync(temporary, JSON.stringify({ theme }), { encoding: "utf8", mode: 0o600, flag: "wx" });
+    writeFileSync(temporary, JSON.stringify({ preference }), { encoding: "utf8", mode: 0o600, flag: "wx" });
     io.rename(temporary, target);
   } catch (error) {
     try { io.unlink(temporary); } catch { /* Nothing was committed. */ }
