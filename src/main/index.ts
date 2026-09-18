@@ -1113,6 +1113,7 @@ function registerHandlers(): void {
         await upsertCompareRun(profileId, run); send({ type: "snapshot", run: structuredClone(run) });
 
         const budget = new CompareSynthesisTextBudget(); let lastPersistedBytes = 0;
+        let terminalStatus: string | undefined;
         for await (const item of streamChat(COMPARE_SYNTHESIS_MODEL_ID,
           buildCompareSynthesisMessages(run), run.prompt, abort, { mode: "off" },
           { reasoningMode: "deep", advanced: { maxOutputTokens: 16_000,
@@ -1124,6 +1125,15 @@ function registerHandlers(): void {
               lastPersistedBytes = budget.totalBytes(); await upsertCompareRun(profileId, structuredClone(run));
             }
           } else if (item.type === "usage") run.synthesis.usage = item.usage;
+          else if (item.type === "status") terminalStatus = item.status;
+        }
+        if (!run.synthesis.text.trim()) {
+          throw new Error(terminalStatus === "incomplete"
+            ? "종합분석이 출력 한도에 도달했지만 표시할 답변을 만들지 못했습니다. 다시 분석해 주세요."
+            : "종합분석 모델이 표시할 수 있는 답변을 반환하지 않았습니다. 다시 분석해 주세요.");
+        }
+        if (terminalStatus === "incomplete") {
+          throw new Error("종합분석이 출력 한도에 도달해 일부 답변만 저장했습니다. 다시 분석하면 새 결과를 만들 수 있습니다.");
         }
         run.synthesis.status = "completed"; delete run.synthesis.error;
         await upsertCompareRun(profileId, run); resetCreditCache();

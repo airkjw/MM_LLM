@@ -222,6 +222,23 @@ test("provider normalizers preserve Responses lifecycle statuses and ignore unkn
   assert.equal(failed[0].type, "usage"); assert.equal(failed[1].type, "error");
 });
 
+test("Responses terminal events recover a final-only answer without duplicating streamed text", () => {
+  const finalOnly = new ProviderEventNormalizer("responses");
+  assert.deepEqual(finalOnly.accept({ type: "response.completed", response: { id: "resp_final", output: [
+    { type: "message", content: [{ type: "output_text", text: "최종 종합 답변" }] }
+  ] } }), [
+    { type: "text", text: "최종 종합 답변" },
+    { type: "status", status: "completed", responseId: "resp_final" }
+  ]);
+
+  const streamed = new ProviderEventNormalizer("responses");
+  assert.deepEqual(streamed.accept({ type: "response.output_text.delta", delta: "이미 받은 답변" }),
+    [{ type: "text", text: "이미 받은 답변" }]);
+  assert.deepEqual(streamed.accept({ type: "response.completed", response: { id: "resp_streamed", output: [
+    { type: "message", content: [{ type: "output_text", text: "이미 받은 답변" }] }
+  ] } }), [{ type: "status", status: "completed", responseId: "resp_streamed" }]);
+});
+
 test("background parsing preserves partial output, failures, and bounded polling", () => {
   assert.deepEqual([0, 1, 2, 3, 99].map(nextBackgroundPollDelay), [5000, 10000, 20000, 60000, 60000]);
   assert.equal(normalizeBackgroundStatus("future"), "in_progress");

@@ -4,6 +4,7 @@ import {
   claudeAllowsSampling, claudeThinkingCapabilities, parseToolArguments, providerForModel, reasoningEffortFromMode, responsesToolChoice, responsesToolsPayload, structuredOutputPayload,
   tokenUsage, type NormalizedRunEvent, type ProviderKind
 } from "./advanced-chat.ts";
+import { responseOutputText } from "./responses-lifecycle.ts";
 
 export const PROVIDER_API_REFERENCE = {
   lastVerified: "2026-09-16",
@@ -326,6 +327,7 @@ export class ProviderEventNormalizer {
   private readonly claudeBlocks: Array<Record<string, unknown>> = [];
   private responseToolCount = 0;
   private responseRefusalDelta = false;
+  private responseVisibleText = false;
   private responseReasoningSummary = "";
   private claudeToolCount = 0;
   private claudeUsage: TokenUsage | undefined;
@@ -378,13 +380,16 @@ export class ProviderEventNormalizer {
   private responses(event: Record<string, unknown>): NormalizedRunEvent[] {
     const events: NormalizedRunEvent[] = [];
     if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+      if (event.delta) this.responseVisibleText = true;
       events.push({ type: "text", text: event.delta });
     }
     if (event.type === "response.refusal.delta" && typeof event.delta === "string") {
       this.responseRefusalDelta = true;
+      if (event.delta) this.responseVisibleText = true;
       events.push({ type: "text", text: event.delta });
     }
     if (event.type === "response.refusal.done" && !this.responseRefusalDelta && typeof event.refusal === "string") {
+      if (event.refusal) this.responseVisibleText = true;
       events.push({ type: "text", text: event.refusal });
     }
     if (event.type === "response.reasoning_summary_text.delta" && typeof event.delta === "string") {
@@ -409,6 +414,16 @@ export class ProviderEventNormalizer {
     }
     const response = isRecord(event.response) ? event.response : undefined;
     const responseId = typeof response?.id === "string" ? response.id : undefined;
+    if ((event.type === "response.completed" || event.type === "response.incomplete") &&
+      !this.responseVisibleText && response) {
+      // Some compatible gateways omit output_text.delta events and only include
+      // the complete public answer in the terminal response object.
+      const finalText = responseOutputText(response);
+      if (finalText) {
+        this.responseVisibleText = true;
+        events.push({ type: "text", text: finalText });
+      }
+    }
     if (["response.queued", "response.in_progress", "response.completed", "response.incomplete"].includes(String(event.type))) {
       events.push({ type: "status", status: String(event.type).slice("response.".length), responseId });
     }

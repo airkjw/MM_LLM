@@ -2527,12 +2527,15 @@ export default function App() {
           </div>}
           {compareRun.synthesis && <section className="compare-synthesis" aria-live="polite">
             <header><span><Sparkles size={16} /><strong>{modelLabel(compareRun.synthesis.modelId)} 종합 분석</strong></span>
-              <span>{compareRun.synthesis.status}</span></header>
+              <span>{{ running: "분석 중", completed: "완료", incomplete: "일부 완료", failed: "실패",
+                cancelled: "중단됨" }[compareRun.synthesis.status]}</span></header>
             <div className="compare-synthesis-legend">{compareRun.results.map((result, index) =>
               <span key={result.modelId}>답변 {String.fromCharCode(65 + index)} · {modelLabel(result.modelId)}</span>)}</div>
             <div className="compare-synthesis-body">{compareRun.synthesis.text
               ? <MarkdownText text={compareRun.synthesis.text} />
-              : <span className="compare-result-plain">{compareRun.synthesis.error ?? "종합분석 응답을 기다리는 중…"}</span>}</div>
+              : <span className="compare-result-plain">{compareRun.synthesis.error ??
+                (compareRun.synthesis.status === "running" ? "종합분석 응답을 기다리는 중…"
+                  : "표시할 종합분석 결과가 없습니다. 종합분석을 다시 실행해 주세요.")}</span>}</div>
             {compareRun.synthesis.error && compareRun.synthesis.text &&
               <div className="compare-synthesis-warning" role="status">{compareRun.synthesis.error}</div>}
           </section>}
