@@ -66,7 +66,8 @@ import {
 import { providerRoute } from "../shared/advanced-chat";
 import { CompareTextBudget } from "../shared/compare-limits";
 import {
-  boundedCompareEvidence, buildCompareSynthesisMessages, canSynthesizeCompare, COMPARE_SYNTHESIS_MODEL_ID,
+  boundedCompareEvidence, buildCompareSynthesisMessages, canSynthesizeCompare, COMPARE_SYNTHESIS_GENERATION,
+  COMPARE_SYNTHESIS_MODEL_ID,
   CompareSynthesisTextBudget
 } from "../shared/compare-synthesis";
 import { completeJournaledProjectDeletion } from "../shared/project-delete-recovery";
@@ -1116,8 +1117,7 @@ function registerHandlers(): void {
         let terminalStatus: string | undefined;
         for await (const item of streamChat(COMPARE_SYNTHESIS_MODEL_ID,
           buildCompareSynthesisMessages(run), run.prompt, abort, { mode: "off" },
-          { reasoningMode: "deep", advanced: { maxOutputTokens: 16_000,
-            responses: { reasoningSummary: "none" } } })) {
+          COMPARE_SYNTHESIS_GENERATION)) {
           if (item.type === "delta") {
             budget.accept(item.text); run.synthesis.text += item.text;
             send({ type: "delta", runId, text: item.text });

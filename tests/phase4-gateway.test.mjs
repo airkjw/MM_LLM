@@ -23,7 +23,8 @@ import { assertDroppedFileBatch } from "../src/shared/drop-limits.ts";
 import { completeJournaledProjectDeletion } from "../src/shared/project-delete-recovery.ts";
 import { CompareTextBudget, MAX_COMPARE_RESULT_BYTES } from "../src/shared/compare-limits.ts";
 import {
-  boundedCompareEvidence, buildCompareSynthesisMessages, canSynthesizeCompare, COMPARE_SYNTHESIS_MODEL_ID,
+  boundedCompareEvidence, buildCompareSynthesisMessages, canSynthesizeCompare, COMPARE_SYNTHESIS_GENERATION,
+  COMPARE_SYNTHESIS_MODEL_ID,
   compareSynthesisCandidates, CompareSynthesisTextBudget, MAX_COMPARE_SHARED_EVIDENCE_BYTES,
   MAX_COMPARE_SYNTHESIS_RESULT_BYTES
 } from "../src/shared/compare-synthesis.ts";
@@ -429,6 +430,11 @@ test("provider request shapes keep Claude and Responses routes isolated", () => 
   const responseRequest = buildProviderRequest({ model: { ...openai, id: "gpt-6-codex" }, messages,
     reasoningMode: "auto", advanced: {}, stream: true });
   assert.equal(responseRequest.path, "/responses/");
+  const synthesisRequest = buildProviderRequest({ model: { ...openai, id: COMPARE_SYNTHESIS_MODEL_ID }, messages,
+    ...COMPARE_SYNTHESIS_GENERATION, stream: true });
+  assert.equal(synthesisRequest.path, "/chat/completions/");
+  assert.equal(synthesisRequest.body.reasoning_effort, "high");
+  assert.equal(synthesisRequest.body.max_completion_tokens, 16_000);
 });
 
 test("Claude thinking matrix follows KHU current generations", () => {

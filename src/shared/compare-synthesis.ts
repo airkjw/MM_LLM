@@ -1,9 +1,14 @@
-import type { CompareRun } from "./contracts";
+import type { ChatAdvancedSettings, CompareRun, ReasoningMode } from "./contracts";
 
 export const COMPARE_SYNTHESIS_MODEL_ID = "gpt-5.6-sol";
 export const MAX_COMPARE_SHARED_EVIDENCE_BYTES = 256 * 1024;
 export const MAX_COMPARE_SYNTHESIS_INPUT_BYTES = 768 * 1024;
 export const MAX_COMPARE_SYNTHESIS_RESULT_BYTES = 256 * 1024;
+
+export const COMPARE_SYNTHESIS_GENERATION = {
+  reasoningMode: "deep",
+  advanced: { maxOutputTokens: 16_000 }
+} satisfies { reasoningMode: ReasoningMode; advanced: ChatAdvancedSettings };
 
 const ANSWER_LABELS = ["A", "B", "C"] as const;
 
