@@ -1,11 +1,13 @@
 import { app, safeStorage } from "electron";
-import { mkdir, open, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { mkdir, open, readdir, rm, unlink } from "node:fs/promises";
+import { basename, extname, join } from "node:path";
+import { decodeBackupBytes, type PortableProject } from "../shared/backup-format";
 import type { ProjectDocument, ProjectSummary } from "../shared/contracts";
-import { chunkDocument } from "./thread-context";
+import { writeAtomic } from "./atomic-file";
 import { extractDocx, extractPdf, extractXlsx } from "./document-text";
 import { createVaultKey, decryptVaultBlob, encryptVaultBlob, type VaultKey } from "./project-vault-crypto";
+import { chunkDocument } from "./thread-context";
 
 export const MAX_PROJECT_DOCUMENT_BYTES = 18 * 1024 * 1024;
 export const MAX_PROJECT_BYTES = 64 * 1024 * 1024;
@@ -57,9 +59,7 @@ async function ensure(profileId: string): Promise<void> {
 }
 
 async function atomic(path: string, bytes: Buffer): Promise<void> {
-  const temp = `${path}.${randomUUID()}.tmp`;
-  await writeFile(temp, bytes, { mode: 0o600 });
-  await rename(temp, path);
+  await writeAtomic(path, bytes);
 }
 
 async function encryptText(path: string, value: unknown): Promise<void> {
@@ -319,3 +319,44 @@ export const projectContext = (profileId: string, projectId: string, query: stri
   serializeProfile(profileId, () => projectContextUnlocked(profileId, projectId, query, includeRawPdfs));
 export const clearProjectVault = (profileId: string) => serializeProfile(profileId,
   () => clearProjectVaultUnlocked(profileId));
+
+export function exportProjectBackup(profileId: string): Promise<PortableProject[]> {
+  return serializeProfile(profileId, async () => {
+    const value = await db(profileId); const keys = (await loadKeyring(profileId)).keys;
+    const projects: PortableProject[] = [];
+    for (const project of value.projects) {
+      const documents: PortableProject["documents"] = [];
+      for (const { blobId, indexBlobId, ...doc } of project.documents) {
+        const content = decryptVaultBlob(await readEncryptedBlob(profileId, blobId), keys, `${profileId}:${blobId}`);
+        const index = decryptVaultBlob(await readEncryptedBlob(profileId, indexBlobId), keys, `${profileId}:${indexBlobId}`);
+        try { documents.push({ ...doc, content: content.toString("base64"), index: index.toString("base64") }); }
+        finally { content.fill(0); index.fill(0); }
+      }
+      projects.push({ ...project, documents });
+    }
+    return projects;
+  });
+}
+
+/** Called only for a fresh staged profile after portable backup validation. */
+export function restoreProjectBackup(profileId: string, projects: PortableProject[]): Promise<void> {
+  return serializeProfile(profileId, async () => {
+    await ensure(profileId); const key = await recoverRotation(profileId);
+    const restored: ProjectRecord[] = [];
+    for (const project of projects) {
+      const documents: StoredDocument[] = [];
+      for (const { content, index, ...doc } of project.documents) {
+        const blobId = randomUUID(); const indexBlobId = randomUUID();
+        const bytes = decodeBackupBytes(content, MAX_PROJECT_DOCUMENT_BYTES);
+        const indexBytes = decodeBackupBytes(index, MAX_PROJECT_INDEX_BYTES);
+        try {
+          await atomic(blobPath(profileId, blobId), encryptVaultBlob(bytes, key, `${profileId}:${blobId}`));
+          await atomic(blobPath(profileId, indexBlobId), encryptVaultBlob(indexBytes, key, `${profileId}:${indexBlobId}`));
+        } finally { bytes.fill(0); indexBytes.fill(0); }
+        documents.push({ ...doc, blobId, indexBlobId });
+      }
+      restored.push({ ...project, documents });
+    }
+    await saveDb(profileId, { version: 1, projects: restored });
+  });
+}

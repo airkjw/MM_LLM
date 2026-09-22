@@ -1,29 +1,44 @@
-name: Build Windows release artifact
+name: Build and publish release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (for example v0.4.0)
+        required: true
+        type: string
+      publish:
+        description: Publish after both platforms pass verification
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: npm
+      - name: Check version and release notes
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: node scripts/check-release-input.mjs
       - run: npm ci
       - run: npm test
+      - run: npm run ui:audit
       - run: npm run dist:win
-      - name: Verify Windows update artifacts
-        shell: pwsh
-        run: |
-          $version = node -p "require('./package.json').version"
-          if (-not (Test-Path "release/MM_LLM-$version-x64-Setup.exe")) { throw "Missing installer" }
-          if (-not (Test-Path "release/latest.yml")) { throw "Missing update metadata" }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release
@@ -32,3 +47,86 @@ jobs:
             release/latest.yml
             release/*.blockmap
           if-no-files-found: error
+          retention-days: 14
+
+  mac:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Check version and release notes
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: node scripts/check-release-input.mjs
+      - name: Check signing secret presence
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: node scripts/check-signing-secrets.mjs
+      - run: npm ci
+      - run: npm test
+      - run: npm run ui:audit
+      - name: Build, sign and notarize both architectures
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run dist:mac
+      - name: Verify Developer ID signing and notarization
+        shell: bash
+        run: |
+          set -euo pipefail
+          for app in release/mac/MM_LLM.app release/mac-arm64/MM_LLM.app; do
+            codesign --verify --deep --strict "$app"
+            xcrun stapler validate "$app"
+            spctl --assess --type execute --verbose=4 "$app"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-release
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/latest-mac.yml
+            release/*.blockmap
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [windows, mac]
+    if: ${{ inputs.publish }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-release'
+          path: release
+          merge-multiple: true
+      - run: npm run release:verify:mac
+      - run: npm run release:verify:win
+      - name: Upload to draft, then publish with release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: node scripts/publish-release.mjs

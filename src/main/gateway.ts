@@ -1,36 +1,25 @@
 import { app } from "electron";
 import { randomUUID } from "node:crypto";
-import { mockModels } from "./mock";
-import type {
-  AudioRequest, BackgroundResponse, ChatAdvancedSettings, CreditBalance, GatewayModel, ImageRequest, MediaResult,
-  ReasoningMode, TokenUsage, VideoRequest, WebSearchMode
-} from "../shared/contracts";
-import { availableSearchModel, hasNativeWebSearch, shouldSearchWebInAuto } from "../shared/web-search";
-import { shouldRetryGateway } from "../shared/gateway-retry";
-import { pinnedHttpsRequest, persistChatbotFileResponse, persistMediaBytes, persistMediaCandidate, persistMediaResponse, persistPcmResponse } from "./media-store";
-import { ChatStreamBudget, ChatStreamLimitError, MAX_CHAT_RESPONSE_BYTES } from "../shared/stream-limits";
-import { buildClaudeCountTokensRequest, buildProviderRequest, buildResponsesPayload, ProviderEventNormalizer } from "../shared/provider-adapters";
-import type { ManualToolCall } from "../shared/contracts";
-import { gatewayScheduler } from "./request-scheduler";
+import { assertAdvancedOptionsForModel, isOpenAiModel, providerRoute } from "../shared/advanced-chat";
+import { MAX_STT_JSON_BYTES, readJsonResponseWithLimit } from "../shared/bounded-json";
+import { chatbotRequestBody, chatbotUsageSummary, MAX_CHATBOT_USAGE_BYTES, normalizeChatbotUsage } from "../shared/chatbot-adapter";
+import { BufferedChatbotTextSanitizer, chatbotFileExpiry, MAX_CHATBOT_FILE_BYTES, validateChatbotFileUrl } from "../shared/chatbot-files";
+import type { AudioRequest, BackgroundResponse, ChatAdvancedSettings, CreditBalance, GatewayModel, ImageRequest, ManualToolCall, MediaResult, ReasoningMode, TokenUsage, VideoRequest, WebSearchMode } from "../shared/contracts";
 import { parseCreditsChargedHeader } from "../shared/credit-usage";
-import {
-  imageRequestPayload, musicRequestPayload, ttsRequestPayload, videoRequestPayload
-} from "../shared/media-capabilities";
-import { audioLaneForModel } from "../shared/media-capabilities";
+import { combineResearchResults, parseResearchPlan } from "../shared/deep-research";
+import { audioLaneForModel, imageRequestPayload, musicRequestPayload, ttsRequestPayload, videoRequestPayload } from "../shared/media-capabilities";
+import { imageUsage, musicResponseMetadata, ttsTokenUsage, videoResponseMetadata } from "../shared/media-response-metadata";
 import { parseTranscriptResult } from "../shared/meeting-transcript";
 import { parseGatewayModels } from "../shared/model-catalog";
-import { MAX_STT_JSON_BYTES, readJsonResponseWithLimit } from "../shared/bounded-json";
+import { buildClaudeCountTokensRequest, buildProviderRequest, buildResponsesPayload, ProviderEventNormalizer } from "../shared/provider-adapters";
+import { backgroundFailure, backgroundUsage, nextBackgroundPollDelay, normalizeBackgroundStatus, responseOutputText, responseReasoningSummary, responseToolCalls } from "../shared/responses-lifecycle";
+import { ChatStreamBudget, ChatStreamLimitError, MAX_CHAT_RESPONSE_BYTES } from "../shared/stream-limits";
 import { sttKickoffBilling } from "../shared/stt-billing";
-import { imageUsage, musicResponseMetadata, ttsTokenUsage, videoResponseMetadata } from "../shared/media-response-metadata";
-import { combineResearchResults, parseResearchPlan } from "../shared/deep-research";
-import {
-  backgroundFailure, backgroundUsage, nextBackgroundPollDelay, normalizeBackgroundStatus,
-  responseOutputText, responseReasoningSummary, responseToolCalls
-} from "../shared/responses-lifecycle";
-import { assertAdvancedOptionsForModel, isOpenAiModel } from "../shared/advanced-chat";
-import { providerRoute } from "../shared/advanced-chat";
-import { BufferedChatbotTextSanitizer, chatbotFileExpiry, MAX_CHATBOT_FILE_BYTES, validateChatbotFileUrl } from "../shared/chatbot-files";
-import { chatbotRequestBody, chatbotUsageSummary, MAX_CHATBOT_USAGE_BYTES, normalizeChatbotUsage } from "../shared/chatbot-adapter";
+import { availableSearchModel, hasNativeWebSearch, shouldSearchWebInAuto } from "../shared/web-search";
+import { GatewayError, gatewayRequest } from "./gateway-transport";
+import { persistChatbotFileResponse, persistMediaBytes, persistMediaCandidate, persistMediaResponse, persistPcmResponse, pinnedHttpsRequest } from "./media-store";
+import { mockModels } from "./mock";
+import { gatewayScheduler } from "./request-scheduler";
 
 export const GATEWAY = "https://factchat-cloud.mindlogic.ai/v1/gateway";
 let apiKey: string | null = null;
@@ -70,79 +59,26 @@ function operationPath(value: string): string {
   return encodeURIComponent(value);
 }
 
-function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(signal.reason);
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
-  });
-}
-
-function retryDelay(response: Response, attempt: number): number {
-  const header = response.headers.get("retry-after");
-  if (header) {
-    const seconds = Number(header);
-    if (Number.isFinite(seconds)) return Math.min(30_000, Math.max(0, seconds * 1000));
-    const date = Date.parse(header);
-    if (Number.isFinite(date)) return Math.min(30_000, Math.max(0, date - Date.now()));
-  }
-  return Math.min(8_000, 750 * 2 ** attempt);
-}
-
-async function errorDetail(response: Response): Promise<string> {
-  try {
-    const json = await response.json() as Record<string, unknown>;
-    const detail = isRecord(json.detail) ? json.detail.message : json.detail;
-    const error = isRecord(json.error) ? json.error.message : json.error;
-    return [detail, error, json.message].find((item) => typeof item === "string" && item.trim()) as string ?? "";
-  } catch { return ""; }
-}
-
 async function gatewayFetchWithKey(path: string, key: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${key}`);
   headers.set("User-Agent", `MM_LLM/${app.getVersion()}`);
-  const method = (init.method ?? "GET").toUpperCase();
-  let response: Response;
-  for (let attempt = 0; ; attempt++) {
-    init.signal?.throwIfAborted();
-    response = await fetch(`${GATEWAY}${path}`, { ...init, headers });
-    if (!shouldRetryGateway({ status: response.status, method, attempt })) break;
-    await response.body?.cancel().catch(() => undefined);
-    await abortableDelay(retryDelay(response, attempt), init.signal ?? undefined);
-  }
-  if (!response.ok) {
-    const detail = await errorDetail(response);
-    const suffix = detail ? ` (${detail.slice(0, 500)})` : "";
-    if (response.status === 400) throw new GatewayError(400, `입력 형식이나 모델 설정을 확인해 주세요.${suffix}`);
-    if (response.status === 401) throw new GatewayError(401, "API 키가 유효하지 않습니다.");
-    if (response.status === 402) throw new GatewayError(402, "크레딧 잔액이 부족합니다.");
-    if (response.status === 403) throw new GatewayError(403, "이 모델 또는 Gateway API에 대한 접근 권한이 없습니다.");
-    if (response.status === 404) throw new GatewayError(404, "모델 또는 작업을 찾을 수 없습니다. 모델 목록을 새로고침해 주세요.");
-    if (response.status === 413) throw new GatewayError(413, "첨부 자료가 API의 25MB 한도를 넘었습니다.");
-    if (response.status === 429) throw new GatewayError(429, `요청이 많아 잠시 제한됐습니다. 잠시 후 다시 시도해 주세요.${suffix}`);
-    throw new GatewayError(response.status, `ChatKHU API 오류 (${response.status}). 잠시 후 다시 시도해 주세요.${suffix}`);
-  }
-  return response;
+  return gatewayRequest(`${GATEWAY}${path}`, { ...init, headers });
 }
 
 async function gatewayFetch(path: string, init: RequestInit = {}): Promise<Response> {
   return gatewayFetchWithKey(path, requireKey(), init);
 }
 
-export class GatewayError extends Error {
-  constructor(public readonly status: number, message: string) {
-    super(message);
-  }
-}
+export { GatewayError } from "./gateway-transport";
 
-export async function listModelsForKey(key: string): Promise<GatewayModel[]> {
+export async function listModelsForKey(key: string, signal?: AbortSignal): Promise<GatewayModel[]> {
   if (MOCK) {
     if (!key) throw new Error("API 키를 먼저 입력해 주세요.");
     return mockModels;
   }
-  const release = await gatewayScheduler.acquire("standard");
-  try { const response = await gatewayFetchWithKey("/models/", key);
+  const release = await gatewayScheduler.acquire("standard", signal);
+  try { const response = await gatewayFetchWithKey("/models/", key, { signal });
     const json = await response.json() as Record<string, unknown>; return parseGatewayModels(json); }
   finally { release(); }
 }

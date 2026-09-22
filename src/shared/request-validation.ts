@@ -8,7 +8,7 @@ export const SUPPORTED_ASPECT_RATIOS = ["16:9", "1:1", "9:16", "4:3"] as const;
 export const SUPPORTED_TTS_VOICES = TTS_VOICES;
 
 export const IPC_ALLOWED_KEYS = {
-  settingsUpdate: ["defaultInstruction", "theme", "fontSize"],
+  settingsUpdate: ["defaultInstruction", "theme", "fontSize", "favoriteModels", "recentModels"],
   threadCreate: ["modelId", "instruction", "purpose", "projectId", "target"],
   threadSettings: ["modelId", "instruction", "reasoningMode", "advanced"],
   chat: ["threadId", "modelId", "text", "attachmentIds", "regenerate",

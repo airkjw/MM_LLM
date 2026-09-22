@@ -1,6 +1,6 @@
 {
   "name": "mm-llm",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "private": true,
   "author": "JOUNGWOOK KWON",
   "description": "Medical MBA desktop workspace for ChatKHU Gateway",
@@ -14,14 +14,16 @@
     "dist:mac:prepare": "node scripts/ensure-canvas-binaries.mjs mac && npm run icon && npm run build",
     "dist:mac:arm64": "electron-builder --mac --arm64 --publish never",
     "dist:mac:x64": "electron-builder --mac --x64 --publish never",
-    "dist:mac": "npm run dist:mac:prepare && npm run dist:mac:arm64 && npm run dist:mac:x64 && node scripts/merge-mac-update-metadata.mjs",
+    "dist:mac": "npm run dist:mac:prepare && npm run dist:mac:arm64 && npm run dist:mac:x64 && node scripts/merge-mac-update-metadata.mjs && npm run release:verify:mac",
     "dist:mac:unsigned:arm64": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --arm64 --publish never --config.mac.identity=null",
     "dist:mac:unsigned:x64": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --x64 --publish never --config.mac.identity=null",
     "dist:mac:unsigned": "npm run dist:mac:prepare && npm run dist:mac:unsigned:arm64 && npm run dist:mac:unsigned:x64",
-    "dist:win": "node scripts/ensure-canvas-binaries.mjs win && npm run icon && npm run build && electron-builder --win nsis --x64 --publish never",
+    "dist:win": "node scripts/ensure-canvas-binaries.mjs win && npm run icon && npm run build && electron-builder --win nsis --x64 --publish never && npm run release:verify:win",
     "test": "node --test tests/*.test.mjs && npm run ui:check",
     "ui:audit": "node scripts/audit-ui-css.mjs",
-    "ui:check": "tsx --test --test-concurrency=1 tests/sidebar-ui-dom.test.tsx"
+    "ui:check": "tsx --test --test-concurrency=1 tests/sidebar-ui-dom.test.tsx tests/workspace-ui-dom.test.tsx",
+    "release:verify:mac": "node scripts/verify-release.mjs mac",
+    "release:verify:win": "node scripts/verify-release.mjs win"
   },
   "dependencies": {
     "@assistant-ui/react": "0.15.20",

@@ -1,0 +1,10 @@
+import { readFile, access } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+const { version } = JSON.parse(await readFile('package.json', 'utf8'));
+const tag = process.env.RELEASE_TAG;
+if (!/^v\d+\.\d+\.\d+$/.test(tag ?? '') || tag !== `v${version}`) throw new Error('Release tag must match package.json version');
+const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+const target = execFileSync('git', ['rev-parse', `refs/tags/${tag}^{commit}`], { encoding: 'utf8' }).trim();
+if (head !== target) throw new Error('Checkout must match the release tag');
+await access(`docs/RELEASE_NOTES_${tag}.md`);
+console.log(`Release input verified: ${tag}`);

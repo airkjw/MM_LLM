@@ -16,7 +16,8 @@ function readSource(path) {
 }
 
 const css = readSource(CSS_PATH);
-const app = readSource(APP_PATH);
+const app = [readSource(APP_PATH), ...["ChatPanel", "MediaPanel", "Login", "ModelPicker", "ui-shared", "AppDialogs"].map((name) =>
+  readSource(new URL(`../src/renderer/src/${name}.tsx`, import.meta.url)))].join("\n");
 
 function expectMutationError(name, mutate, pattern) {
   test(`UI audit rejects ${name}`, () => {

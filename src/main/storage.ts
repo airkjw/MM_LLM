@@ -1,22 +1,18 @@
 import { app, safeStorage } from "electron";
-import { mkdir, open, rename, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
-import type {
-  AppSettings, BackgroundResponse, CreateThreadRequest, PendingMediaJob, PublicMessage, ThreadSearchResult,
-  ThreadSnapshot, ThreadSummary, WebSearchMode
-} from "../shared/contracts";
-import type { WebSearchCacheEntry } from "../shared/web-search";
-import { chunkDocument } from "./thread-context";
-import { assertPendingJobResultSize } from "./media-jobs";
-import {
-  MAX_BACKGROUND_RESPONSE_BYTES, planBackgroundReconciliation, upsertBackgroundResponseRecord
-} from "../shared/responses-lifecycle";
+import { mkdir, open, unlink } from "node:fs/promises";
+import { join } from "node:path";
+import { validateBackup, type PortableBackup } from "../shared/backup-format";
 import { redactChatbotPublicUrls } from "../shared/chatbot-files";
-import {
-  assertThreadStoreByteLength, DEFAULT_INSTRUCTION, MAX_THREAD_STORE_BYTES, mergeUniqueRecords, normalizeAppSettings, normalizeThreadPreferences,
-  profileMoveCleanupFilenames, rankThreadRecords, resolveKeyRotationHash, settingsProfileFilename
-} from "./storage-logic";
+import type { AppSettings, BackgroundResponse, CreateThreadRequest, PendingMediaJob, PublicMessage, ThreadSearchResult, ThreadSnapshot, ThreadSummary, WebSearchMode } from "../shared/contracts";
+import { MAX_BACKGROUND_RESPONSE_BYTES, planBackgroundReconciliation, upsertBackgroundResponseRecord } from "../shared/responses-lifecycle";
+import { assertStoreGrowth, assertThreadCapacity } from "../shared/storage-limits";
+import type { WebSearchCacheEntry } from "../shared/web-search";
+import { writeAtomic } from "./atomic-file";
+import { assertPendingJobResultSize } from "./media-jobs";
+import { clearProjectVault, exportProjectBackup, restoreProjectBackup } from "./project-vault";
+import { assertThreadStoreByteLength, DEFAULT_INSTRUCTION, MAX_THREAD_STORE_BYTES, mergeUniqueRecords, normalizeAppSettings, normalizeThreadPreferences, profileMoveCleanupFilenames, rankThreadRecords, resolveKeyRotationHash, settingsProfileFilename } from "./storage-logic";
+import { chunkDocument } from "./thread-context";
 
 export type AttachmentContext = { kind: "document" | "image"; name: string; chunks?: string[]; dataUrl?: string;
   rawPdfBase64?: string };
@@ -69,9 +65,7 @@ async function ensureVault(): Promise<void> {
 async function encryptToFile(name: string, plain: string): Promise<void> {
   await ensureVault();
   const encrypted = await safeStorage.encryptStringAsync(plain);
-  const temp = file(`${name}.${randomUUID()}.tmp`);
-  await writeFile(temp, encrypted, { mode: 0o600 });
-  await rename(temp, file(name));
+  await writeAtomic(file(name), encrypted);
 }
 async function decryptFromFile(name: string, maxEncryptedBytes?: number): Promise<string | null> {
   await ensureVault();
@@ -246,6 +240,55 @@ export function clearActiveProfile(): void { currentProfileId = null; }
 export function setAccountNamespace(key: string | null): void { if (!key) clearActiveProfile(); }
 function requireProfile(): string { if (!currentProfileId) throw new Error("로그인이 필요합니다."); return currentProfileId; }
 export function getActiveProfileId(): string { return requireProfile(); }
+
+export function exportPortableBackup(): Promise<PortableBackup> {
+  return serializeMutation(async () => {
+    const profileId = requireProfile();
+    const threads = (await loadThreads()).threads;
+    const projects = await exportProjectBackup(profileId);
+    return validateBackup({ version: 1, createdAt: new Date().toISOString(), threads,
+      settings: await loadSettings(), projects });
+  });
+}
+
+export function restorePortableBackup(input: unknown): Promise<void> {
+  const backup = validateBackup(input);
+  const threads = parseThreads(JSON.stringify({ version: 2, threads: backup.threads }));
+  assertStoreGrowth(threads.threads);
+  // Consent must be given on this computer. Remote background jobs are not restarted by a restore.
+  for (const thread of threads.threads) {
+    thread.attachmentConsent = false; thread.previousResponseId = undefined;
+    for (const message of thread.messages) {
+      if (message.backgroundResponseId) { message.backgroundResponseId = undefined; message.status = "incomplete"; }
+      if (message.files) message.files = message.files.map((file) => ({ ...file, mediaUrl: "", expiresAt: new Date(0).toISOString() }));
+    }
+  }
+  return serializeMutation(async () => {
+    const previousId = requireProfile(); const registry = await loadProfiles();
+    const record = registry.profiles.find((profile) => profile.id === previousId);
+    if (!record) throw new Error("현재 계정의 저장 정보를 찾을 수 없습니다.");
+    const restoredId = randomUUID();
+    let commitAttempted = false;
+    try {
+      await encryptToFile(threadFilename(restoredId), JSON.stringify(threads));
+      await encryptToFile(settingsFilename(restoredId), JSON.stringify({ version: 1, settings: normalizeAppSettings(backup.settings) }));
+      await restoreProjectBackup(restoredId, backup.projects);
+      // Only the encrypted registry pointer changes once all staged data is durable.
+      // Previous files remain untouched for recovery; no API key is imported or replaced.
+      record.id = restoredId; record.lastUsedAt = new Date().toISOString();
+      commitAttempted = true;
+      await saveProfiles(registry);
+      currentProfileId = restoredId;
+    } catch (error) {
+      if (commitAttempted) {
+        const observed = await loadProfiles();
+        if (observed.profiles.some((profile) => profile.id === restoredId)) { currentProfileId = restoredId; return; }
+      }
+      await Promise.all([unlinkIfPresent(threadFilename(restoredId)), unlinkIfPresent(settingsFilename(restoredId)), clearProjectVault(restoredId)]);
+      throw error;
+    }
+  });
+}
 export async function rotateActiveProfileKey(nextKey: string): Promise<void> {
   await serializeMutation(async () => {
     const profileId = requireProfile();
@@ -337,9 +380,9 @@ function parseThreads(plain: string): StoredThreads {
   assertThreadStoreByteLength(Buffer.byteLength(plain, "utf8"));
   const value = JSON.parse(plain) as StoredThreads | LegacyStoredThreads;
   if (![1, 2].includes(value.version) || !Array.isArray(value.threads)) throw new Error("대화 저장 파일 형식이 올바르지 않습니다.");
-  if (value.threads.length > 500 || value.threads.some((thread) => !thread || typeof thread !== "object" ||
+  if (value.threads.some((thread) => !thread || typeof thread !== "object" ||
     typeof thread.id !== "string" || thread.id.length > 100 || typeof thread.title !== "string" ||
-    !Array.isArray(thread.messages) || thread.messages.length > 10_000 || thread.messages.some((message) =>
+    !Array.isArray(thread.messages) || thread.messages.some((message) =>
       !message || typeof message !== "object" || typeof message.id !== "string" || message.id.length > 100 ||
       !["user", "assistant"].includes(message.role) || typeof message.text !== "string" ||
       typeof message.createdAt !== "string" || !(typeof message.apiContent === "string" ||
@@ -349,7 +392,8 @@ function parseThreads(plain: string): StoredThreads {
   return { version: 2, threads: value.threads.map(normalizeThread) };
 }
 export const loadThreads = () => loadThreadsFile(threadFilename(requireProfile()));
-export const saveThreads = (value: StoredThreads) => {
+export const saveThreads = (value: StoredThreads, previous: StoredThreads["threads"] = []) => {
+  assertStoreGrowth(value.threads, previous);
   const serialized = JSON.stringify({ ...value, version: 2 });
   try { assertThreadStoreByteLength(Buffer.byteLength(serialized, "utf8")); }
   catch { throw new Error("대화 기록이 96MB 로컬 저장 한도를 넘었습니다. 오래된 대화나 큰 첨부 대화를 정리해 주세요."); }
@@ -389,6 +433,7 @@ export async function finishProjectDeletion(profileId = requireProfile()): Promi
 export async function createThread(request: CreateThreadRequest): Promise<ThreadSnapshot> {
   return serializeMutation(async () => {
     const db = await loadThreads(); const now = new Date().toISOString();
+    assertThreadCapacity(db.threads.length);
     const thread: InternalThread = { id: randomUUID(), title: "새 대화", modelId: request.modelId,
       createdAt: now, updatedAt: now, attachmentConsent: false,
       webSearchMode: request.purpose === "meeting-summary" ? "off" : "always", purpose: request.purpose,
@@ -405,11 +450,13 @@ export async function updateThread(id: string, update: (thread: InternalThread) 
   return serializeMutation(async () => {
     const db = await loadThreads(); const thread = db.threads.find((item) => item.id === id);
     if (!thread) throw new Error("대화를 찾을 수 없습니다.");
-    update(thread); thread.updatedAt = new Date().toISOString(); await saveThreads(db); return snapshot(thread);
+    const previous = db.threads.map((item) => ({ ...item, messages: [...item.messages] }));
+    update(thread); thread.updatedAt = new Date().toISOString(); await saveThreads(db, previous); return snapshot(thread);
   });
 }
 export async function removeThread(id: string): Promise<void> {
-  await serializeMutation(async () => { const db = await loadThreads(); db.threads = db.threads.filter((item) => item.id !== id); await saveThreads(db); });
+  await serializeMutation(async () => { const db = await loadThreads(); const previous = db.threads;
+    db.threads = db.threads.filter((item) => item.id !== id); await saveThreads(db, previous); });
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -428,12 +475,31 @@ export async function loadSettings(): Promise<AppSettings> {
 }
 
 export async function saveSettings(settings: AppSettings): Promise<AppSettings> {
-  const normalized = normalizeAppSettings(settings);
-  const target = settingsFilename(requireProfile());
-  await serializeMutation(() => encryptToFile(target, JSON.stringify({
-    version: 1, settings: normalized
-  } satisfies StoredSettings)));
-  return normalized;
+  return serializeMutation(async () => {
+    // Model preferences have their own mutation path. Read them inside the same
+    // queue so saving an older settings form cannot undo a recent favorite.
+    const current = await loadSettings();
+    const normalized = normalizeAppSettings({ ...settings,
+      favoriteModels: current.favoriteModels, recentModels: current.recentModels });
+    await encryptToFile(settingsFilename(requireProfile()), JSON.stringify({
+      version: 1, settings: normalized
+    } satisfies StoredSettings));
+    return normalized;
+  });
+}
+
+export async function updateModelPreference(modelId: string, action: "favorite" | "recent"): Promise<AppSettings> {
+  return serializeMutation(async () => {
+    const settings = await loadSettings();
+    if (action === "recent") settings.recentModels = [modelId, ...(settings.recentModels ?? []).filter((id) => id !== modelId)].slice(0, 8);
+    else {
+      const favorites = settings.favoriteModels ?? [];
+      if (!favorites.includes(modelId) && favorites.length >= 20) throw new Error("즐겨찾기는 최대 20개까지 저장할 수 있습니다.");
+      settings.favoriteModels = favorites.includes(modelId) ? favorites.filter((id) => id !== modelId) : [...favorites, modelId];
+    }
+    await encryptToFile(settingsFilename(requireProfile()), JSON.stringify({ version: 1, settings }));
+    return settings;
+  });
 }
 
 export async function searchThreads(query: string): Promise<ThreadSearchResult[]> {

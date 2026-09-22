@@ -112,7 +112,7 @@ export async function extractPdf(bytes: Buffer, onProgress?: (message: string) =
         const hasPageImage = operators.fnArray.some((operation) => imageOps.has(operation));
         if (!pageNeedsOcr(text, hasPageImage)) { pages.push(`[${pageNumber}페이지]\n${text}`); continue; }
         if (++ocrCount > MAX_OCR_PAGES) throw new Error(`스캔 PDF는 OCR 페이지를 ${MAX_OCR_PAGES}페이지까지 처리할 수 있습니다.`);
-        onProgress?.(`스캔된 ${pageNumber}페이지를 기기 안에서 OCR로 읽는 중입니다…`);
+        onProgress?.(`PDF ${pageNumber}/${document.numPages}페이지 · ${Math.round((pageNumber - 1) / document.numPages * 100)}% · 기기 안에서 OCR로 읽는 중입니다…`);
         const viewport = page.getViewport({ scale: 1.7 });
         if (viewport.width * viewport.height > 12_000_000) throw new Error(`${pageNumber}페이지 이미지 해상도가 너무 큽니다.`);
         const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
@@ -126,6 +126,7 @@ export async function extractPdf(bytes: Buffer, onProgress?: (message: string) =
           ? `[선택 가능한 텍스트]\n${text}\n\n[이미지 OCR]\n${recognized}`
           : recognized || text || "(인식된 텍스트 없음)";
         pages.push(`[${pageNumber}페이지 · 로컬 OCR]\n${merged}`);
+        onProgress?.(`PDF ${pageNumber}/${document.numPages}페이지 처리 완료 · ${Math.round(pageNumber / document.numPages * 100)}%`);
       } finally { page.cleanup(); }
     }
   } finally {

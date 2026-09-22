@@ -185,6 +185,15 @@ afterEach(async () => {
   root = null; host?.remove(); host = null; calls = []; setCompact(false); document.body.replaceChildren();
 });
 
+test("explicit desktop collapse survives a compact round trip", async () => {
+  await render(<Harness responsive />);
+  await click(document.querySelector(".sidebar-toggle")!);
+  assert.ok(document.querySelector(".sidebar")!.classList.contains("collapsed"));
+  await act(async () => setCompact(true));
+  await act(async () => setCompact(false));
+  assert.ok(document.querySelector(".sidebar")!.classList.contains("collapsed"));
+});
+
 test("responsive state hands focus between visible desktop and compact sidebar controls", async () => {
   setCompact(true);
   await render(<Harness responsive />);

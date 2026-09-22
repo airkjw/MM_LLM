@@ -13,8 +13,13 @@ const initialTheme = initialThemeValue === "light" || initialThemeValue === "dar
 contextBridge.exposeInMainWorld("mmllmBootstrap", Object.freeze({ initialTheme }));
 
 const desktopApi: DesktopApi = {
+  exportBackup: (password) => ipcRenderer.invoke("backup:export", password),
+  restoreBackup: (password) => ipcRenderer.invoke("backup:restore", password),
+  updateModelPreference: (modelId, action) => ipcRenderer.invoke("models:preference", modelId, action),
+  getDiagnostics: (stage, modelId) => ipcRenderer.invoke("diagnostics:get", stage, modelId),
   getSession: () => ipcRenderer.invoke("session:get"),
   login: (key) => ipcRenderer.invoke("session:login", key),
+  cancelLogin: () => ipcRenderer.invoke("session:cancel-login"),
   logout: () => ipcRenderer.invoke("session:logout"),
   replaceApiKey: (key) => ipcRenderer.invoke("session:replace-key", key),
   refreshModels: () => ipcRenderer.invoke("models:refresh"),
@@ -47,6 +52,7 @@ const desktopApi: DesktopApi = {
     ipcRenderer.invoke("projects:add-document", projectId, attachmentId, deidentifiedConfirmed),
   removeProjectDocument: (projectId, documentId) => ipcRenderer.invoke("projects:remove-document", projectId, documentId),
   listCompareRuns: () => ipcRenderer.invoke("compare:list"),
+  exportCompareRun: (id) => ipcRenderer.invoke("compare:export", id),
   streamCompare(request: CompareRequest, onEvent: (event: CompareEvent) => void) {
     const { port1, port2 } = new MessageChannel(); let stopped = false;
     const cleanup = () => { if (stopped) return; stopped = true; port1.removeEventListener("message", receive); port1.close(); };

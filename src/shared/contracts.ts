@@ -65,6 +65,8 @@ export type AppSettings = {
   defaultInstruction: string;
   theme: ThemeMode;
   fontSize: FontSizeMode;
+  favoriteModels?: string[];
+  recentModels?: string[];
 };
 
 export type GatewayModel = {
@@ -85,6 +87,8 @@ export type CreditBalance = {
 
 export type PublicMessage = {
   id: string;
+  /** Absent on historical messages where the original model cannot be established. */
+  modelId?: string;
   role: "user" | "assistant";
   text: string;
   createdAt: string;
@@ -353,8 +357,13 @@ export type UpdateState = {
 };
 
 export type DesktopApi = {
+  exportBackup(password: string): Promise<boolean>;
+  restoreBackup(password: string): Promise<boolean>;
+  updateModelPreference(modelId: string, action: "favorite" | "recent"): Promise<AppSettings>;
+  getDiagnostics(stage: import("./diagnostics").DiagnosticStage, modelId?: string): Promise<string>;
   getSession(): Promise<SessionState>;
   login(key: string): Promise<SessionState>;
+  cancelLogin(): Promise<boolean>;
   logout(): Promise<void>;
   refreshModels(): Promise<GatewayModel[]>;
   getCredits(force?: boolean): Promise<CreditBalance>;
@@ -392,6 +401,7 @@ export type DesktopApi = {
   addProjectDocument(projectId: string, attachmentId: string, deidentifiedConfirmed: boolean): Promise<ProjectSummary>;
   removeProjectDocument(projectId: string, documentId: string): Promise<void>;
   listCompareRuns(): Promise<CompareRun[]>;
+  exportCompareRun(id: string): Promise<boolean>;
   streamCompare(request: CompareRequest, onEvent: (event: CompareEvent) => void): () => void;
   streamCompareSynthesis(runId: string, onEvent: (event: CompareSynthesisEvent) => void): () => void;
   continueCompare(runId: string, modelId: string): Promise<ThreadSnapshot>;

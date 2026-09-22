@@ -182,6 +182,7 @@ export function reconcileTerminalBackground(
   // UI-only fallback text must never be replayed into a later non-chain provider request.
   message.apiContent = providerText;
   message.usage = job.usage;
+  message.modelId = job.modelId;
   message.reasoningSummary = job.reasoningSummary;
   if (job.toolCalls?.length) message.toolCalls = job.toolCalls;
   message.status = job.status === "completed" ? "complete" : "incomplete";

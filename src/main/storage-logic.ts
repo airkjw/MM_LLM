@@ -67,7 +67,13 @@ export function normalizeThreadPreferences(raw: Record<string, unknown>): {
 }
 
 export function normalizeAppSettings(value: Partial<AppSettings> | undefined): AppSettings {
+  const models = (items: unknown, limit: number) => Array.isArray(items)
+    ? [...new Set(items.filter((item): item is string => typeof item === "string" && item.length > 0 && item.length <= 200))].slice(0, limit)
+    : undefined;
+  const favoriteModels = models(value?.favoriteModels, 20);
+  const recentModels = models(value?.recentModels, 8);
   return {
+    ...(favoriteModels ? { favoriteModels } : {}), ...(recentModels ? { recentModels } : {}),
     defaultInstruction: typeof value?.defaultInstruction === "string"
       ? value.defaultInstruction.slice(0, 12_000) : DEFAULT_INSTRUCTION,
     theme: (["system", "light", "dark"] as unknown[]).includes(value?.theme)

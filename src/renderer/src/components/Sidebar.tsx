@@ -116,6 +116,7 @@ export function AccountMenu({ model, actions, restoreFallback }: {
         <button type="button" onClick={actions.onRefreshCredits}><RefreshCw size={16} /> 크레딧 새로고침</button>
       </div>
       <div className="account-actions">
+        <small className="app-version">MM_LLM · v{updateState?.currentVersion ?? "확인 중"}</small>
         <button type="button" onClick={() => openDialog(actions.onOpenSettings)}><Settings size={16} /> 설정</button>
         <button type="button" onClick={() => openDialog(actions.onOpenKeyReplace)}><ShieldCheck size={16} /> API 키 교체</button>
         <button type="button" onClick={() => closeThen(actions.onRefreshModels)}><RefreshCw size={16} /> 모델 목록 새로고침</button>

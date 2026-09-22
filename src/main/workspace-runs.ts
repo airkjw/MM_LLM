@@ -1,11 +1,10 @@
 import { app, safeStorage } from "electron";
-import { mkdir, open, rename, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { mkdir, open, unlink } from "node:fs/promises";
+import { join } from "node:path";
 import type { ChatbotBookmark, CompareRun } from "../shared/contracts";
-import {
-  fitWorkspaceState, WORKSPACE_COMPARE_ENTITY_MAX_BYTES, WORKSPACE_MAX_BYTES
-} from "../shared/workspace-storage-policy";
+import { fitWorkspaceState, WORKSPACE_COMPARE_ENTITY_MAX_BYTES, WORKSPACE_MAX_BYTES } from "../shared/workspace-storage-policy";
+import { writeAtomic } from "./atomic-file";
 
 type WorkspaceState = { version: 1; bookmarks: ChatbotBookmark[]; compares: CompareRun[] };
 const MAX_FILE_BYTES = WORKSPACE_MAX_BYTES;
@@ -48,7 +47,7 @@ async function save(profileId: string, value: WorkspaceState): Promise<void> {
   if (Buffer.byteLength(plain, "utf8") > MAX_FILE_BYTES) throw new Error("워크스페이스 실행 기록이 저장 한도를 넘었습니다.");
   const encrypted = await safeStorage.encryptStringAsync(plain);
   const target = pathFor(profileId); const temp = `${target}.${randomUUID()}.tmp`;
-  await writeFile(temp, encrypted, { mode: 0o600 }); await rename(temp, target);
+  await writeAtomic(target, encrypted);
 }
 
 const queues = new Map<string, Promise<unknown>>();

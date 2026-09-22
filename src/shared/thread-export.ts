@@ -23,6 +23,7 @@ export function serializeThreadMarkdown(thread: ThreadSnapshot): string {
   lines.push("## 대화", "");
   for (const message of thread.messages) {
     lines.push(`### ${message.role === "user" ? "사용자" : "MM_LLM"}`, "", clean(message.text));
+    if (message.role === "assistant") lines.push("", `생성 모델: ${message.modelId ? clean(message.modelId) : "기록 없음"} · 생성 시각: ${message.createdAt}`);
     if (message.reasoningSummary) lines.push("", "#### 추론 요약", "", clean(message.reasoningSummary));
     if (message.attachments?.length) lines.push("", `첨부: ${message.attachments.map(clean).join(", ")}`);
     if (message.status === "incomplete") lines.push("", "> 이 답변은 생성 도중 중단되었습니다.");

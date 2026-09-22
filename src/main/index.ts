@@ -2,7 +2,7 @@ import {
   app, BrowserWindow, dialog, ipcMain, nativeTheme, protocol, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent
 } from "electron";
 import { createReadStream, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, open } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -60,6 +60,13 @@ import { imageCapability, supportsMultiSpeakerTts, videoCapability } from "../sh
 import { assertAccountSessionIdentity, SessionTransitionMutex, type AccountSessionIdentity } from "./session-transition";
 import { EpochRequestCache } from "../shared/epoch-request-cache";
 import { backgroundIsTerminal, reconcileTerminalBackground } from "../shared/responses-lifecycle";
+import { assertMessageCapacity } from "../shared/storage-limits";
+import { DIAGNOSTIC_STAGES, diagnosticReport, type DiagnosticStage } from "../shared/diagnostics";
+import { updateModelPreference } from "./storage";
+import { exportPortableBackup, restorePortableBackup } from "./storage";
+import { encryptBackup, decryptBackup, MAX_BACKUP_BYTES } from "./backup-crypto";
+import { writeAtomic } from "./atomic-file";
+import { serializeCompareAnalysis } from "../shared/compare-export";
 import {
   deleteChatbotBookmark, listChatbotBookmarks, listCompareRuns, saveChatbotBookmark, upsertCompareRun
 } from "./workspace-runs";
@@ -274,7 +281,65 @@ async function releasePendingMeetingSources(profileId: string): Promise<void> {
   }
 }
 
+let loginValidation: AbortController | null = null;
 function registerHandlers(): void {
+  ipcMain.handle("session:cancel-login", (event) => {
+    trustedInvoke(event);
+    if (!loginValidation) return false;
+    loginValidation.abort(new Error("로그인 확인을 취소했습니다.")); return true;
+  });
+  ipcMain.handle("backup:export", async (event, rawPassword: unknown) => {
+    const owner = trustedInvoke(event); assertSessionStable();
+    if (typeof rawPassword !== "string" || rawPassword.length > 1024) throw new Error("백업 암호가 올바르지 않습니다.");
+    const password = rawPassword;
+    if (password.length < 12) throw new Error("백업 암호는 12자 이상 입력해 주세요.");
+    if (activeRuns.size) throw new Error("진행 중인 요청이 끝난 뒤 백업해 주세요.");
+    return sessionTransitions.run(async () => {
+      const selected = await dialog.showSaveDialog(owner, { title: "암호화 백업 저장",
+        defaultPath: `MM_LLM-${new Date().toISOString().slice(0, 10)}.mmbackup`, filters: [{ name: "MM_LLM 암호화 백업", extensions: ["mmbackup"] }] });
+      if (selected.canceled || !selected.filePath) return false;
+      const plain = Buffer.from(JSON.stringify(await exportPortableBackup()), "utf8");
+      try { await writeAtomic(selected.filePath, await encryptBackup(plain, password)); return true; }
+      finally { plain.fill(0); }
+    });
+  });
+  ipcMain.handle("backup:restore", async (event, rawPassword: unknown) => {
+    const owner = trustedInvoke(event); assertSessionStable();
+    if (typeof rawPassword !== "string" || rawPassword.length > 1024) throw new Error("백업 암호가 올바르지 않습니다.");
+    const password = rawPassword;
+    if (password.length < 12) throw new Error("백업 암호는 12자 이상 입력해 주세요.");
+    if (activeRuns.size) throw new Error("진행 중인 요청이 끝난 뒤 복원해 주세요.");
+    return sessionTransitions.run(async () => {
+      const selected = await dialog.showOpenDialog(owner, { title: "암호화 백업 복원", properties: ["openFile"],
+        filters: [{ name: "MM_LLM 암호화 백업", extensions: ["mmbackup"] }] });
+      if (selected.canceled || !selected.filePaths[0]) return false;
+      const handle = await open(selected.filePaths[0], "r");
+      let encrypted: Buffer;
+      try { const details = await handle.stat();
+        if (!details.isFile() || details.size > MAX_BACKUP_BYTES) throw new Error("백업 파일은 512MB 이하여야 합니다.");
+        encrypted = await handle.readFile();
+      } finally { await handle.close(); }
+      const plain = await decryptBackup(encrypted, password);
+      try { await restorePortableBackup(JSON.parse(plain.toString("utf8"))); clearAttachments(); resetCreditCache(); return true; }
+      finally { plain.fill(0); }
+    });
+  });
+  ipcMain.handle("models:preference", (event, rawId: unknown, action: unknown) => {
+    trustedInvoke(event); assertSessionStable();
+    const id = shortString(rawId, 200, "모델");
+    if (!currentModels().some((model) => model.id === id) || !["favorite", "recent"].includes(String(action))) {
+      throw new Error("모델 즐겨찾기 설정이 올바르지 않습니다.");
+    }
+    return updateModelPreference(id, action as "favorite" | "recent");
+  });
+  ipcMain.handle("diagnostics:get", (event, stage: unknown, rawModelId: unknown) => {
+    trustedInvoke(event);
+    if (!(DIAGNOSTIC_STAGES as readonly unknown[]).includes(stage)) throw new Error("진단 단계가 올바르지 않습니다.");
+    const modelId = typeof rawModelId === "string" && currentModels().some((model) => model.id === rawModelId)
+      ? rawModelId : undefined;
+    return diagnosticReport({ version: app.getVersion(), platform: process.platform, arch: process.arch,
+      electron: process.versions.electron, stage: stage as DiagnosticStage, modelId });
+  });
   ipcMain.handle("updates:state", (event) => {
     trustedInvoke(event);
     return currentUpdateState();
@@ -311,7 +376,11 @@ function registerHandlers(): void {
       let previousProfile: string | null = null;
       try { previousProfile = getActiveProfileId(); } catch { /* No active session. */ }
       const models = await transitionLogin(key, previous, {
-        validateRemote: listModelsForKey, commitRuntime: commitGatewaySession, activate: activateProfileForKey,
+        validateRemote: async (key) => {
+          const controller = new AbortController(); loginValidation = controller;
+          try { return await listModelsForKey(key, controller.signal); }
+          finally { if (loginValidation === controller) loginValidation = null; }
+        }, commitRuntime: commitGatewaySession, activate: activateProfileForKey,
         saveKey, clearProfile: clearActiveProfile, deleteKey
       });
       const activeProfile = getActiveProfileId();
@@ -597,6 +666,19 @@ function registerHandlers(): void {
   ipcMain.handle("compare:list", async (event) => {
     trustedInvoke(event); assertSessionStable(); return listCompareRuns(getActiveProfileId());
   });
+  ipcMain.handle("compare:export", async (event, rawId: unknown) => {
+    const owner = trustedInvoke(event); assertSessionStable();
+    const id = shortString(rawId, 100, "종합분석");
+    const generation = sessionTransitions.currentGeneration();
+    const run = (await listCompareRuns(getActiveProfileId())).find((item) => item.id === id);
+    if (!run) throw new Error("종합분석 기록을 찾을 수 없습니다.");
+    const content = serializeCompareAnalysis(run);
+    const save = await dialog.showSaveDialog(owner, { title: "종합분석 내보내기", defaultPath: "MM_LLM-종합분석.md",
+      filters: [{ name: "Markdown", extensions: ["md"] }] });
+    sessionTransitions.assertGeneration(generation);
+    if (save.canceled || !save.filePath) return false;
+    await writeAtomic(save.filePath, Buffer.from(content, "utf8")); return true;
+  });
   ipcMain.handle("compare:continue", async (event, rawRunId: unknown, rawModelId: unknown) => {
     trustedInvoke(event);
     const runId = shortString(rawRunId, 100, "비교 실행"); const modelId = shortString(rawModelId, 200, "모델");
@@ -610,7 +692,7 @@ function registerHandlers(): void {
       thread.title = `비교 · ${run.prompt.slice(0, 30)}`;
       thread.messages.push({ id: randomUUID(), role: "user", text: run.prompt, apiContent: run.prompt,
         createdAt: run.createdAt }, { id: randomUUID(), role: "assistant", text: result.text,
-        apiContent: result.text, createdAt: new Date().toISOString(), status: "complete", usage: result.usage });
+        apiContent: result.text, modelId, createdAt: new Date().toISOString(), status: "complete", usage: result.usage });
     });
     });
   });
@@ -1188,6 +1270,7 @@ function registerHandlers(): void {
       let text = "";
       let reasoningSummary = "";
       let threadId = "";
+      let answerModelId: string | undefined;
       let attachmentIds: string[] = [];
       let usage: TokenUsage | undefined;
       const toolCalls: NonNullable<PublicMessage["toolCalls"]> = [];
@@ -1199,7 +1282,15 @@ function registerHandlers(): void {
       try {
         threadId = shortString(rawRequest.threadId, 100, "대화");
         const modelId = shortString(rawRequest.modelId, 200, "모델");
+        answerModelId = modelId;
         const initialThread = await getThread(threadId);
+        // Reserve a question and its answer before preparing files or making a billed request.
+        // Regeneration truncates history first; ordinary and continuation requests grow it.
+        const reserveIndex = rawRequest.regenerate === true
+          ? initialThread.messages.findIndex((message) => message.id === rawRequest.regenerateAfterId)
+          : -1;
+        assertMessageCapacity(reserveIndex >= 0 ? reserveIndex + 1 : initialThread.messages.length,
+          rawRequest.regenerate === true || rawRequest.continueIncompleteId ? 1 : 2);
         const chatbotTarget = initialThread.target?.kind === "chatbot" ? initialThread.target : undefined;
         const selectedChatModel = chatbotTarget ? undefined : assertModel(modelId, "llm");
         const rawToolResults = rawRequest.toolResults;
@@ -1326,7 +1417,7 @@ function registerHandlers(): void {
           if (rawChatbotFiles.length) chatbotFiles = await materializeChatbotFiles(rawChatbotFiles, getActiveProfileId());
           if (chatbotError) throw chatbotError;
           const updated = await updateThread(threadId, (item) => {
-            applyAssistantOutcome(item.messages, text, "complete", -1, randomUUID(), new Date().toISOString(), usage);
+            applyAssistantOutcome(item.messages, text, "complete", -1, randomUUID(), new Date().toISOString(), usage, answerModelId);
             const stored = item.messages.at(-1);
             if (stored && chargedCredits !== undefined) stored.credits = chargedCredits;
             if (stored && chatbotFiles.length) stored.files = chatbotFiles;
@@ -1379,7 +1470,7 @@ function registerHandlers(): void {
               createdAt: new Date().toISOString() }, ...(item.webSearchHistory ?? [])].slice(0, 5);
             item.messages.push({ id: randomUUID(), role: "assistant", text: "백그라운드 응답을 처리 중입니다…",
               apiContent: "", createdAt: new Date().toISOString(), status: "incomplete",
-              backgroundResponseId: background.id });
+              backgroundResponseId: background.id, modelId });
             reconcileTerminalBackground(item, background, () => ({ id: randomUUID(), createdAt: background.updatedAt }));
           });
           send({ type: "status", status: background.status, responseId: background.id });
@@ -1417,7 +1508,7 @@ function registerHandlers(): void {
           if (continueIndex >= 0 && item.messages[continueIndex]) item.messages[continueIndex].status = "resolved";
           if (submittedTools) item.messages.forEach((message) => { if (message.claudeContinuation) delete message.claudeContinuation; });
           applyAssistantOutcome(item.messages, text, terminalStatus === "incomplete" ? "incomplete" : "complete", regenerateIndex,
-            randomUUID(), new Date().toISOString(), usage);
+            randomUUID(), new Date().toISOString(), usage, answerModelId);
           const stored = item.messages.at(-1);
           if (stored && reasoningSummary) stored.reasoningSummary = reasoningSummary;
           if (stored && toolCalls.length) stored.toolCalls = toolCalls;
@@ -1434,7 +1525,7 @@ function registerHandlers(): void {
           await updateThread(threadId, (item) => {
             if (continueIndex >= 0 && item.messages[continueIndex]) item.messages[continueIndex].status = "resolved";
             applyAssistantOutcome(item.messages, text, "incomplete", regenerateIndex,
-              randomUUID(), new Date().toISOString(), usage);
+              randomUUID(), new Date().toISOString(), usage, answerModelId);
             const stored = item.messages.at(-1);
             if (stored && reasoningSummary) stored.reasoningSummary = reasoningSummary;
             if (stored && toolCalls.length) stored.toolCalls = toolCalls;
