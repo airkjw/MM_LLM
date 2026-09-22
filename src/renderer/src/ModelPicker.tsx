@@ -75,7 +75,7 @@ export function ModelPicker({
             }}
             placeholder="모델 이름 또는 ID 검색" autoFocus />
         </div>
-        {options[activeIndex] && <button type="button" className="secondary-button"
+        {options[activeIndex] && <button type="button" className="secondary-button model-favorite-action"
           aria-pressed={preferences.favorites.includes(options[activeIndex].id)}
           onClick={() => preferences.update(options[activeIndex].id, "favorite")}>
           <Star size={14} />{modelLabel(options[activeIndex].id)} 즐겨찾기 {preferences.favorites.includes(options[activeIndex].id) ? "해제" : "추가"}</button>}
@@ -90,7 +90,7 @@ export function ModelPicker({
                 role="option" aria-selected={model.id === selected}
                 key={model.id} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(model.id)}
               >
-                <span><strong>{modelLabel(model.id)}</strong><small>{model.id}</small></span>
+                <span title={model.id}><strong>{modelLabel(model.id)}</strong></span>
                 <span className="model-badges">
                   {hasNativeWebSearch(model.id) && <span className="native-search-badge">
                     <Globe2 size={12} />직접 웹검색

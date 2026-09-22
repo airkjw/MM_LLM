@@ -372,14 +372,13 @@ export function MediaPanel({
   }
 
   return <div className="media-panel">
-    <div className="panel-header media-header"><div><h2>{titles[screen][0]}</h2></div>
+    <div className="panel-header media-header"><div className="panel-heading"><span className="panel-section">미디어</span><h2>{titles[screen][0]}</h2></div>
       <ModelPicker models={available} selected={modelId} onSelect={setModelId} disabled={busy} />
     </div>
     <div className="media-scroll">
-      <div className="media-intro"><span className="media-icon">{icon}</span>
-        <h1>{titles[screen][1]}</h1>
-        <p>모델을 고르고 자료를 준비하면 MM_LLM이 알맞은 API로 연결합니다.</p>
-      </div>
+      <div className="media-intro"><p>{screen === "image" ? "프롬프트와 참고 이미지로 필요한 시각 자료를 만드세요." :
+        screen === "video" ? "장면을 설명하고 길이와 비율을 설정하세요." : "텍스트를 음성으로 만들거나, 녹음을 전사하고 정리하세요."}</p>
+        <span>설정 · 생성 · 저장</span></div>
       {screen === "audio" && <div className="lane-tabs" role="tablist" aria-label="오디오 기능">
         {([
           ["tts", "텍스트 → 음성", Mic2], ["stt", "받아쓰기", MessageCircle],
@@ -404,6 +403,7 @@ export function MediaPanel({
       <div className="media-workspace" id={screen === "audio" ? "audio-lane-panel" : undefined}
         role={screen === "audio" ? "tabpanel" : undefined}>
         <div className="media-form">
+          <h3 className="media-card-heading">작업 설정</h3>
           <label className="field-label">{screen === "audio" && audioLane === "stt" ? "오디오 파일" :
             screen === "audio" && audioLane === "tts" ? "읽을 텍스트" : "프롬프트"}</label>
           {screen === "audio" && audioLane === "stt"
@@ -539,13 +539,14 @@ export function MediaPanel({
         </div>
         <div className="media-result" aria-live="polite" aria-busy={busy ||
           Boolean(result?.jobId && !["completed", "failed"].includes(result.status ?? ""))}>
+          <h3 className="media-card-heading">결과</h3>
           {jobs.length > 1 && <div className="job-list"><strong>이 화면의 작업 {jobs.length}개</strong>
             {jobs.map((job) => <button type="button" key={job.id} onClick={() => showJob(job)}>
               {job.label} · {job.status === "completed" ? "완료" : job.status === "failed" ? "실패" : "진행 중"}
             </button>)}</div>}
           {!result && <div className="result-placeholder"><span>{icon}</span>
             <strong>결과가 여기에 나타납니다</strong>
-            <small>준비가 되면 왼쪽에서 시작해 주세요.</small></div>}
+            <small>자료와 설정을 확인하고 작업을 시작하세요.</small></div>}
           {result?.jobId && result.status !== "completed" && result.status !== "failed" && <div className="result-placeholder">
             <LoaderCircle size={28} className="spin" /><strong>생성 중입니다</strong>
             <small>앱을 다시 열어도 작업을 계속 확인합니다.<br />경과 {Math.max(0,

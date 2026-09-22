@@ -545,9 +545,9 @@ export function auditCss(css) {
     values.get("background") === "var(--speaker-color)")) {
     errors.push(".segment-speaker::before must render the categorical speaker dot");
   }
-  if (!selectorHas(root, ".panel-header", (values) => values.get("min-height") === "60px")) errors.push("Panel header must be 60px");
-  for (const selector of [".web-mode", ".reasoning-mode", ".model-trigger"]) {
-    if (!selectorHas(root, selector, (values) => values.get("height") === "34px")) errors.push(`${selector} must be 34px high`);
+  if (!selectorHas(root, ".panel-header", (values) => values.get("min-height") === "66px")) errors.push("Panel header must be 66px");
+  for (const [selector, height] of [[".web-mode", "34px"], [".reasoning-mode", "34px"], [".model-trigger", "36px"]]) {
+    if (!selectorHas(root, selector, (values) => values.get("height") === height)) errors.push(`${selector} must be ${height} high`);
   }
 
   for (const selector of ["button:focus-visible", "input:focus-visible", "textarea:focus-visible",

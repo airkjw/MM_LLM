@@ -8,7 +8,7 @@ export type ThemeApplication = {
 };
 
 export function backgroundColorForTheme(theme: AppliedTheme): string {
-  return theme === "dark" ? "#18171C" : "#FFFFFF";
+  return theme === "dark" ? "#12161D" : "#FFFFFF";
 }
 
 export function resolveThemePreference(preference: ThemePreference, systemIsDark: boolean): AppliedTheme {

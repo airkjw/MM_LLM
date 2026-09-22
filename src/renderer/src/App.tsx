@@ -900,8 +900,6 @@ export default function App() {
         closeTools={closeTools}
         toolsRef={toolsRef}
         toolsTab={toolsTab}
-        setToolsTab={setToolsTab}
-        openWorkspaceTools={openWorkspaceTools}
         comparePrompt={comparePrompt}
         setComparePrompt={setComparePrompt}
         llmModels={llmModels}

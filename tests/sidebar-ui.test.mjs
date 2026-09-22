@@ -60,8 +60,8 @@ test("credit presentation only draws a ratio with a meaningful denominator", () 
 });
 
 test("sidebar exposes the accepted compact navigation and account semantics", () => {
-  assert.doesNotMatch(sidebar, /className="sidebar-caption"|className="nav-item"|thread-tools|credit-card/);
-  assert.match(sidebar, />만들기</);
+  assert.doesNotMatch(sidebar, /className="nav-item"|thread-tools|credit-card/);
+  assert.match(sidebar, />미디어</);
   assert.match(sidebar, /role="dialog" aria-modal="false"/);
   assert.match(sidebar, /role="menu"/);
   assert.match(sidebar, /role="menuitem"/);
@@ -75,11 +75,11 @@ test("sidebar exposes the accepted compact navigation and account semantics", ()
 });
 
 test("sidebar CSS keeps one scroll region and the agreed responsive widths", () => {
-  assert.match(css, /\.sidebar \{[^}]*width: 264px;[^}]*overflow: hidden;/s);
+  assert.match(css, /\.sidebar \{[^}]*width: 232px;[^}]*overflow: hidden;/s);
   assert.match(css, /\.thread-list \{[^}]*flex: 1 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto;/s);
   assert.match(css, /\.sidebar-account-area \{[^}]*flex: 0 0 52px;/s);
-  assert.match(css, /min-width: 721px\) and \(max-width: 1100px\)[^{]*\{[\s\S]*?\.sidebar \{ width: 240px;/);
-  assert.match(css, /max-width: 720px[\s\S]*?\.sidebar \{[^}]*position: fixed;[^}]*width: 264px;/);
+  assert.match(css, /min-width: 721px\) and \(max-width: 1100px\)[^{]*\{[\s\S]*?\.sidebar \{ width: 224px;/);
+  assert.match(css, /max-width: 720px[\s\S]*?\.sidebar \{[^}]*position: fixed;[^}]*width: 232px;/);
   assert.match(css, /forced-colors: active[\s\S]*?\.thread-list[^}]*scrollbar-color: auto;/);
 });
 

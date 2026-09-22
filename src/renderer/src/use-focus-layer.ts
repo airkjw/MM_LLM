@@ -15,14 +15,21 @@ function usableFocusTarget(target: HTMLElement | null | undefined): target is HT
   if (!target?.isConnected || target === document.body || target === document.documentElement) return false;
   if (target.closest("[hidden], [aria-hidden='true']")) return false;
   const collapsedSidebar = target.closest<HTMLElement>(".sidebar.collapsed");
-  if (collapsedSidebar && (!target.matches(".sidebar-toggle") || collapsedSidebar.dataset.compact === "true")) return false;
+  if (collapsedSidebar && (collapsedSidebar.dataset.compact === "true" ||
+    !target.matches(".sidebar-toggle") && !target.closest(".rail-actions, .rail-footer"))) return false;
+  for (let parent = target.parentElement; parent; parent = parent.parentElement) {
+    if (parent.tagName === "DETAILS" && !parent.hasAttribute("open")) {
+      const summary = parent.querySelector(":scope > summary");
+      if (!summary?.contains(target)) return false;
+    }
+  }
   if (target.matches(".sidebar-mobile-open:not(.visible)")) return false;
   if (target instanceof HTMLButtonElement && target.disabled) return false;
   return true;
 }
 
 function focusableWithin(layer: HTMLElement | null, selector = FOCUSABLE) {
-  return Array.from(layer?.querySelectorAll<HTMLElement>(selector) ?? []);
+  return Array.from(layer?.querySelectorAll<HTMLElement>(selector) ?? []).filter(usableFocusTarget);
 }
 
 function adjacentControl(

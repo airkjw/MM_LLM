@@ -530,3 +530,33 @@ test("a zero monthly subtotal or incomplete component data never claims the whol
   assert.match(trigger.textContent ?? "", /크레딧-/);
   assert.match(trigger.getAttribute("aria-label") ?? "", /크레딧 확인 전/);
 });
+
+for (const [label, modal] of [["프로젝트", "projects"], ["모델 비교", "compare"], ["앱 설정", "settings"]]) {
+  test(`collapsed rail ${label} opens a dialog and restores its visible trigger`, async () => {
+    await render(<Harness modalHandoff />);
+    await click(byLabel("사이드바 닫기"));
+    const trigger = byLabel(label);
+    await click(trigger);
+    assert.ok(document.querySelector(`[aria-label="${modal} modal"]`));
+    await key("Escape");
+    assert.equal(document.activeElement, trigger);
+  });
+}
+
+test("dialog focus skips controls inside a closed disclosure", async () => {
+  function DisclosureHarness() {
+    const ref = useDialogFocus(true, () => {});
+    return <div role="dialog" aria-modal="true" ref={ref} tabIndex={-1}>
+      <details><summary>백업 · 복원</summary><button>숨긴 복원 버튼</button></details>
+      <button data-close>닫기</button>
+    </div>;
+  }
+  await render(<DisclosureHarness />);
+  const summary = document.querySelector("summary")!;
+  const close = document.querySelector<HTMLElement>("[data-close]")!;
+  assert.equal(document.activeElement, summary);
+  await key("Tab", true);
+  assert.equal(document.activeElement, close);
+  await key("Tab");
+  assert.equal(document.activeElement, summary);
+});

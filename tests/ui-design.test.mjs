@@ -47,7 +47,7 @@ function expectStartupMutation(name, mutate, pattern) {
   });
 }
 
-test("Refined Violet CSS keeps semantic tokens, contrast, controls, and state guards", () => {
+test("Neutral blue workspace CSS keeps semantic tokens, contrast, controls, and state guards", () => {
   const result = auditUiCssFile();
   assert.deepEqual(result.errors, []);
   assert.ok(result.metrics.themeTokenCount.light >= 33);
@@ -62,7 +62,7 @@ test("Refined Violet CSS keeps semantic tokens, contrast, controls, and state gu
 
 test("contrast calculation follows WCAG relative luminance", () => {
   assert.equal(contrastRatio("#000000", "#FFFFFF"), 21);
-  assert.ok(contrastRatio("#6A48A8", "#FFFFFF") >= 4.5);
+  assert.ok(contrastRatio("#245DCE", "#FFFFFF") >= 4.5);
 });
 
 test("chat and media surfaces use the compact header without decorative eyebrows or login orbs", () => {
@@ -119,8 +119,8 @@ expectMutationError("typed control boundary conflicts", (source) =>
 expectMutationError("stateful control boundary conflicts", (source) =>
   `${source}\n.model-trigger:hover { border-color: var(--color-border); }`, /audited-selector conflict.*model-trigger/);
 expectMutationError("non-text accent contrast failures", (source) => source.replace(
-  /(--color-accent-graphic:\s*)#C7B0F2/,
-  "$1#2E2640"
+  /(--color-accent-graphic:\s*)#A4C5FF/,
+  "$1#1C2F4B"
 ), /accent-graphic\/accent-subtle/);
 expectMutationError("the stop-button semantic map", (source) => source.replace(
   ".send-button.stop, .send-button.stop:hover:not(:disabled) { background: var(--color-text); color: var(--color-bg); }",
@@ -141,10 +141,10 @@ expectMutationError("typed active navigation conflicts", (source) =>
 expectMutationError("stateful active navigation conflicts", (source) =>
   `${source}\n.creation-tile.active:hover { color: var(--color-text-tertiary); }`, /audited-selector conflict.*creation-tile\.active/);
 expectMutationError("speaker token contrast failures", (source) => source.replace(
-  /(--color-speaker-3:\s*)#14745B/, "$1#F1EFF5"
+  /(--color-speaker-3:\s*)#14745B/, "$1#EEF0F3"
 ), /speaker-3\/bg/);
 expectMutationError("duplicate speaker categorical tokens", (source) => source.replace(
-  /(--color-speaker-6:\s*)#8A3B2E/, "$1#6A48A8"
+  /(--color-speaker-6:\s*)#8A3B2E/, "$1#245DCE"
 ), /six speaker colors must be distinct/);
 expectMutationError("speaker categorical mapping changes", (source) => source.replace(
   ".speaker-5 { --speaker-color: var(--color-speaker-6); }",
@@ -234,7 +234,7 @@ expectStartupMutation("function-decoy preload bridge", (sources) => ({
 }), /expose the isolated/);
 expectStartupMutation("missing BrowserWindow background", (sources) => ({
   ...sources,
-  main: sources.main.replace('    backgroundColor: initialTheme === "dark" ? "#18171C" : "#FFFFFF",\n', "")
+  main: sources.main.replace('    backgroundColor: initialTheme === "dark" ? "#12161D" : "#FFFFFF",\n', "")
 }), /initial background/);
 expectStartupMutation("unreachable BrowserWindow construction", (sources) => ({
   ...sources,

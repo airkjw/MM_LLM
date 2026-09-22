@@ -34,20 +34,17 @@ spctl --assess --type execute --verbose=4 release/mac-arm64/MM_LLM.app
 
 ## Windows 패키지
 
-GitHub Actions의 **Build Windows release artifact** 워크플로를 수동 실행합니다. 워크플로는 Windows x64 NSIS 설치 파일, 블록맵과 `latest.yml`을 `windows-release` 아티팩트로 만듭니다.
+GitHub Actions의 **Build and publish release** 워크플로가 Windows x64 NSIS 설치 파일, 블록맵과 `latest.yml`을 `windows-release` 아티팩트로 만듭니다.
 
 ## GitHub Release
 
-`package.json` 버전과 태그를 일치시킨 뒤, macOS와 Windows 산출물을 한 공개 Release에 올립니다.
+`package.json`·`package-lock.json` 버전과 릴리즈 노트를 커밋한 뒤 같은 커밋에 태그를 붙입니다. macOS 서명·공증과 Windows 빌드, 산출물 검증, 릴리즈 노트 게시를 자동으로 수행합니다. 필요한 저장소 설정은 [릴리즈 자동화](RELEASE_AUTOMATION.md)를 참고하세요.
 
 ```bash
-VERSION=0.3.3
+VERSION=0.5.0
 git tag "v${VERSION}"
 git push origin main "v${VERSION}"
-gh release create "v${VERSION}" \
-  release/*.dmg release/*.zip release/*.exe \
-  release/latest-mac.yml release/latest.yml release/*.blockmap \
-  --verify-tag --title "MM_LLM ${VERSION}" --generate-notes
+gh workflow run release.yml --ref main -f tag="v${VERSION}" -f publish=true
 ```
 
 `latest-mac.yml`, `latest.yml`과 각 블록맵이 앱의 GitHub Releases 자동 업데이트에 필요합니다. 인증서, 개인키, API 키와 암호는 저장소 파일·이슈·로그에 넣지 않습니다.

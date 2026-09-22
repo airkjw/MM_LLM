@@ -23,8 +23,6 @@ type Props = {
   closeTools: () => void;
   toolsRef: React.RefObject<HTMLDivElement | null>;
   toolsTab: "compare" | "chatbot";
-  setToolsTab: React.Dispatch<React.SetStateAction<"compare" | "chatbot">>;
-  openWorkspaceTools: (tab: "compare" | "chatbot", returnFocus?: FocusReturnTarget) => Promise<void>;
   comparePrompt: string;
   setComparePrompt: React.Dispatch<React.SetStateAction<string>>;
   llmModels: GatewayModel[];
@@ -95,7 +93,7 @@ type Props = {
   saveGlobalSettings: () => Promise<void>;
 };
 
-export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedConversation, renameInputRef, setRenameDialog, toolsOpen, compareBusy, compareSynthesisBusy, bookmarkBusy, closeTools, toolsRef, toolsTab, setToolsTab, openWorkspaceTools, comparePrompt, setComparePrompt, llmModels, compareModels, setCompareModels, compareMode, setCompareMode, addCompareAttachment, compareAttachments, setCompareAttachments, compareConfirmed, setCompareConfirmed, compareStopRef, startCompare, compareRun, continueCompare, compareSynthesisReady, compareSynthesisModelAvailable, compareSynthesisStopRef, startCompareSynthesis, bookmarkDraft, setBookmarkDraft, saveBookmark, bookmarks, openChatbot, loadChatbotUsage, setBookmarks, setError, chatbotUsage, projectsOpen, projectBusy, closeProjects, projectsRef, selectedProjectId, setSelectedProjectId, setProjectDraft, projects, projectDraft, saveProject, removeProjectDocument, addDocumentToProject, thread, assignCurrentThreadToProject, createProjectThread, removeProject, keyReplaceOpen, keyReplacing, closeKeyReplace, keyReplaceRef, replacementKey, setReplacementKey, replaceApiKey, searchOpen, closeSearch, searchRef, searchQuery, setSearchQuery, searchResults, setSearchOpen, selectThread, settingsOpen, settingsDraft, settingsSaving, closeSettings, settingsRef, modelId, setSettingsDraft, saveGlobalSettings }: Props) {
+export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedConversation, renameInputRef, setRenameDialog, toolsOpen, compareBusy, compareSynthesisBusy, bookmarkBusy, closeTools, toolsRef, toolsTab, comparePrompt, setComparePrompt, llmModels, compareModels, setCompareModels, compareMode, setCompareMode, addCompareAttachment, compareAttachments, setCompareAttachments, compareConfirmed, setCompareConfirmed, compareStopRef, startCompare, compareRun, continueCompare, compareSynthesisReady, compareSynthesisModelAvailable, compareSynthesisStopRef, startCompareSynthesis, bookmarkDraft, setBookmarkDraft, saveBookmark, bookmarks, openChatbot, loadChatbotUsage, setBookmarks, setError, chatbotUsage, projectsOpen, projectBusy, closeProjects, projectsRef, selectedProjectId, setSelectedProjectId, setProjectDraft, projects, projectDraft, saveProject, removeProjectDocument, addDocumentToProject, thread, assignCurrentThreadToProject, createProjectThread, removeProject, keyReplaceOpen, keyReplacing, closeKeyReplace, keyReplaceRef, replacementKey, setReplacementKey, replaceApiKey, searchOpen, closeSearch, searchRef, searchQuery, setSearchQuery, searchResults, setSearchOpen, selectThread, settingsOpen, settingsDraft, settingsSaving, closeSettings, settingsRef, modelId, setSettingsDraft, saveGlobalSettings }: Props) {
   return <>
       {renameDialog && <div className="dialog-backdrop" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !renameDialog.busy) closeRename();
@@ -118,21 +116,14 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
       </form></div>}
       {toolsOpen && <div className="dialog-backdrop" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !compareBusy && !compareSynthesisBusy && !bookmarkBusy) closeTools();
-      }}><div className="dialog-card workspace-tools-dialog" role="dialog" aria-modal="true"
+      }}><div className={`dialog-card workspace-tools-dialog${compareRun && toolsTab === "compare" ? " has-results" : ""}`} role="dialog" aria-modal="true"
         aria-labelledby="workspace-tools-title" ref={toolsRef} tabIndex={-1}>
-        <div className="dialog-title"><Sparkles size={21} /><h3 id="workspace-tools-title">워크스페이스 도구</h3></div>
-        <div className="workspace-tool-tabs" role="tablist">
-          <button type="button" role="tab" aria-selected={toolsTab === "compare"}
-            className={toolsTab === "compare" ? "selected" : ""} disabled={compareBusy || compareSynthesisBusy}
-            onClick={() => setToolsTab("compare")}>
-            <Columns3 size={15} /> 모델 비교</button>
-          <button type="button" role="tab" aria-selected={toolsTab === "chatbot"}
-            className={toolsTab === "chatbot" ? "selected" : ""} disabled={compareBusy || compareSynthesisBusy}
-            onClick={() => void openWorkspaceTools("chatbot")}>
-            <Bot size={15} /> Studio Chatbot</button>
-        </div>
-        {toolsTab === "compare" ? <section className="compare-panel" role="tabpanel">
+        <div className="dialog-title">{toolsTab === "compare" ? <Columns3 size={21} /> : <Bot size={21} />}<h3 id="workspace-tools-title">{toolsTab === "compare" ? "모델 비교" : "Studio Chatbot"}</h3>
+          <button type="button" className="icon-button dialog-close" aria-label="워크스페이스 도구 닫기" onClick={closeTools}
+            disabled={compareBusy || compareSynthesisBusy || bookmarkBusy}><X size={18} /></button></div>
+        {toolsTab === "compare" ? <section className="compare-panel" aria-label="모델 답변 비교">
           <p>같은 질문과 준비된 자료를 2~3개 모델에 각각 전송합니다. 웹 근거는 한 번만 조사해 모든 모델에 동일하게 제공합니다.</p>
+          <details className="compare-configuration" open><summary>비교 설정 <span>{compareModels.length}/3개 모델 선택</span></summary>
           <label className="settings-field">질문
             <textarea value={comparePrompt} maxLength={100000} disabled={compareBusy || compareSynthesisBusy}
               onChange={(event) => setComparePrompt(event.target.value)} placeholder="비교할 질문을 입력하세요" />
@@ -158,9 +149,9 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
           <div className="compare-run-actions">{compareBusy
             ? <button type="button" className="secondary-button" onClick={() => compareStopRef.current?.()}><Square size={14} /> 중단</button>
             : <button type="button" className="primary-button" disabled={compareSynthesisBusy || !comparePrompt.trim() || compareModels.length < 2}
-              onClick={() => void startCompare()}><Columns3 size={15} /> 비교 실행</button>}</div>
-          {compareRun && <><div className="compare-results" aria-live="polite">{compareRun.results.map((result) => <article key={result.modelId}>
-            <header><strong>{modelLabel(result.modelId)}</strong><span>{result.status}</span></header>
+              onClick={() => void startCompare()}><Columns3 size={15} /> 비교 실행</button>}</div></details>
+          {compareRun && <><h4 className="compare-step">모델별 답변 <small>관점과 근거를 나란히 검토하세요</small></h4><div className="compare-results" aria-live="polite">{compareRun.results.map((result) => <article key={result.modelId}>
+            <header><strong>{modelLabel(result.modelId)}</strong><span>{{ running: "답변 중", completed: "완료", incomplete: "일부 완료", failed: "실패", cancelled: "중단" }[result.status]}</span></header>
             <div className="compare-result-body">{result.error
               ? <span className="compare-result-plain">{result.error}</span>
               : result.text ? <MarkdownText text={result.text} />
@@ -205,7 +196,7 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
               <div className="compare-synthesis-warning" role="status">{compareRun.synthesis.error}</div>}
           </section>}
           </>}
-        </section> : <section className="chatbot-panel" role="tabpanel">
+        </section> : <section className="chatbot-panel" aria-label="Studio Chatbot 관리">
           <div className="audit-notice" role="note"><ShieldCheck size={16} />Studio Chatbot은 원격 서비스에 대화 감사 로그를 저장할 수 있습니다.
             모델·전역/프로젝트 지침·첨부는 전송하지 않고 문서화된 텍스트 메시지만 보냅니다.</div>
           <div className="bookmark-form"><label>별칭<input value={bookmarkDraft.alias} maxLength={80} disabled={bookmarkBusy}
@@ -325,8 +316,7 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
       }}><div className="dialog-card settings-dialog"
         role="dialog" aria-modal="true" aria-labelledby="settings-title" ref={settingsRef} tabIndex={-1}>
         <div className="dialog-title"><Settings size={21} /><h3 id="settings-title">앱 설정</h3></div>
-        <DiagnosticButton stage="general" modelId={modelId} />
-        <BackupPanel />
+        <p className="settings-description">화면과 답변의 기본 방식을 설정하세요.</p>
         <div className="settings-inline"><label>테마<select value={settingsDraft.theme} disabled={settingsSaving}
           onChange={(event) => setSettingsDraft((value) => value ? { ...value, theme: event.target.value as AppSettings["theme"] } : value)}>
           <option value="system">시스템</option><option value="light">라이트</option><option value="dark">다크</option>
@@ -343,6 +333,8 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
           disabled={settingsSaving}>취소</button>
           <button type="button" className="primary-button" onClick={() => void saveGlobalSettings()}
             disabled={settingsSaving}>{settingsSaving ? "저장 중…" : "저장"}</button></div>
+        <details className="settings-disclosure"><summary>백업 · 복원</summary><BackupPanel /></details>
+        <details className="settings-disclosure"><summary>진단 정보</summary><DiagnosticButton stage="general" modelId={modelId} /></details>
       </div></div>}
   </>;
 }

@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { LucideIcon } from "lucide-react";
 import {
   AlertCircle, Bot, ChevronUp, Columns3, Download, Edit3, FolderOpen, LogOut, Menu, MoreHorizontal,
-  Pin, PinOff, Plus, RefreshCw, Search, Settings, ShieldCheck, Sparkles, Trash2
+  Pin, PinOff, Plus, RefreshCw, Search, Settings, ShieldCheck, PanelsTopLeft, Trash2
 } from "lucide-react";
 import type { CreditBalance, ThreadSummary, UpdateState } from "../../../shared/contracts";
 import { creditBalancePresentation, creditPresentation } from "../../../shared/credit-usage";
@@ -302,15 +302,42 @@ export function Sidebar({ workspace, workspaceActions, history, historyActions, 
       data-compact={compact ? "true" : "false"}
       role={compact && open ? "dialog" : undefined} aria-modal={compact && open ? true : undefined}
       aria-label={compact && open ? "주 메뉴" : undefined} tabIndex={compact && open ? -1 : undefined}>
-      <div className="sidebar-top"><div className="brand"><span className="brand-mark"><Sparkles size={19} /></span>
+      <div className="sidebar-top"><div className="brand"><span className="brand-mark"><PanelsTopLeft size={18} /></span>
         <strong>MM<span className="brand-underscore">_</span>LLM</strong></div>
         <button type="button" className="icon-button sidebar-toggle"
           onClick={() => compact && open ? closeSidebarLayer("programmatic", true) : onToggle()}
           aria-label={open ? "사이드바 닫기" : "사이드바 펼치기"} title={open ? "사이드바 닫기" : "사이드바 펼치기"}>
           <Menu size={18} /></button></div>
+      {!open && !compact && <>
+        <nav className="rail-actions" aria-label="빠른 탐색">
+          <button type="button" className="icon-button" aria-label="새 대화" title="새 대화" onClick={onNewThread}><Plus size={19} /></button>
+          <button type="button" className="icon-button" aria-label="대화 검색" title="대화 검색" onClick={(event) => {
+            const target = event.currentTarget; historyActions.onOpenSearch(() => target.isConnected ? target : desktopToggle());
+          }}><Search size={18} /></button>
+          <span className="rail-divider" />
+          <button ref={projectsTriggerRef} type="button" className="icon-button" aria-label="프로젝트" title="프로젝트"
+            onClick={() => onOpenProjects(returnTo(projectsTriggerRef))}><FolderOpen size={18} /></button>
+          <button ref={compareTriggerRef} type="button" className="icon-button" aria-label="모델 비교" title="모델 비교"
+            onClick={() => onOpenCompare(returnTo(compareTriggerRef))}><Columns3 size={18} /></button>
+          <button ref={chatbotTriggerRef} type="button" className="icon-button" aria-label="챗봇" title="챗봇"
+            onClick={() => onOpenChatbot(returnTo(chatbotTriggerRef))}><Bot size={18} /></button>
+          <span className="rail-divider" />
+          {navItems.map(({ id, label, icon: Icon }) => <button key={id} type="button" className="icon-button"
+            aria-label={label} title={label} aria-current={screen === id ? "page" : undefined}
+            onClick={() => onScreenChange(id)}><Icon size={18} /></button>)}
+        </nav>
+        <div className="rail-footer"><button type="button" className="icon-button" aria-label="앱 설정" title="앱 설정"
+          onClick={(event) => { const target = event.currentTarget;
+            accountActions.onOpenSettings(() => target.isConnected ? target : desktopToggle()); }}><Settings size={18} /></button></div>
+      </>}
       {open && <>
+        <p className="sidebar-caption">Medical MBA Workspace</p>
         <div className="sidebar-fixed-content">
           <button type="button" className="new-chat-button" onClick={() => runNavigation(onNewThread)}><Plus size={18} /> 새 대화</button>
+          <button ref={searchTriggerRef} type="button" className="sidebar-search-button"
+            onClick={() => runDialogNavigation(historyActions.onOpenSearch, returnTo(searchTriggerRef))}
+            aria-label="대화 검색 (⌘/Ctrl+K)" title="대화 검색 (⌘/Ctrl+K)"><Search size={17} /> 대화 검색 <kbd aria-hidden="true">{navigator.platform.includes("Mac") ? "⌘ K" : "Ctrl K"}</kbd></button>
+          <div className="sidebar-section-label">워크스페이스</div>
           <button ref={projectsTriggerRef} type="button" className="project-button"
             onClick={() => runDialogNavigation(onOpenProjects, returnTo(projectsTriggerRef))}>
             <FolderOpen size={18} /> 프로젝트 <small>{projectCount}</small></button>
@@ -318,14 +345,11 @@ export function Sidebar({ workspace, workspaceActions, history, historyActions, 
             onClick={() => runDialogNavigation(onOpenCompare, returnTo(compareTriggerRef))}><Columns3 size={18} /> 모델 비교</button>
           <button ref={chatbotTriggerRef} type="button" className="workspace-link"
             onClick={() => runDialogNavigation(onOpenChatbot, returnTo(chatbotTriggerRef))}><Bot size={18} /> 챗봇</button>
-          <div className="sidebar-section-label">만들기</div>
+          <div className="sidebar-section-label">미디어</div>
           <nav className="creation-tiles" aria-label="미디어 만들기">{navItems.map(({ id, label, icon: Icon }) =>
-            <button type="button" key={id} className={screen === id ? "creation-tile active" : "creation-tile"}
+            <button type="button" key={id} aria-current={screen === id ? "page" : undefined} className={screen === id ? "creation-tile active" : "creation-tile"}
               onClick={() => runNavigation(() => onScreenChange(id))}><Icon size={18} /><span>{label}</span></button>)}</nav>
-          <div className="sidebar-section-label history-title"><span>대화 <b>{threadCount}</b></span>
-            <button ref={searchTriggerRef} type="button" className="history-search"
-              onClick={() => runDialogNavigation(historyActions.onOpenSearch, returnTo(searchTriggerRef))}
-              aria-label="대화 검색 (⌘/Ctrl+K)" title="대화 검색 (⌘/Ctrl+K)"><Search size={16} /></button></div>
+          <div className="sidebar-section-label history-title"><span>최근 대화 <b>{threadCount}</b></span></div>
         </div>
         <div className="thread-list" ref={threadListRef} tabIndex={0} aria-label="대화 목록">{threadGroups.map((group) =>
           <section className="thread-group" key={group.label} aria-label={group.label}>

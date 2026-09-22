@@ -1608,7 +1608,7 @@ async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     x, y, width, height, minWidth: 680, minHeight: 620,
     title: "MM_LLM",
-    backgroundColor: initialTheme === "dark" ? "#18171C" : "#FFFFFF",
+    backgroundColor: initialTheme === "dark" ? "#12161D" : "#FFFFFF",
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       // Electron forwards additionalArguments to the sandboxed preload's process.argv. The

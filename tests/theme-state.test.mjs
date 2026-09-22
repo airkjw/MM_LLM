@@ -72,7 +72,7 @@ test("live window theme changes even when preference persistence fails, and the 
     persist() { writes++; throw new Error("disk unavailable"); }
   };
   assert.throws(() => applyWindowTheme("system", true, null, failing), /disk unavailable/);
-  assert.deepEqual(backgrounds, ["#18171C"]);
+  assert.deepEqual(backgrounds, ["#12161D"]);
   assert.equal(writes, 1);
 
   let persisted = null;
@@ -83,7 +83,7 @@ test("live window theme changes even when preference persistence fails, and the 
   assert.equal(recovered, "system");
   assert.equal(persisted, "system");
   assert.equal(writes, 2);
-  assert.deepEqual(backgrounds, ["#18171C", "#18171C"]);
+  assert.deepEqual(backgrounds, ["#12161D", "#12161D"]);
 });
 
 test("live window background still updates for an already persisted preference without rewriting it", () => {

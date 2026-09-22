@@ -20,7 +20,7 @@ function TemplateCard({ item, onChoose, disabled }: {
   return <button type="button" className="template-card"
     onClick={() => void onChoose()} disabled={disabled}>
     <span className="template-icon"><Icon size={19} /></span>
-    <strong>{item.title}</strong><small>{item.detail}</small>
+    <span className="template-content"><strong>{item.title}</strong><small>{item.detail}</small></span>
     <ArrowRight size={16} className="template-arrow" />
   </button>;
 }
@@ -524,40 +524,18 @@ export function ChatPanel({
         준비된 구간별 초안을 검토한 뒤 직접 전송합니다.
       </div>}
       <div className="panel-header">
-        <div><h2>{thread.title === "새 대화" ? "새로운 대화" : thread.title}</h2></div>
-        <div className="panel-actions">{!chatbotTarget && <><label className="web-mode"><Globe2 size={14} />
-          <select value={thread.webSearchMode} disabled={isRunning || controlsPending || thread.purpose === "meeting-summary"}
-            onChange={(event) => void setSearchMode(event.target.value as WebSearchMode)}>
-            <option value="always">웹검색 항상</option><option value="auto">웹검색 자동</option>
-            <option value="deep">딥리서치 · 최대 6회 호출</option>
-            <option value="off">웹검색 끄기</option>
-          </select></label>
-          {reasoning === "adjustable" && <label className="reasoning-mode" title="모델의 추론 강도">
-            <Sparkles size={14} /><select value={thread.reasoningMode} disabled={isRunning || controlsPending}
-              onChange={(event) => void saveThreadControls(event.target.value as ReasoningMode,
-                thread.instruction, thread.advanced)} aria-label="사고 강도">
-              <option value="auto">자동</option><option value="fast">빠르게</option>
-              <option value="balanced">균형</option><option value="deep">깊게</option>
-            </select></label>}
-          {reasoning === "native-required" && <span className="reasoning-unavailable"
-            title="Claude 네이티브 Messages API 전환 후 조절할 수 있습니다.">사고 강도: 자동</span>}
-          {reasoning === "model-managed" && <span className="reasoning-unavailable"
-            title="이 모델은 사고 기능을 모델 내부에서 자동으로 관리합니다.">사고 가능 · 모델 자동</span>}
-          <button type="button" className="icon-button" aria-label="대화 설정" title="대화 설정"
-            disabled={isRunning || controlsPending}
-            onClick={() => { setInstructionDraft(thread.instruction); setAdvancedDraft(thread.advanced); setChatSettingsOpen(true); }}>
-            <Settings size={17} /></button>
-          <ModelPicker models={models} selected={modelId} onSelect={onModelChange}
-            disabled={isRunning || controlsPending} /></>}
+        <div className="panel-heading"><span className="panel-section">대화</span><h2 title={thread.title}>{thread.title === "새 대화" ? "새로운 대화" : thread.title}</h2></div>
+        <div className="panel-actions">{!chatbotTarget && <ModelPicker models={models} selected={modelId} onSelect={onModelChange}
+            disabled={isRunning || controlsPending} />}
           {chatbotTarget && <span className="chatbot-target"><Sparkles size={14} />{chatbotTarget.alias}</span>}</div>
       </div>
       <ThreadPrimitive.Root className="chat-thread">
         <ThreadPrimitive.Viewport className="chat-viewport">
           {messages.length === 0 && <div className="chat-welcome">
-            <div className="welcome-mark"><Sparkles size={29} /></div>
             <span className="eyebrow">KYUNG HEE UNIVERSITY · MEDICAL MBA</span>
             <h1>의료의 미래를 읽고,<br /><em>경영의 답을 설계하다</em></h1>
-            <p>경희대학교 의료경영학과 대학원을 위한 AI 워크스페이스</p>
+            <p>질문을 적거나, 아래 주제로 대화를 시작하세요.</p>
+            <div className="welcome-section-label">의료경영 시작 가이드</div>
             <div className="template-grid">{templates.map((item) =>
               <TemplateCard key={item.title} item={item} disabled={controlsPending}
                 onChoose={async () => { setControlsPending(true); try { await onTemplateStart(item); }
@@ -595,6 +573,29 @@ export function ChatPanel({
             {error && <DiagnosticButton stage="chat" modelId={modelId} />}
             {progress && <div className="inline-progress" role="status" aria-live="polite"><LoaderCircle className="spin" size={15} />{progress}</div>}
             <ComposerPrimitive.Root className={dropActive ? "composer-card drop-active" : "composer-card"}>
+              {!chatbotTarget && <div className="composer-options" aria-label="응답 설정"><label className="web-mode"><Globe2 size={14} />
+                <select aria-label="웹 검색 방식" value={thread.webSearchMode} disabled={isRunning || controlsPending || thread.purpose === "meeting-summary"}
+                  onChange={(event) => void setSearchMode(event.target.value as WebSearchMode)}>
+                  <option value="always">웹검색 항상</option><option value="auto">웹검색 자동</option>
+                  <option value="deep">딥리서치 · 최대 6회 호출</option>
+                  <option value="off">웹검색 끄기</option>
+                </select></label>
+                {reasoning === "adjustable" && <label className="reasoning-mode" title="모델의 추론 강도">
+                  <Sparkles size={14} /><span className="control-caption">사고</span><select value={thread.reasoningMode} disabled={isRunning || controlsPending}
+                    onChange={(event) => void saveThreadControls(event.target.value as ReasoningMode,
+                      thread.instruction, thread.advanced)} aria-label="사고 강도">
+                    <option value="auto">자동</option><option value="fast">빠르게</option>
+                    <option value="balanced">균형</option><option value="deep">깊게</option>
+                  </select></label>}
+                {reasoning === "native-required" && <span className="reasoning-unavailable"
+                  title="Claude 네이티브 Messages API 전환 후 조절할 수 있습니다.">사고 강도: 자동</span>}
+                {reasoning === "model-managed" && <span className="reasoning-unavailable"
+                  title="이 모델은 사고 기능을 모델 내부에서 자동으로 관리합니다.">사고 가능 · 모델 자동</span>}
+                <button type="button" className="icon-button" aria-label="대화 설정" title="대화 설정"
+                  disabled={isRunning || controlsPending}
+                  onClick={() => { setInstructionDraft(thread.instruction); setAdvancedDraft(thread.advanced); setChatSettingsOpen(true); }}>
+                  <Settings size={17} /></button>
+              </div>}
               {dropActive && <div className="composer-drop-hint"><Paperclip size={18} />
                 PDF·Word·Excel·이미지를 여기에 놓으세요</div>}
               {pending.length > 0 && <div className="attachment-row">
