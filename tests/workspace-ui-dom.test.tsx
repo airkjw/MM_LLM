@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test, { afterEach, before } from "node:test";
 import { Window } from "happy-dom";
+import { readFileSync } from "node:fs";
+import type { CompareEvent, CompareRequest } from "../src/shared/contracts";
 import * as React from "react";
 import type { Root } from "react-dom/client";
 const { act } = React;
@@ -36,6 +38,7 @@ browser.cancelAnimationFrame = (id) => {
 
 
 let createRoot: typeof import("react-dom/client")["createRoot"];
+let App: typeof import("../src/renderer/src/App")["default"];
 let ModelPicker: typeof import("../src/renderer/src/ModelPicker")["ModelPicker"];
 let MediaPanel: typeof import("../src/renderer/src/MediaPanel")["MediaPanel"];
 let ChatPanel: typeof import("../src/renderer/src/ChatPanel")["ChatPanel"];
@@ -51,6 +54,7 @@ before(async () => {
   Object.defineProperty(globalThis, "ResizeObserver", { value: browser.ResizeObserver, configurable: true });
   Object.defineProperty(globalThis, "IntersectionObserver", { value: browser.IntersectionObserver, configurable: true });
   ({ createRoot } = await import("react-dom/client"));
+  ({ default: App } = await import("../src/renderer/src/App"));
   ({ ModelPicker } = await import("../src/renderer/src/ModelPicker"));
   ({ MediaPanel } = await import("../src/renderer/src/MediaPanel"));
   ({ ChatPanel } = await import("../src/renderer/src/ChatPanel"));
@@ -170,4 +174,102 @@ test("blocked links retain readable content and an explanation", async () => {
   await render(<MarkdownText text="[자료](http://example.invalid)" />);
   assert.equal(document.querySelector("a"), null);
   assert.match(document.body.textContent!, /자료.*보안상 직접 열 수 없는 링크/);
+});
+
+
+async function openRealComparison() {
+  const now = new Date().toISOString();
+  const models = ["gpt-5.6-sol", "claude-opus-5", "gemini-3.8-flash"].map(id => ({ id, type: "llm" }));
+  const thread = { id: "compare-origin", title: "새 대화", modelId: models[0].id,
+    createdAt: now, updatedAt: now, webSearchMode: "off", reasoningMode: "auto",
+    instruction: "", advanced: {}, attachmentConsent: false, messages: [], messageCount: 0 };
+  const requests: CompareRequest[] = [];
+  let receive: ((event: CompareEvent) => void) | undefined;
+  let nextId = 0;
+  Object.assign(browser, { mmllm: {
+    getSession: async () => ({ authenticated: true, models, credits: { total: { remaining: 1000 } } }),
+    getSettings: async () => ({ theme: "dark", fontSize: "medium", defaultInstruction: "" }),
+    setThemePreference: async () => {}, listThreads: async () => [thread], loadThread: async () => thread,
+    listProjects: async () => [], listBackgroundResponses: async () => [],
+    getUpdateState: async () => ({ status: "idle", currentVersion: "0.5.0" }), onUpdateChanged: () => () => {},
+    pickAttachment: async () => ({ id: `report-${++nextId}`, name: "report.pdf", kind: "document", size: 100 }),
+    discardAttachments: async () => {}, streamCompare: (request: CompareRequest, listener: (event: CompareEvent) => void) => {
+      requests.push(request); receive = listener; return () => {};
+    }
+  } });
+  await render(<ConfirmProvider><App /></ConfirmProvider>);
+  const button = [...document.querySelectorAll("button")].find(button => button.textContent?.includes("모델 비교"))!;
+  await click(button);
+  const question = document.querySelector<HTMLTextAreaElement>(".compare-panel textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")!.set!.call(question, "첨부 보고서를 비교 검토해 주세요.");
+    question.dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+  for (const input of [...document.querySelectorAll(".compare-models input")].slice(0, 3)) await click(input);
+  return { requests, emit: async (event: CompareEvent) => { await act(async () => receive!(event)); } };
+}
+
+test("real comparison requires a visible attachment consent and sends confirmed attachments", async () => {
+  const style = document.createElement("style");
+  style.textContent = readFileSync(new URL("../src/renderer/src/styles.css", import.meta.url), "utf8");
+  document.head.append(style);
+  try {
+    const { requests } = await openRealComparison();
+    await click(document.querySelector(".compare-controls button")!);
+    const send = document.querySelector<HTMLButtonElement>(".compare-run-actions button")!;
+    const checkbox = document.querySelector<HTMLInputElement>(".deid-check input")!;
+    const css = window.getComputedStyle(checkbox);
+    assert.notEqual(css.opacity, "0");
+    assert.ok(parseFloat(css.width) > 0 && parseFloat(css.height) > 0);
+    assert.equal(send.disabled, true);
+    await click(send); assert.equal(requests.length, 0);
+    assert.match(document.querySelector("#compare-consent-hint")!.textContent!, /확인란을 체크/);
+    await click(checkbox);
+    assert.equal(checkbox.checked, true); assert.equal(send.disabled, false);
+    await click(send);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].deidentifiedConfirmed, true);
+    assert.deepEqual(requests[0].attachmentIds, ["report-1"]);
+    assert.equal(requests[0].modelIds.length, 3);
+    assert.match(document.querySelector(".compare-panel .inline-progress")!.textContent!, /비교를 준비/);
+  } finally { style.remove(); }
+});
+
+test("real comparison without attachments runs immediately and shows server errors inside the dialog", async () => {
+  const { requests, emit } = await openRealComparison();
+  const send = document.querySelector<HTMLButtonElement>(".compare-run-actions button")!;
+  assert.equal(send.disabled, false);
+  await click(send);
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].attachmentIds, []);
+  await emit({ type: "error", message: "공통 웹 검색 연결에 실패했습니다." });
+  const alert = document.querySelector('[role="alert"]')!;
+  assert.ok(alert.closest(".workspace-tools-dialog"));
+  assert.match(alert.textContent!, /공통 웹 검색 연결/);
+  assert.equal(document.querySelectorAll('[role="alert"]').length, 1);
+  assert.equal(document.querySelector<HTMLButtonElement>(".compare-run-actions button")!.disabled, false);
+});
+
+test("adding another comparison attachment resets consent before sending", async () => {
+  const { requests } = await openRealComparison();
+  await click(document.querySelector(".compare-controls button")!);
+  await click(document.querySelector(".deid-check input")!);
+  await click(document.querySelector(".compare-controls button")!);
+  assert.equal(document.querySelector<HTMLInputElement>(".deid-check input")!.checked, false);
+  const send = document.querySelector<HTMLButtonElement>(".compare-run-actions button")!;
+  assert.equal(send.disabled, true);
+  await click(send); assert.equal(requests.length, 0);
+});
+
+
+test("comparison startup errors release busy state and preserve attachments for retry", async () => {
+  await openRealComparison();
+  await click(document.querySelector(".compare-controls button")!);
+  await click(document.querySelector(".deid-check input")!);
+  window.mmllm.streamCompare = () => { throw new Error("비교 연결을 시작하지 못했습니다."); };
+  await click(document.querySelector(".compare-run-actions button")!);
+  assert.match(document.querySelector('.workspace-tools-dialog [role="alert"]')!.textContent!, /비교 연결을 시작/);
+  assert.equal(document.querySelector<HTMLButtonElement>(".compare-run-actions button")!.disabled, false);
+  assert.ok(document.querySelector(".attachment-chip"));
+  assert.equal(document.querySelector(".compare-panel .inline-progress"), null);
 });

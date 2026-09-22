@@ -450,7 +450,7 @@ a { color: inherit; }
   background: var(--color-accent); }
 .privacy-modal small { display: block; margin-top: 15px; color: var(--color-text-tertiary); font-size: var(--text-xs); }
 .deid-check { display: inline-flex; align-items: center; gap: 7px; color: var(--color-text-tertiary); font-size: var(--text-xs); cursor: pointer; }
-.deid-check input { position: absolute; width: 0; height: 0; opacity: 0; }
+.deid-check input { flex: none; width: 18px; height: 18px; margin: 2px 0; align-self: flex-start; }
 .custom-check { display: flex; align-items: center; justify-content: center; width: 15px; height: 15px; border: 1px solid var(--color-border-control);
   border-radius: 5px; background: var(--color-bg); color: var(--color-on-accent); }
 .deid-check input:checked + .custom-check { background: var(--color-accent); border-color: var(--color-accent); }

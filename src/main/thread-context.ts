@@ -93,34 +93,51 @@ export function buildChatContext(
       } else if (attachment.dataUrl) images.push({ dataUrl: attachment.dataUrl, newest });
     }
   });
-  candidates.sort((a, b) => b.score - a.score);
   const selected: string[] = [];
   const selectedLabels = new Set<string>();
-  const selectedKeys = new Set<string>();
-  let used = 0;
-  const bestMap = new Map<string, typeof candidates[number]>();
-  for (const candidate of candidates) if (!bestMap.has(candidate.label)) bestMap.set(candidate.label, candidate);
-  const bestByDocument = [...bestMap.values()];
-  const ordered = [...bestByDocument, ...candidates];
-  for (const item of ordered) {
-    const key = `${item.label}\0${item.text}`;
-    if (selectedKeys.has(key)) continue;
-    const firstForDocument = !selectedLabels.has(item.label);
-    const perDocument = firstForDocument
-      ? Math.max(200, Math.min(1_500, Math.floor(maxChars / Math.max(1, bestByDocument.length)) - 100))
-      : item.text.length;
-    const excerpt = item.text.slice(0, perDocument);
-    const block = `[첨부 문서 관련 원문: ${item.label}]\n${excerpt}${excerpt.length < item.text.length ? "\n[문서 발췌 압축됨]" : ""}\n[/첨부 문서 관련 원문]`;
-    if (used + block.length > maxChars) {
-      if (firstForDocument) throw new Error("첨부 문서가 너무 많아 모두 포함할 수 없습니다. 문서를 나누어 질문해 주세요.");
-      continue;
+  // Try the complete extracted text first. A small document must not lose its
+  // later sections to a per-document preview or relevance ranking.
+  const completeBlocks: string[] = [];
+  let completeSize = 0;
+  for (const item of candidates) {
+    const block = `[첨부 문서 관련 원문: ${item.label}]\n${item.text}\n[/첨부 문서 관련 원문]`;
+    completeSize += block.length + (completeBlocks.length ? 2 : 0);
+    if (completeSize > maxChars) break;
+    completeBlocks.push(block);
+  }
+  if (completeSize <= maxChars) {
+    selected.push(...completeBlocks);
+    for (const item of candidates) selectedLabels.add(item.label);
+  } else {
+    // Only use balanced, explicitly marked excerpts when all documents together
+    // exceed the context budget. Original chunks stay in encrypted local storage.
+    candidates.sort((a, b) => b.score - a.score);
+    const selectedKeys = new Set<string>();
+    let used = 0;
+    const bestMap = new Map<string, typeof candidates[number]>();
+    for (const candidate of candidates) if (!bestMap.has(candidate.label)) bestMap.set(candidate.label, candidate);
+    const bestByDocument = [...bestMap.values()];
+    const ordered = [...bestByDocument, ...candidates];
+    for (const item of ordered) {
+      const key = `${item.label}\0${item.text}`;
+      if (selectedKeys.has(key)) continue;
+      const firstForDocument = !selectedLabels.has(item.label);
+      const perDocument = firstForDocument
+        ? Math.max(200, Math.min(1_500, Math.floor(maxChars / Math.max(1, bestByDocument.length)) - 100))
+        : item.text.length;
+      const excerpt = item.text.slice(0, perDocument);
+      const block = `[첨부 문서 관련 원문: ${item.label}]\n${excerpt}${excerpt.length < item.text.length ? "\n[문서 발췌 압축됨]" : ""}\n[/첨부 문서 관련 원문]`;
+      if (used + block.length > maxChars) {
+        if (firstForDocument) throw new Error("첨부 문서가 너무 많아 모두 포함할 수 없습니다. 문서를 나누어 질문해 주세요.");
+        continue;
+      }
+      if (!firstForDocument && item.score <= 2) continue;
+      selected.push(block);
+      selectedLabels.add(item.label);
+      selectedKeys.add(key);
+      used += block.length;
+      if (selectedLabels.size >= bestByDocument.length && selected.length >= bestByDocument.length + 12) break;
     }
-    if (!firstForDocument && item.score <= 2) continue;
-    selected.push(block);
-    selectedLabels.add(item.label);
-    selectedKeys.add(key);
-    used += block.length;
-    if (selectedLabels.size >= bestByDocument.length && selected.length >= bestByDocument.length + 12) break;
   }
   const asksForImage = /이미지|사진|그림|도표|차트|첨부.*(봐|분석)|image|photo|figure|chart/i.test(query);
   const newestImages = images.filter((item) => item.newest);

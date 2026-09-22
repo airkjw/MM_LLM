@@ -8,7 +8,7 @@ test("documents are chunked with bounded pieces and overlap", () => {
   assert.ok(chunks.every((chunk) => chunk.length <= 6_000));
 });
 
-test("chat context selects relevant original chunks without resending the whole attachment", () => {
+test("over-budget chat context selects relevant original chunks instead of unrelated sections", () => {
   const messages = [{
     id: "u1", role: "user", text: "첨부 문서를 읽어줘", apiContent: "첨부 문서를 읽어줘",
     createdAt: new Date().toISOString(), attachments: ["report.pdf"],
@@ -20,7 +20,7 @@ test("chat context selects relevant original chunks without resending the whole 
   }, {
     id: "u2", role: "user", text: "외래 환자 대기시간은?", apiContent: "외래 환자 대기시간은?", createdAt: new Date().toISOString()
   }];
-  const context = buildChatContext(messages, "외래 환자 대기시간은?", 200);
+  const context = buildChatContext(messages, "외래 환자 대기시간은?", 160);
   const latest = context.at(-1).content;
   assert.equal(typeof latest, "string");
   assert.match(latest, /대기시간은 24분/);
@@ -96,4 +96,53 @@ test("batched manual tool results become consecutive provider tool messages", ()
     manualToolResults: [{ toolCallId: "a", name: "one", result: "{\"x\":1}" },
       { toolCallId: "b", name: "two", result: "{\"y\":2}" }] }], "results");
   assert.deepEqual(context.map((item) => item.tool_call_id), ["a", "b"]);
+});
+
+test("a short report is sent in full instead of being cut to the first 1500 characters", () => {
+  const report = "1절 연구 배경\n" + "가".repeat(950) + "\n2절 문제 검토\n" + "나".repeat(1800) + "\n3절 개선 제안\n" + "다".repeat(850) + "\n최종 결론까지 검토해야 합니다.";
+  const query = "이 보고서의 논리적 허점과 수정할 사항을 알려줘";
+  const context = buildChatContext([{ id: "short-report", role: "user", text: query,
+    apiContent: query, createdAt: "2026-01-01T00:00:00Z",
+    attachmentContext: [{ kind: "document", name: "short-report.docx", chunks: chunkDocument(report) }] }], query);
+  const sent = String(context[0].content);
+  assert.ok(sent.includes(report));
+  assert.doesNotMatch(sent, /문서 발췌 압축됨/);
+});
+
+test("all chunks that fit are retained in document order regardless of query scores", () => {
+  const chunks = ["1절 배경\n" + "가".repeat(5900), "2절 검토\n" + "나".repeat(5900), "3절 결론\n" + "다".repeat(5900)];
+  const query = "결론을 포함해 전체 문서의 논리적 허점을 검토해줘";
+  const sent = String(buildChatContext([{ id: "multi-chunk", role: "user", text: query,
+    apiContent: query, createdAt: "2026-01-01T00:00:00Z",
+    attachmentContext: [{ kind: "document", name: "report.docx", chunks }] }], query)[0].content);
+  for (const chunk of chunks) assert.ok(sent.includes(chunk));
+  assert.ok(sent.indexOf(chunks[0]) < sent.indexOf(chunks[1]));
+  assert.ok(sent.indexOf(chunks[1]) < sent.indexOf(chunks[2]));
+  assert.doesNotMatch(sent, /문서 발췌 압축됨/);
+});
+
+test("multiple short documents remain complete on a follow-up question", () => {
+  const a = "A의 전체 분석\n" + "가".repeat(3500) + "\nA의 최종 결론";
+  const b = "B의 전체 분석\n" + "나".repeat(4500) + "\nB의 최종 결론";
+  const query = "두 문서 전체를 비교해줘";
+  const sent = String(buildChatContext([
+    { id: "a", role: "user", text: "자료입니다", apiContent: "", createdAt: "2026-01-01T00:00:00Z", attachmentContext: [
+      { kind: "document", name: "A.docx", chunks: chunkDocument(a) },
+      { kind: "document", name: "B.docx", chunks: chunkDocument(b) }] },
+    { id: "followup", role: "user", text: query, apiContent: query, createdAt: "2026-01-01T00:01:00Z" }
+  ], query).at(-1).content);
+  assert.ok(sent.includes(a)); assert.ok(sent.includes(b));
+  assert.doesNotMatch(sent, /문서 발췌 압축됨/);
+});
+
+test("over-budget documents still use bounded excerpts and disclose truncation", () => {
+  const query = "모든 문서를 검토해줘";
+  const sent = String(buildChatContext([{ id: "large", role: "user", text: query,
+    apiContent: query, createdAt: "2026-01-01T00:00:00Z", attachmentContext: [
+      { kind: "document", name: "A.docx", chunks: chunkDocument("가".repeat(80000)) },
+      { kind: "document", name: "B.docx", chunks: chunkDocument("나".repeat(80000)) }
+    ] }], query, 4000)[0].content);
+  assert.match(sent, /A\.docx/); assert.match(sent, /B\.docx/);
+  assert.match(sent, /문서 발췌 압축됨/);
+  assert.ok(sent.length <= 4000 + query.length + 2);
 });

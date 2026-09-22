@@ -508,21 +508,26 @@ export default function App() {
     actionGatesRef.current.set(gateKey, gate);
     const request = gate.begin(); const epoch = uiEpochRef.current;
     setCompareBusy(true); setCompareRun(null); setError("");
-    compareStopRef.current = window.mmllm.streamCompare({ prompt: comparePrompt, modelIds: compareModels,
-      webSearchMode: compareMode, attachmentIds: compareAttachments.map((item) => item.id),
-      deidentifiedConfirmed: compareConfirmed }, (event: CompareEvent) => {
+    try {
+      compareStopRef.current = window.mmllm.streamCompare({ prompt: comparePrompt, modelIds: compareModels,
+        webSearchMode: compareMode, attachmentIds: compareAttachments.map((item) => item.id),
+        deidentifiedConfirmed: compareConfirmed }, (event: CompareEvent) => {
+        if (!gate.isLatest(request) || epoch !== uiEpochRef.current) return;
+        if (event.type === "snapshot" || event.type === "done") setCompareRun({ ...event.run,
+          results: event.run.results.map((item) => ({ ...item })) });
+        else if (event.type === "delta") setCompareRun((current) => current ? { ...current,
+          results: current.results.map((item) => item.modelId === event.modelId ? { ...item, text: item.text + event.text } : item) } : current);
+        else if (event.type === "status") setCompareRun((current) => current ? { ...current,
+          results: current.results.map((item) => item.modelId === event.modelId ? { ...item, status: event.status } : item) } : current);
+        if (event.type === "done" || event.type === "error") {
+          setCompareBusy(false); compareStopRef.current = null; setCompareAttachments([]);
+          if (event.type === "error") { if (event.run) setCompareRun(event.run); setError(event.message); }
+        }
+      });
+    } catch (error) {
       if (!gate.isLatest(request) || epoch !== uiEpochRef.current) return;
-      if (event.type === "snapshot" || event.type === "done") setCompareRun({ ...event.run,
-        results: event.run.results.map((item) => ({ ...item })) });
-      else if (event.type === "delta") setCompareRun((current) => current ? { ...current,
-        results: current.results.map((item) => item.modelId === event.modelId ? { ...item, text: item.text + event.text } : item) } : current);
-      else if (event.type === "status") setCompareRun((current) => current ? { ...current,
-        results: current.results.map((item) => item.modelId === event.modelId ? { ...item, status: event.status } : item) } : current);
-      if (event.type === "done" || event.type === "error") {
-        setCompareBusy(false); compareStopRef.current = null; setCompareAttachments([]);
-        if (event.type === "error") { if (event.run) setCompareRun(event.run); setError(event.message); }
-      }
-    });
+      setCompareBusy(false); compareStopRef.current = null; setError(errorText(error));
+    }
   }
 
   async function startCompareSynthesis() {
@@ -900,6 +905,8 @@ export default function App() {
         closeTools={closeTools}
         toolsRef={toolsRef}
         toolsTab={toolsTab}
+        toolsNotice={notice}
+        clearToolsNotice={clearNotice}
         comparePrompt={comparePrompt}
         setComparePrompt={setComparePrompt}
         llmModels={llmModels}
@@ -972,7 +979,7 @@ export default function App() {
         모델 목록을 가져오지 못했습니다. 연결을 확인하고 새로고침해 주세요.
         <button type="button" onClick={refreshModels}>새로고침</button></div>}
       {backgroundNotice && <div className="offline-banner" role="status">{backgroundNotice}</div>}
-      <Notice notice={notice} onClose={clearNotice} floating />
+      {!toolsOpen && <Notice notice={notice} onClose={clearNotice} floating />}
       {screen === "chat" && thread && llmModels.length > 0
         ? <ChatPanel key={thread.id} thread={thread} modelId={modelId}
           models={llmModels} onModelChange={setModelId}

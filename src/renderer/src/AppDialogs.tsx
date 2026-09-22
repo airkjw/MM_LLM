@@ -3,6 +3,7 @@ import { serializeCompareAnalysis } from "../../shared/compare-export";
 import type { AppSettings, ChatbotBookmark, ChatbotUsageReport, CompareRun, GatewayModel, PickedAttachment, ProjectSummary, ThreadSearchResult, ThreadSnapshot, ThreadSummary, WebSearchMode } from "../../shared/contracts";
 import { BackupPanel } from "./components/BackupPanel";
 import { DiagnosticButton } from "./components/DiagnosticButton";
+import { Notice, type NoticeState } from "./components/Notice";
 import { type FocusReturnTarget } from "./components/Sidebar";
 import { modelLabel } from "./model-names";
 
@@ -23,6 +24,8 @@ type Props = {
   closeTools: () => void;
   toolsRef: React.RefObject<HTMLDivElement | null>;
   toolsTab: "compare" | "chatbot";
+  toolsNotice: NoticeState | null;
+  clearToolsNotice: () => void;
   comparePrompt: string;
   setComparePrompt: React.Dispatch<React.SetStateAction<string>>;
   llmModels: GatewayModel[];
@@ -93,7 +96,7 @@ type Props = {
   saveGlobalSettings: () => Promise<void>;
 };
 
-export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedConversation, renameInputRef, setRenameDialog, toolsOpen, compareBusy, compareSynthesisBusy, bookmarkBusy, closeTools, toolsRef, toolsTab, comparePrompt, setComparePrompt, llmModels, compareModels, setCompareModels, compareMode, setCompareMode, addCompareAttachment, compareAttachments, setCompareAttachments, compareConfirmed, setCompareConfirmed, compareStopRef, startCompare, compareRun, continueCompare, compareSynthesisReady, compareSynthesisModelAvailable, compareSynthesisStopRef, startCompareSynthesis, bookmarkDraft, setBookmarkDraft, saveBookmark, bookmarks, openChatbot, loadChatbotUsage, setBookmarks, setError, chatbotUsage, projectsOpen, projectBusy, closeProjects, projectsRef, selectedProjectId, setSelectedProjectId, setProjectDraft, projects, projectDraft, saveProject, removeProjectDocument, addDocumentToProject, thread, assignCurrentThreadToProject, createProjectThread, removeProject, keyReplaceOpen, keyReplacing, closeKeyReplace, keyReplaceRef, replacementKey, setReplacementKey, replaceApiKey, searchOpen, closeSearch, searchRef, searchQuery, setSearchQuery, searchResults, setSearchOpen, selectThread, settingsOpen, settingsDraft, settingsSaving, closeSettings, settingsRef, modelId, setSettingsDraft, saveGlobalSettings }: Props) {
+export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedConversation, renameInputRef, setRenameDialog, toolsOpen, compareBusy, compareSynthesisBusy, bookmarkBusy, closeTools, toolsRef, toolsTab, toolsNotice, clearToolsNotice, comparePrompt, setComparePrompt, llmModels, compareModels, setCompareModels, compareMode, setCompareMode, addCompareAttachment, compareAttachments, setCompareAttachments, compareConfirmed, setCompareConfirmed, compareStopRef, startCompare, compareRun, continueCompare, compareSynthesisReady, compareSynthesisModelAvailable, compareSynthesisStopRef, startCompareSynthesis, bookmarkDraft, setBookmarkDraft, saveBookmark, bookmarks, openChatbot, loadChatbotUsage, setBookmarks, setError, chatbotUsage, projectsOpen, projectBusy, closeProjects, projectsRef, selectedProjectId, setSelectedProjectId, setProjectDraft, projects, projectDraft, saveProject, removeProjectDocument, addDocumentToProject, thread, assignCurrentThreadToProject, createProjectThread, removeProject, keyReplaceOpen, keyReplacing, closeKeyReplace, keyReplaceRef, replacementKey, setReplacementKey, replaceApiKey, searchOpen, closeSearch, searchRef, searchQuery, setSearchQuery, searchResults, setSearchOpen, selectThread, settingsOpen, settingsDraft, settingsSaving, closeSettings, settingsRef, modelId, setSettingsDraft, saveGlobalSettings }: Props) {
   return <>
       {renameDialog && <div className="dialog-backdrop" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !renameDialog.busy) closeRename();
@@ -144,12 +147,16 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
               onClick={() => { void window.mmllm.discardAttachments([item.id]);
                 setCompareAttachments((items) => items.filter((value) => value.id !== item.id)); }}><X size={12} /></button></span>)}</div>
             <label className="deid-check"><input type="checkbox" checked={compareConfirmed} disabled={compareBusy || compareSynthesisBusy}
+              aria-describedby={!compareConfirmed ? "compare-consent-hint" : undefined}
               onChange={(event) => setCompareConfirmed(event.target.checked)} />
-              환자 식별정보나 개인정보를 제거했습니다. 자료는 선택한 모델 수만큼 외부 전송·과금될 수 있습니다.</label></>}
+              <span>환자 식별정보나 개인정보를 제거했습니다. 자료는 선택한 모델 수만큼 외부 전송·과금될 수 있습니다.</span></label>
+            {!compareConfirmed && <p id="compare-consent-hint" className="notice-info" role="status">첨부 자료를 전송하려면 위 확인란을 체크해 주세요.</p>}</>}
           <div className="compare-run-actions">{compareBusy
             ? <button type="button" className="secondary-button" onClick={() => compareStopRef.current?.()}><Square size={14} /> 중단</button>
-            : <button type="button" className="primary-button" disabled={compareSynthesisBusy || !comparePrompt.trim() || compareModels.length < 2}
+            : <button type="button" className="primary-button" disabled={compareSynthesisBusy || !comparePrompt.trim() || compareModels.length < 2 ||
+                compareModels.length > 3 || compareAttachments.length > 0 && !compareConfirmed}
               onClick={() => void startCompare()}><Columns3 size={15} /> 비교 실행</button>}</div></details>
+          {compareBusy && !compareRun && <p className="inline-progress" role="status">첨부 자료와 웹 검색 설정에 따라 비교를 준비하고 있습니다…</p>}
           {compareRun && <><h4 className="compare-step">모델별 답변 <small>관점과 근거를 나란히 검토하세요</small></h4><div className="compare-results" aria-live="polite">{compareRun.results.map((result) => <article key={result.modelId}>
             <header><strong>{modelLabel(result.modelId)}</strong><span>{{ running: "답변 중", completed: "완료", incomplete: "일부 완료", failed: "실패", cancelled: "중단" }[result.status]}</span></header>
             <div className="compare-result-body">{result.error
@@ -219,6 +226,7 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
             <details><summary>안전하게 정규화된 상세 응답</summary>
               <pre>{JSON.stringify(chatbotUsage.report.data, null, 2)}</pre></details></section>}
         </section>}
+        <Notice notice={toolsNotice} onClose={clearToolsNotice} />
         <div className="dialog-actions"><button type="button" className="secondary-button" onClick={closeTools}
           disabled={compareBusy || compareSynthesisBusy || bookmarkBusy}>닫기</button></div>
       </div></div>}

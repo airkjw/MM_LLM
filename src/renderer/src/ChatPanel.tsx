@@ -566,7 +566,7 @@ export function ChatPanel({
             }}
           </ThreadPrimitive.Messages>
           <ThreadPrimitive.ViewportFooter className="chat-footer">
-            {needsConsent && <small className="document-scope-note">문서는 질문과 관련된 부분을 발췌해 전달할 수 있습니다.
+            {needsConsent && <small className="document-scope-note">문서는 전송 한도 안에서는 전체 본문을 전달하고, 한도를 넘으면 관련 부분을 발췌합니다.
               전체 원문을 빠짐없이 검토한 결과가 아닐 수 있으므로, 필요한 페이지·표·항목을 질문에 명시해 주세요.</small>}
             {error && <div className="inline-error" role="alert" aria-live="assertive"><CircleHelp size={16} />{error}
               <button onClick={() => setError("")} type="button" aria-label="오류 닫기"><X size={14} /></button></div>}
