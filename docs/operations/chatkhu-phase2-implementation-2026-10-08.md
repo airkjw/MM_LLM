@@ -4,6 +4,33 @@
 
 완료 조건은 실제 IPC/DOM 동의·취소·preflight 경계, bounded JSON/SSE·스키마·벡터 검증, 암호화 저장/백업 회귀와 네 가지 제품 gate다. 본인 검증을 독립 검토 수락으로 기록하지 않는다.
 
+## 독립 검토 네 지적 보정 결과 — 독립 재검토 대기
+
+독립 검토 `task_e5226f155427` / `ctx_982e157a4081`은 HEAD `46eea830edfa844756e131c0c61c089f5eeb172a`에 `CHANGES_REQUIRED`를 보고했다. 보정은 단일 구현자 `task_412fec97e470` / `ctx_a57c6619f1e5`가 같은 branch/worktree에서 직렬 소유하며 위임하지 않는다. 범위는 근거 추가의 현재 초안·첨부 보존, 챗봇에서 새 LLM 선택과 기존 초안 보존, 큰 MCP JSON의 출처 정규화/생략 안내, 선택 enum 생략의 키 제거 및 실제 컴포넌트/main/client 회귀 테스트다.
+
+제품·실제 경로 테스트를 로컬 commit `ce929d8757ee97cfeb4c2ab84d226b3aa6fc109a`로 고정한 후 최종 gate를 실행했다. 이후 제품 소스 변경 없이 이 문서와 계획의 인계만 갱신한다. 별도 독립 재검토를 coordinator에게 인계하며 자체 수락하지 않는다. Phase 3/4·main 통합·push·릴리즈·버전/의존성 변경·실계정/유료 호출은 포함하지 않는다.
+
+| 지적 | 보정과 실제 경로 검증 |
+| --- | --- |
+| 기존 질문 소실 | 템플릿 교체와 별도 operation ID/queue를 사용하는 근거 append를 추가했다. ChatPanel이 적용 시점의 현재 composer를 읽고 한 묶음의 근거들을 한 번에 결합한다. research/project 실제 App에서 각각 두 번 삽입해 기존 질문·추가 타이핑·첨부 유지, discard/자동 전송 0회를 확인했다. |
+| 챗봇에서 새 LLM 미선택 | 새 target을 명시 선택하고 modelId를 설정한다. 생성 대기 중 두 클릭은 생성 1회에 결합하며 챗봇의 최신 미전송 초안은 메모리에서 보존해 돌아올 때 복원한다. 실제 App에서 표시·모델·초안 복원을 확인하고 창 닫기·패널 교체·새 선택·다른 계정 로그인 뒤의 늦은 응답이 선택/근거를 적용하지 않음을 확인했다. |
+| 큰 MCP JSON 출처 소실 | 기존 2MB/60초 transport 한도 안의 완전한 텍스트를 먼저 JSON.parse하고 출처별/count 정규화 후 rawText만 30,000자로 제한한다. 실제 JSON/SSE tools/call의 41,693자 text JSON(structuredContent 없음)에서 출처 10개의 제목·URL·날짜·버전을 보존한다. raw 표시·출처 필드/count·25,000자 evidence의 실제 생략을 각각 안내한다. 짧은 결과에는 생략을 주장하지 않는다. |
+| enum 생략 후 빈 값 전송 | ResearchPanel의 생략 선택은 키를 삭제한다. 실제 DOM의 query → papers → 생략 실행 인자를 검증했다. 실제 main IPC는 생략/유효 enum을 받아 tools/call 2회를 실행하며 빈 enum은 기존 검증에서 추가 tools/call 없이 거절한다. |
+
+집중 검사는 main/client **19/19**, DOM **16/16** 통과다. 최초 집중 DOM 16개 중 한 번 실패한 두 클릭 재현은 같은 effect 내 setText/getState가 이전 snapshot을 읽는 문제를 밝혔으며 현재 초안을 한 번 읽고 결합하도록 보정한 뒤 통과했다. 새 fixture `tests/phase2-corrections-ui-dom.test.tsx`는 실제 App/ChatPanel을 import하고 `npm run ui:check`에 명시 포함했다. 기존 제품 구현을 fixture로 복제하거나 실제 컴포넌트를 대체하지 않았다.
+
+| 보정 최종 명령 | 결과 |
+| --- | --- |
+| `npm run typecheck` | PASS, exit 0 |
+| `npm test` | Node 256/256 + DOM 66/66 = **322/322 PASS**, exit 0 |
+| `npm run ui:audit` | PASS, exit 0; light/dark 39토큰·contrast 68쌍·토큰 밖 색상 0 |
+| `npm run build` | PASS, exit 0; Linux main/preload/renderer, 내부 typecheck 포함 |
+| `git diff --check 46eea830edfa844756e131c0c61c089f5eeb172a` | PASS, exit 0 |
+
+최종 raw stdout/stderr·exitcode·파일별 SHA256 manifest는 ignored worktree `.orca/phase2-correction/`의 `final-{typecheck,test,ui-audit,build,diffcheck}.{stdout.txt,stderr.txt,receipt.json,source.json}`에 보관했다. 디렉터리 절대 경로는 `/home/airkjw/orca/workspaces/MM_LLM/chatkhu-api-expansion-20261008/.orca/phase2-correction/`다. 모든 최종 gate receipt는 위 제품 commit, source SHA256 `24a2b620552a62c12b3c44a9d4ff741b215f4861016f468d28ace45de353d0a0`, 실행 전후 `source_unchanged:true`를 기록한다. 로그 출력은 잘라 보관하지 않았다. 작은 `receipts.json`과 `handoff.md`가 최종 인계·원본 경로를 묶는다.
+
+기존 동의·암호화·백업·preflight·과금 POST 무재시도·짧은 첨부 전체 문맥·native PDF·modal focus·좁은 창·light/dark 테스트도 전체 gate에 포함되어 통과했다. 챗봇 초안 보존은 이 앱 세션의 메모리 범위이며 앱 재시작 후 복원 기능을 추가하지 않는다. 검증은 Linux 합성 fixture/mock network이고 실계정 권한·서비스 relevance·실제 OS keychain·macOS 서명/공증·Windows 설치·CI는 미검증이다. 다음 소유자는 coordinator가 배정하는 별도 읽기 전용 Sol acceptance reviewer다.
+
 ## 공식 계약 확인
 
 2026-10-08 공식 페이지 본문과 페이지에 포함된 공식 코드 예제를 함께 확인했다.
@@ -47,7 +74,7 @@
 
 휴대 백업은 원본·추출 청크를 유지하고 **파생 vector를 생략**한다. 복원은 로컬 모드/재구축 필요 상태로 시작하며 query/rerank 동의와 내부 blob 참조·sourceHash는 복사하지 않는다. 원본 hash는 다시 계산한다. 복원만으로 원격 호출하지 않는다.
 
-## 검증 결과
+## 최초 구현 검증 결과 (보정 전)
 
 모든 검증은 Linux의 격리 임시 userData와 합성 문서·mock fetch로 수행했다. Electron startup와 OS safeStorage는 fixture이며 실제 main IPC, Gateway payload/preflight, context, 암호화 blob, profile storage/backup과 실제 React 컴포넌트를 실행했다. 실제 계정·키·학생 자료·유료 API는 사용하지 않았다.
 
@@ -79,4 +106,4 @@
 - 의미 색인의 앱 상한을 넘으면 문서를 나누거나 로컬 검색을 직접 선택해야 한다. 불완전 색인 검색은 완료 벡터와 로컬 어휘 후보를 사용하며 대기 청크 수를 알린다. 미확정 요청은 실제 과금 여부를 앱이 판정할 수 없다.
 - 백업/계정 전환 후 vector 재구축에는 사용자의 새 동의와 비용이 필요하다. 기존 원본은 보존한다.
 - macOS 서명·공증, Windows 설치, 실제 OS keychain 환경, CI, 실서비스 relevance 검증은 수행하지 않았다. Linux mock/build 성공으로 이를 주장하지 않는다.
-- **독립 검토는 미실시/수락 대기**다. 구현자는 자체 gate만 보고한다. coordinator가 이 branch의 두 feature commit과 이 기록을 별도 Sol reviewer에게 인계하고 findings가 있으면 구현자에게 보정 ownership을 배정한다. Phase 3/4는 별도 Task다.
+- 최초 독립 검토는 `CHANGES_REQUIRED`였으며 위 네 지적의 보정·자체 gate를 완료했다. **보정 commit의 별도 독립 재검토/수락은 대기**다. coordinator가 settled HEAD와 원본 receipt를 별도 읽기 전용 Sol reviewer에게 인계하고 검토 결과를 수락한다. Phase 3/4는 미착수이며 별도 Task다.
