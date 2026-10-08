@@ -16,7 +16,7 @@ import { errorText, MarkdownText } from "./ui-shared";
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
 
 type Props = {
-  onResearchEvidence: (text: string) => void;
+  onResearchEvidence: (text: string, ownsSource?: () => boolean) => void;
   retrievalModels: GatewayModel[];
   renameDialog: RenameDialogState | null;
   closeRename: () => void;

@@ -131,3 +131,22 @@ test("actual project back-to-back search clicks make one call and cancel the sam
   await render(<div>closed</div>); assert.equal(counts.cancel, 1);
   await act(async () => resolve({ hits: [], text: "late", notice: "late" })); assert.equal(document.querySelector(".research-results"), null);
 });
+
+// Exercise the real DOM transition, while the main IPC test independently validates the boundary.
+test("actual ResearchPanel optional enum query -> papers -> omission deletes the argument", async () => {
+  const { validateResearchArguments } = await import("../src/shared/research");
+  const scoped = { ...tool, fields: [...tool.fields, { name: "scope", type: "string" as const, required: false, enum: ["papers", "laws"] }] };
+  const args: Record<string, unknown>[] = [];
+  await readyResearch();
+  window.mmllm.listResearchTools = async () => [scoped];
+  window.mmllm.searchResearch = async (_id, _token, value) => {
+    validateResearchArguments(scoped.fields, value); args.push(structuredClone(value)); return result;
+  };
+  await click(button("선택한 묶음")); await select(field("도구").querySelector("select")!, tool.token);
+  await input(field("words").querySelector("input")!, "Synthetic"); await click(button("검색 실행"));
+  const scope = field("scope").querySelector("select")!;
+  await select(scope, "papers"); await click(button("검색 실행"));
+  await select(scope, ""); await click(button("검색 실행"));
+  assert.deepEqual(args, [{ words: "Synthetic" }, { words: "Synthetic", scope: "papers" }, { words: "Synthetic" }]);
+  assert.equal(Object.hasOwn(args[2], "scope"), false); assert.equal(document.querySelector('[role="alert"]'), null);
+});

@@ -96,14 +96,21 @@ export class McpClient {
     this.assertEpoch(epoch, signal);
     if (raw.isError === true) throw new Error("MCP 도구 실행 오류 (isError). 이 실행은 사용량에 포함될 수 있습니다. 자동 재시도하지 않았습니다.");
     if (!Array.isArray(raw.content) || raw.content.length > 100 || raw.isError !== undefined && typeof raw.isError !== "boolean") throw new Error("MCP 도구 응답 구조가 올바르지 않습니다.");
-    const rawText = raw.content.flatMap((block) => researchRecord(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n").slice(0, 30000);
+    // The transport has already bounded the complete response by bytes and deadline.
+    // Display limits must not corrupt otherwise valid JSON and discard its provenance.
+    const completeText = raw.content.flatMap((block) => researchRecord(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n");
+    const rawText = completeText.slice(0, 30000);
     let structured: unknown = raw.structuredContent;
-    if (!structured) { try { structured = JSON.parse(rawText); } catch { /* Plain text is still untrusted evidence. */ } }
+    if (!structured) { try { structured = JSON.parse(completeText); } catch { /* Plain text is still untrusted evidence. */ } }
     const searchedAt = new Date().toISOString();
+    let sourcesTruncated = false;
+    const sources = researchSources(structured, searchedAt, () => { sourcesTruncated = true; });
     return { id: randomUUID(), suite: item.suite, tool: item.tool.name,
       query: String(arguments_[item.tool.fields.find((field) => field.required)!.name]), searchedAt,
-      sources: researchSources(structured, searchedAt), rawText,
-      notice: "검색 결과·초록은 원문 전체가 아닙니다. 법령 현행 여부는 미확인입니다. 제공된 날짜·조문·버전만 표시합니다." };
+      sources, rawText,
+      notice: "검색 결과·초록은 원문 전체가 아닙니다. 법령 현행 여부는 미확인입니다. 제공된 날짜·조문·버전만 표시합니다." +
+        (completeText.length > 30000 ? " 제공된 검색 텍스트 표시는 30,000자까지이며 나머지는 생략했습니다." : "") +
+        (sourcesTruncated ? " 출처 표시는 최대 30개, 제목 500자·본문 6,000자·날짜/버전 200자로 제한되어 일부를 생략했습니다." : "") };
   }
 }
 export { MCP_LIMIT_NOTICE };

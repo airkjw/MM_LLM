@@ -232,3 +232,24 @@ test('actual logout aborts indexing, clears derived state and restore/profile is
   const restored = await invoke('projects:retrieval-status', id); assert.equal(restored.settings.mode, 'local'); assert.equal(restored.settings.rebuildRequired, true); assert.equal(restored.dimension, undefined);
   const result = await invoke('projects:retrieve', randomUUID(), id, 'synthetic'); assert.match(result.notice, /로컬/); assert.equal(calls, 0);
 });
+
+test('actual main MCP IPC accepts omission and a valid enum but rejects empty enum before tools/call', async () => {
+  await session();
+  const suite = { slug: 'synthetic-scope', display_name: 'Synthetic', url: '/v1/gateway/mcp/synthetic-scope/', transport: 'streamable-http' };
+  const tool = { name: 'synthetic_search', annotations: { readOnlyHint: true, destructiveHint: false },
+    inputSchema: { type: 'object', properties: { query: { type: 'string' }, scope: { type: 'string', enum: ['papers', 'laws'] } }, required: ['query'], additionalProperties: false } };
+  const executed = [];
+  globalThis.fetch = async (_url, init) => {
+    if (init.method === 'GET') return Response.json({ object: 'list', data: [suite] });
+    const body = JSON.parse(init.body);
+    const result = body.method === 'initialize' ? { protocolVersion: '2025-06-18', capabilities: { tools: {} } }
+      : body.method === 'tools/list' ? { tools: [tool] } : { content: [{ type: 'text', text: 'Synthetic evidence' }] };
+    if (body.method === 'tools/call') executed.push(body.params.arguments);
+    return Response.json({ jsonrpc: '2.0', id: body.id, result });
+  };
+  await invoke('research:discover', randomUUID()); const tools = await invoke('research:tools', randomUUID(), suite.slug);
+  await invoke('research:search', randomUUID(), tools[0].token, { query: 'Synthetic' });
+  await invoke('research:search', randomUUID(), tools[0].token, { query: 'Synthetic', scope: 'papers' });
+  await assert.rejects(invoke('research:search', randomUUID(), tools[0].token, { query: 'Synthetic', scope: '' }), /검색 문자열 또는 선택값/);
+  assert.deepEqual(executed, [{ query: 'Synthetic' }, { query: 'Synthetic', scope: 'papers' }]);
+});

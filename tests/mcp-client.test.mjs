@@ -84,3 +84,41 @@ test('actual tools/call local key minute quota prevents the 31st paid attempt wi
   for (let i = 0; i < 30; i++) await client.search('synthetic', tools[0].token, { words: 'synthetic' }, signal());
   await assert.rejects(client.search('synthetic', tools[0].token, { words: 'synthetic' }, signal()), /키 호출 한도/); assert.equal(calls.length, 33);
 });
+
+for (const sse of [false, true]) {
+  test(`actual MCP ${sse ? 'SSE' : 'JSON'} complete >30k text JSON retains all normalized provenance before display limits`, async () => {
+    const results = Array.from({ length: 10 }, (_, i) => ({ title: `Synthetic article ${i}`, url: `https://example.org/source-${i}`,
+      abstract: 'A'.repeat(4000), published_date: '2026-01-02', effective_date: '2026-02-03', version: 'synthetic-v1' }));
+    const text = JSON.stringify({ results });
+    assert.ok(text.length > 30000 && Buffer.byteLength(text) < 2 * 1024 * 1024);
+    const { client, tools, calls } = await ready((init) => envelope(init, { content: [{ type: 'text', text }] }, sse));
+    const result = await client.search('synthetic', tools[0].token, { words: 'Synthetic' }, signal());
+    assert.equal(result.sources.length, 10);
+    for (let i = 0; i < 10; i++) {
+      assert.equal(result.sources[i].title, results[i].title); assert.equal(result.sources[i].url, results[i].url);
+      assert.equal(result.sources[i].text.length, 4000);
+      assert.deepEqual(result.sources[i].dates, { published_date: '2026-01-02', effective_date: '2026-02-03', version: 'synthetic-v1' });
+      assert.equal(result.sources[i].searchedAt, result.searchedAt);
+    }
+    assert.equal(result.rawText, text.slice(0, 30000)); assert.match(result.notice, /검색 텍스트 표시는 30,000자.*생략/);
+    assert.doesNotMatch(result.notice, /출처 표시는 최대/);
+    const evidence = researchEvidence(result); assert.match(evidence, /근거 일부 생략.*25,000자/);
+    assert.match(evidence, /원문 전체가 아닙니다.*현행 여부는 미확인/); assert.ok(evidence.length < 28000);
+    assert.equal(calls.filter(({ init }) => init.method === 'POST' && JSON.parse(init.body).method === 'tools\/call').length, 1);
+  });
+}
+test('actual MCP source count/fields are bounded after complete parse and disclosed without trusting extra JSON fields', async () => {
+  const sources = Array.from({ length: 31 }, () => ({ title: 'T'.repeat(501), url: 'https://example.org/source', text: 'A'.repeat(6001),
+    version: 'V'.repeat(201), instructions: 'untrusted synthetic commands' }));
+  const { client, tools } = await ready((init) => envelope(init, { content: [{ type: 'text', text: JSON.stringify({ results: sources }) }] }));
+  const result = await client.search('synthetic', tools[0].token, { words: 'Synthetic' }, signal());
+  assert.equal(result.sources.length, 30); assert.equal(result.sources[0].title.length, 500);
+  assert.equal(result.sources[0].text.length, 6000); assert.equal(result.sources[0].dates.version.length, 200);
+  assert.equal(Object.hasOwn(result.sources[0], 'instructions'), false); assert.match(result.notice, /출처 표시는 최대 30개.*일부를 생략/);
+});
+test('actual MCP small text displays and inserts without claiming truncation', async () => {
+  const { client, tools } = await ready((init) => envelope(init, { content: [{ type: 'text', text: 'Synthetic short text' }] }));
+  const result = await client.search('synthetic', tools[0].token, { words: 'Synthetic' }, signal());
+  assert.equal(result.rawText, 'Synthetic short text'); assert.deepEqual(result.sources, []);
+  assert.doesNotMatch(result.notice + researchEvidence(result), /생략/);
+});

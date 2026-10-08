@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { MCP_LIMIT_NOTICE, researchEvidence, type ResearchResult, type ResearchSuite, type ResearchTool } from "../../shared/research";
 import { errorText } from "./ui-shared";
 
-export function ResearchPanel({ onEvidence }: { onEvidence: (text: string) => void }) {
+export function ResearchPanel({ onEvidence }: { onEvidence: (text: string, ownsSource?: () => boolean) => void }) {
   const [suites, setSuites] = useState<ResearchSuite[]>([]);
   const [suite, setSuite] = useState(""); const [tools, setTools] = useState<ResearchTool[]>([]);
   const [token, setToken] = useState(""); const [args, setArgs] = useState<Record<string, unknown>>({});
@@ -39,7 +39,12 @@ export function ResearchPanel({ onEvidence }: { onEvidence: (text: string) => vo
       {tool.reason && <p role="status">{tool.reason}</p>}
       {tool.executable && tool.fields.map((field) => <label className="settings-field" key={field.name}>
         {field.name}{field.required && " · 검색어"}
-        {field.enum ? <select value={String(args[field.name] ?? "")} disabled={busy} onChange={(event) => setArgs((old) => ({ ...old, [field.name]: event.target.value }))}>
+        {field.enum ? <select value={String(args[field.name] ?? "")} disabled={busy} onChange={(event) => setArgs((old) => {
+          const next = { ...old };
+          if (!event.target.value) delete next[field.name];
+          else next[field.name] = event.target.value;
+          return next;
+        })}>
           <option value="">생략</option>{field.enum.map((value) => <option key={value}>{value}</option>)}</select>
           : field.type === "boolean" ? <input type="checkbox" checked={args[field.name] === true} disabled={busy}
             onChange={(event) => setArgs((old) => ({ ...old, [field.name]: event.target.checked }))} />
@@ -58,7 +63,7 @@ export function ResearchPanel({ onEvidence }: { onEvidence: (text: string) => vo
         {source.url && <button type="button" className="link-button" onClick={() => void window.mmllm.openExternal(source.url!).catch((error) => setError(errorText(error)))}>{source.url}</button>}
         {Object.entries(source.dates).map(([key, value]) => <small key={key}>{key}: {value}</small>)}<p>{source.text}</p></article>)}
       <details><summary>제공된 검색 텍스트</summary><pre>{result.rawText}</pre></details>
-      <button type="button" className="secondary-button" onClick={() => onEvidence(researchEvidence(result))}>대화 초안에 근거 추가</button>
+      <button type="button" className="secondary-button" onClick={() => onEvidence(researchEvidence(result), () => alive.current)}>대화 초안에 근거 추가</button>
     </div>}
   </section>;
 }

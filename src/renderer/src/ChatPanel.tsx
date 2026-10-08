@@ -1,6 +1,6 @@
 import { ActionBarPrimitive, AssistantRuntimeProvider, ComposerPrimitive, MessagePrimitive, ThreadPrimitive, useAui, useExternalStoreRuntime, type ThreadMessageLike } from "@assistant-ui/react";
 import { ArrowRight, ArrowUp, CircleHelp, Copy, Download, FileText, Globe2, Image as ImageIcon, LoaderCircle, Paperclip, RefreshCw, Settings, ShieldCheck, Sparkles, Square, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { claudeAllowsSampling, claudeDefaultThinkingMode, claudeForbidsForcedToolChoice, claudeThinkingCapabilities, isClaudeModel, isGeminiModel, isOpenAiModel } from "../../shared/advanced-chat";
 import { hasFixedTemperature, reasoningSupport } from "../../shared/chat-options";
 import type { ChatAdvancedSettings, ChatEvent, ChatRequest, GatewayModel, PickedAttachment, PublicMessage, ReasoningMode, ThreadSnapshot, WebSearchMode, SearchCapability, WebSearchExecution } from "../../shared/contracts";
@@ -36,6 +36,36 @@ function ComposerPrefill({ text, onApplied }: { text?: string; onApplied: () => 
   }, [aui, text, onApplied]);
   return null;
 }
+
+export type EvidenceAppend = { id: string; threadId: string; text: string };
+export type ComposerHandle = { getText: () => string };
+function ComposerEvidence({ operations, onApplied, composerRef }: {
+  operations: EvidenceAppend[]; onApplied: (ids: string[]) => void; composerRef?: Ref<ComposerHandle>;
+}) {
+  const aui = useAui();
+  const applied = useRef(new Set<string>());
+  useImperativeHandle(composerRef, () => ({ getText: () => aui.composer.getState().text }), [aui]);
+  useEffect(() => {
+    const ids: string[] = []; let next = aui.composer.getState().text;
+    let changed = false;
+    for (const operation of operations) {
+      if (!applied.current.has(operation.id)) {
+        // Read at application time: neither a dialog snapshot nor a React closure owns the draft.
+        const evidence = operation.text.slice(0, 30000) + (operation.text.length > 30000
+          ? "\n[근거 일부 생략: 초안에 추가하는 자료는 30,000자까지입니다.]" : "");
+        next += (next ? "\n\n" : "") + evidence;
+        changed = true;
+        applied.current.add(operation.id);
+      }
+      ids.push(operation.id);
+    }
+    if (changed) aui.composer.setText(next);
+    if (ids.length) onApplied(ids);
+  }, [aui, operations, onApplied]);
+  return null;
+}
+
+const NO_EVIDENCE: EvidenceAppend[] = [];
 
 function UserMessage() {
   return <MessagePrimitive.Root className="message-row user">
@@ -168,7 +198,8 @@ function ChatKeyboardShortcuts({ messages, running, stop }: {
 
 export function ChatPanel({
   thread, modelId, models, onModelChange, onThreadUpdated, onRefreshThreads, onUsageChanged,
-  onTemplateStart, initialDraft, onDraftApplied
+  onTemplateStart, initialDraft, onDraftApplied, evidenceAppends = NO_EVIDENCE, onEvidenceApplied,
+  composerRef
 }: {
   thread: ThreadSnapshot; modelId: string; models: GatewayModel[];
   onModelChange: (id: string) => void;
@@ -178,6 +209,9 @@ export function ChatPanel({
   onTemplateStart: (item: typeof templates[number]) => Promise<void>;
   initialDraft?: string;
   onDraftApplied: () => void;
+  evidenceAppends?: EvidenceAppend[];
+  onEvidenceApplied?: (ids: string[]) => void;
+  composerRef?: Ref<ComposerHandle>;
 }) {
   const confirm = useConfirm();
   const [messages, setMessages] = useState<PublicMessage[]>(thread.messages);
@@ -560,6 +594,7 @@ export function ChatPanel({
   return <AssistantRuntimeProvider runtime={runtime}>
     <ChatKeyboardShortcuts messages={messages} running={isRunning} stop={() => stopRef.current?.()} />
     <ComposerPrefill text={initialDraft} onApplied={onDraftApplied} />
+    <ComposerEvidence operations={evidenceAppends} onApplied={onEvidenceApplied ?? (() => {})} composerRef={composerRef} />
     <div className="chat-panel" onDragEnter={handleDragEnter} onDragOver={(event) => {
       if (!event.dataTransfer.types.includes("Files")) return;
       event.preventDefault();
