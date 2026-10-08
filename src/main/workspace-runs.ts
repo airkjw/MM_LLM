@@ -1,3 +1,4 @@
+import { sanitizeWebSearch } from "../shared/search-evidence";
 import { app, safeStorage } from "electron";
 import { randomUUID } from "node:crypto";
 import { mkdir, open, unlink } from "node:fs/promises";
@@ -39,7 +40,7 @@ async function load(profileId: string): Promise<WorkspaceState> {
   if (value.version !== 1 || !Array.isArray(value.bookmarks) || !Array.isArray(value.compares)) {
     throw new Error("워크스페이스 실행 기록 형식이 올바르지 않습니다.");
   }
-  return value;
+  return { ...value, compares: value.compares.map((run) => ({ ...run, webSearch: sanitizeWebSearch(run.webSearch) })) };
 }
 
 async function save(profileId: string, value: WorkspaceState): Promise<void> {

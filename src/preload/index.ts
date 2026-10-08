@@ -23,6 +23,7 @@ const desktopApi: DesktopApi = {
   logout: () => ipcRenderer.invoke("session:logout"),
   replaceApiKey: (key) => ipcRenderer.invoke("session:replace-key", key),
   refreshModels: () => ipcRenderer.invoke("models:refresh"),
+  checkModelSearch: (modelId) => ipcRenderer.invoke("models:search-capability", modelId),
   getCredits: (force = false) => ipcRenderer.invoke("credits:get", force),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (settings) => ipcRenderer.invoke("settings:update", settings),

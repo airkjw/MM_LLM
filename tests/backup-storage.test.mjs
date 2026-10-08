@@ -55,7 +55,9 @@ test('actual storage backup restores documents and settings on a different machi
     const thread = await storage.createThread({ modelId: 'gpt-5.6-sol', projectId: project.id });
     await storage.updateThread(thread.id, (value) => {
       value.attachmentConsent = true;
-      value.messages.push({ id: 'answer', role: 'assistant', modelId: 'gpt-5.6-sol', text: '연구 답변', apiContent: '연구 답변', createdAt: new Date().toISOString() });
+      value.messages.push({ id: 'answer', role: 'assistant', modelId: 'gpt-5.6-sol', text: '연구 답변', apiContent: '연구 답변', createdAt: new Date().toISOString(),
+        webSearch: { route: 'native', provider: 'gemini', status: 'executed', queries: ['synthetic public query'],
+          citations: [{ url: 'https://example.test/public-statistic', title: 'synthetic' }], requestCount: 1 } });
     });
     await storage.saveSettings({ defaultInstruction: '연구 설정', theme: 'dark', fontSize: 'large' });
     const staleSettings = await storage.loadSettings();
@@ -84,10 +86,18 @@ test('actual storage backup restores documents and settings on a different machi
     assert.equal((await storage.getThread(old.id)).id, old.id);
     globalThis.__mmllmStorageElectron.safeStorage.encryptStringAsync = encrypt;
     await storage.restorePortableBackup(JSON.parse((await decryptBackup(encrypted, 'backup-test-password')).toString()));
+    const restoredProfileForSearch = storage.getActiveProfileId();
     assert.notEqual(storage.getActiveProfileId(), oldProfile);
     assert.equal(await storage.loadKey(), 'DESTINATION-KEY');
     assert.equal((await storage.getThread(thread.id)).attachmentConsent, false);
     assert.equal((await storage.getThread(thread.id)).messages[0].modelId, 'gpt-5.6-sol');
+    assert.equal(storage.snapshot(await storage.getThread(thread.id)).messages[0].webSearch.citations[0].url, 'https://example.test/public-statistic');
+    assert.equal((await storage.getThread(thread.id)).messages[0].webSearch.status, 'executed');
+    await storage.activateProfileForKey('SYNTHETIC-OTHER-PROFILE');
+    await assert.rejects(storage.getThread(thread.id), /찾/);
+    await storage.activateProfileForKey('DESTINATION-KEY');
+    // Restore created a replacement profile bound to the destination key.
+    assert.equal(storage.getActiveProfileId(), restoredProfileForSearch);
     assert.equal((await storage.loadSettings()).defaultInstruction, '연구 설정');
     assert.deepEqual(Buffer.from((await storage.exportPortableBackup()).projects[0].documents[0].content, 'base64'), content);
     assert.ok((await readdir(join(second, 'private'))).includes(`threads-profile-${oldProfile}.enc`), 'previous records remain recoverable');

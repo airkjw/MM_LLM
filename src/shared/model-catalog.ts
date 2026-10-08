@@ -14,12 +14,19 @@ export function parseGatewayModels(value: unknown): GatewayModel[] {
   const root = record(value); const data = root && Array.isArray(root.data) ? root.data : [];
   return data.flatMap((raw): GatewayModel[] => {
     const item = record(raw); const id = text(item?.id); const type = text(item?.type);
-    if (!item || !id || !type || !["llm", "audio", "image", "video"].includes(type)) return [];
+    if (!item || !id || id.length > 200 || !type || !["llm", "embedding", "rerank", "decisions", "realtime", "audio", "image", "video"].includes(type)) return [];
     return [{ id, type: type as GatewayModel["type"], object: text(item.object),
       created: typeof item.created === "number" && Number.isFinite(item.created) ? item.created : undefined,
       owned_by: text(item.owned_by), profile_image_url: text(item.profile_image_url) ?? null,
-      audio_client: text(item.audio_client) }];
+      audio_client: text(item.audio_client), ...parseSearchPricing(item) }];
   });
+}
+
+/** A missing/malformed price is unknown; null is explicitly unsupported; zero is a valid price. */
+export function parseSearchPricing(value: unknown): Pick<GatewayModel, "pricing"> {
+  const price = record(record(value)?.pricing)?.web_search_per_1k;
+  return price === null || typeof price === "number" && Number.isFinite(price) && price >= 0
+    ? { pricing: { web_search_per_1k: price } } : {};
 }
 
 export function resolveLiveThreadModel(storedModelId: string, models: GatewayModel[]): {

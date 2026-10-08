@@ -3,8 +3,9 @@ import { ArrowRight, ArrowUp, CircleHelp, Copy, Download, FileText, Globe2, Imag
 import { useCallback, useEffect, useRef, useState } from "react";
 import { claudeAllowsSampling, claudeDefaultThinkingMode, claudeForbidsForcedToolChoice, claudeThinkingCapabilities, isClaudeModel, isGeminiModel, isOpenAiModel } from "../../shared/advanced-chat";
 import { hasFixedTemperature, reasoningSupport } from "../../shared/chat-options";
-import type { ChatAdvancedSettings, ChatEvent, ChatRequest, GatewayModel, PickedAttachment, PublicMessage, ReasoningMode, ThreadSnapshot, WebSearchMode } from "../../shared/contracts";
-import { hasNativeWebSearch } from "../../shared/web-search";
+import type { ChatAdvancedSettings, ChatEvent, ChatRequest, GatewayModel, PickedAttachment, PublicMessage, ReasoningMode, ThreadSnapshot, WebSearchMode, SearchCapability, WebSearchExecution } from "../../shared/contracts";
+import { nativeSearchSettingsError, nativeSearchProvider } from "../../shared/search-capability";
+import { citationLinkBlockReason, webSearchStatusLabel } from "../../shared/search-evidence";
 import { useConfirm } from "./components/ConfirmDialog";
 import { DiagnosticButton } from "./components/DiagnosticButton";
 import { modelLabel } from "./model-names";
@@ -71,8 +72,8 @@ function ManualToolCards({ messageId, calls, disabled, onSubmit }: {
 }
 
 function AssistantMessage({ incomplete, onContinue, disabled, usage, credits, backgroundResponseId, onCancelBackground,
-  messageId, toolCalls, files, reasoningSummary, onSubmitTool, modelId, createdAt }: {
-  modelId?: string; createdAt?: string;
+  messageId, toolCalls, files, reasoningSummary, onSubmitTool, modelId, createdAt, webSearch }: {
+  modelId?: string; createdAt?: string; webSearch?: WebSearchExecution;
   incomplete: boolean; onContinue: () => void; disabled: boolean; usage?: PublicMessage["usage"]; credits?: number;
   backgroundResponseId?: string; onCancelBackground: (id: string) => void;
   messageId: string; toolCalls?: PublicMessage["toolCalls"];
@@ -80,12 +81,33 @@ function AssistantMessage({ incomplete, onContinue, disabled, usage, credits, ba
   reasoningSummary?: string;
   onSubmitTool: (messageId: string, results: Array<{ toolCallId: string; result: string }>) => void;
 }) {
+  const [sourceError, setSourceError] = useState("");
   return <MessagePrimitive.Root className="message-row assistant">
     <span className="assistant-avatar"><Sparkles size={16} /></span>
     <div className="assistant-message-column">
       <small className="message-provenance">{modelId ? modelLabel(modelId) : "모델 기록 없음"}
         {createdAt && <> · <time dateTime={createdAt}>{new Date(createdAt).toLocaleString("ko-KR")}</time></>}</small>
       <div className="message-bubble assistant-bubble"><MessagePrimitive.Parts components={{ Text: MarkdownText }} /></div>
+      {webSearch && <div className="message-usage" aria-label="웹 검색 실행 상태">
+        <span>{webSearchStatusLabel(webSearch)}</span>
+        {webSearch.requestCount !== undefined && <span> · 검색 {webSearch.requestCount}회</span>}
+        {webSearch.citations.length > 0 && <details><summary>확인된 웹 출처 {webSearch.citations.length}개</summary>
+          <ul>{webSearch.citations.map((citation) => {
+            const blocked = citationLinkBlockReason(citation.url);
+            return <li key={citation.url}>
+              <button type="button" disabled={Boolean(blocked)} title={blocked ?? citation.url}
+                onClick={async () => {
+                  setSourceError("");
+                  try { await window.mmllm.openExternal(citation.url); }
+                  catch { setSourceError("출처를 열지 못했습니다. 연결·운영체제 설정을 확인해 주세요."); }
+                }}>{citation.title}</button>
+              {blocked && <small>{blocked}</small>}
+              {citation.citedText && <p>{citation.citedText}</p>}
+            </li>;
+          })}</ul>
+        </details>}
+      </div>}
+      {sourceError && <div className="inline-error" role="alert">{sourceError}</div>}
       {reasoningSummary && <details className="reasoning-summary">
         <summary>추론 요약</summary><p>{reasoningSummary}</p>
       </details>}
@@ -173,6 +195,8 @@ export function ChatPanel({
     thread.advanced.tools ? JSON.stringify(thread.advanced.tools, null, 2) : ""
   );
   const [controlsPending, setControlsPending] = useState(false);
+  const [checkedSearch, setCheckedSearch] = useState<{ id: string; capability: SearchCapability } | null>(null);
+  useEffect(() => { setCheckedSearch(null); }, [modelId, models]);
   const [countedTokens, setCountedTokens] = useState<number | null>(null);
   const stopRef = useRef<(() => void) | null>(null);
   const settleRef = useRef<(() => void) | null>(null);
@@ -229,6 +253,9 @@ export function ChatPanel({
 
   const run = useCallback(async (text: string, regenerate = false, regenerateAfterId?: string,
     continueIncompleteId?: string, toolResults?: ChatRequest["toolResults"]) => {
+    if (thread.target?.kind !== "chatbot" && !models.some((model) => model.type === "llm" && model.id === modelRef.current)) {
+      throw new Error("현재 사용할 수 있는 모델을 직접 선택해 주세요.");
+    }
     const startingMessages = messagesRef.current;
     const attachments = regenerate ? [] : pendingRef.current;
     const after = regenerate
@@ -287,6 +314,9 @@ export function ChatPanel({
           setMessages((previous) => previous.map((item) =>
             item.id === assistantId ? { ...item, text: item.text + event.text } : item
           ));
+        } else if (event.type === "web_search") {
+          if (!current) return;
+          setMessages((previous) => previous.map((item) => item.id === assistantId ? { ...item, webSearch: event.search } : item));
         } else if (event.type === "reasoning_summary") {
           if (!current) return;
           setMessages((previous) => previous.map((item) => item.id === assistantId
@@ -331,7 +361,7 @@ export function ChatPanel({
         }
       });
     });
-  }, [thread.id, onThreadUpdated, onRefreshThreads, onUsageChanged]);
+  }, [thread.id, thread.target?.kind, models, onThreadUpdated, onRefreshThreads, onUsageChanged]);
 
   const onNew = useCallback(async (message: { content: readonly { type: string; text?: string }[] }) => {
     const text = message.content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n").trim();
@@ -367,6 +397,18 @@ export function ChatPanel({
   }
 
   const selectedModel = models.find((model) => model.id === modelId);
+  const displayModels = checkedSearch ? models.map((model) => model.id === checkedSearch.id
+    ? { ...model, searchCapability: checkedSearch.capability } : model) : models;
+  const searchCapability = checkedSearch?.id === modelId ? checkedSearch.capability : selectedModel?.searchCapability;
+  const sonarRestriction = selectedModel && nativeSearchProvider(selectedModel) === "sonar" &&
+    (thread.webSearchMode === "off" || thread.webSearchMode === "deep")
+    ? "Sonar는 검색 끄기·공통 근거 전용 답변을 지원하지 않습니다. 다른 모델을 선택하거나 검색 방식을 자동·항상으로 바꿔 주세요." : undefined;
+  const searchSettingsError = searchCapability?.status === "supported" && searchCapability.provider && thread.webSearchMode !== "off" && thread.webSearchMode !== "deep"
+    ? nativeSearchSettingsError(searchCapability.provider, thread.advanced) : undefined;
+  const searchRouteLabel = thread.webSearchMode === "deep" ? "Sonar 공통 검색 후 선택 모델 답변 · 3~4개 검색어 교차 조사"
+    : searchCapability?.status === "supported" ? "모델 자체 검색 · 도구 추가 과금 가능"
+    : searchCapability?.status === "unsupported" ? "자체 검색 미지원 · Sonar 검색 후 선택 모델 답변 · 추가 요청"
+    : "자체 검색 미확인 · 전송 시 확인, 미확인/미지원은 Sonar 추가 요청";
   const chatbotTarget = thread.target?.kind === "chatbot" ? thread.target : undefined;
   const reasoning = selectedModel ? reasoningSupport(selectedModel) : "none";
 
@@ -525,7 +567,7 @@ export function ChatPanel({
       </div>}
       <div className="panel-header">
         <div className="panel-heading"><span className="panel-section">대화</span><h2 title={thread.title}>{thread.title === "새 대화" ? "새로운 대화" : thread.title}</h2></div>
-        <div className="panel-actions">{!chatbotTarget && <ModelPicker models={models} selected={modelId} onSelect={onModelChange}
+        <div className="panel-actions">{!chatbotTarget && <ModelPicker models={displayModels} selected={modelId} onSelect={onModelChange}
             disabled={isRunning || controlsPending} />}
           {chatbotTarget && <span className="chatbot-target"><Sparkles size={14} />{chatbotTarget.alias}</span>}</div>
       </div>
@@ -547,6 +589,7 @@ export function ChatPanel({
               return message.role === "user" ? <UserMessage /> : <AssistantMessage
                 incomplete={stored?.id === latestIncompleteId}
                 disabled={isRunning || controlsPending}
+                webSearch={stored?.webSearch}
                 usage={stored?.usage}
                 credits={stored?.credits}
                 messageId={stored?.id ?? message.id} modelId={stored?.modelId} createdAt={stored?.createdAt}
@@ -617,16 +660,34 @@ export function ChatPanel({
                 <span className="composer-hint">Enter 전송 · Shift+Enter 줄바꿈</span>
                 {isRunning
                   ? <ComposerPrimitive.Cancel className="send-button stop" title="생성 중단" aria-label="생성 중단"><Square size={16} /></ComposerPrimitive.Cancel>
-                  : <ComposerPrimitive.Send className="send-button" title="전송" aria-label="메시지 전송"><ArrowUp size={19} /></ComposerPrimitive.Send>}
+                  : <ComposerPrimitive.Send className="send-button" title="전송" aria-label="메시지 전송"
+                    disabled={Boolean(sonarRestriction) || !selectedModel && !chatbotTarget}><ArrowUp size={19} /></ComposerPrimitive.Send>}
               </div>
             </ComposerPrimitive.Root>
+            {!chatbotTarget && thread.webSearchMode !== "off" && <div className="chat-checkline">
+              <span>{thread.webSearchMode === "auto" ? `검색할 때: ${searchRouteLabel}` : searchRouteLabel}</span>
+              {thread.webSearchMode !== "deep" && <button type="button" className="secondary-button" disabled={isRunning || controlsPending || !selectedModel}
+                onClick={async () => {
+                  const id = modelId; const owner = thread.id; setControlsPending(true); setError("");
+                  try {
+                    const capability = await window.mmllm.checkModelSearch(id);
+                    if (aliveRef.current && modelRef.current === id && threadIdRef.current === owner) setCheckedSearch({ id, capability });
+                  } catch (error) { if (aliveRef.current && threadIdRef.current === owner) setError(errorText(error)); }
+                  finally { if (aliveRef.current) setControlsPending(false); }
+                }}>검색 기능 확인</button>}
+            </div>}
+            {selectedModel && nativeSearchProvider(selectedModel) === "sonar" && thread.webSearchMode === "auto" &&
+              <div className="chat-checkline" role="status">Sonar 자동 모드는 일반 질문에서도 모델 자체 검색이 실행될 수 있습니다.</div>}
+            {sonarRestriction && <div className="inline-error" role="status">{sonarRestriction}</div>}
+            {searchSettingsError && <div className="inline-error" role="status">{searchSettingsError}</div>}
+            {!selectedModel && !chatbotTarget && <div className="inline-error" role="status">현재 사용할 수 있는 모델을 직접 선택해 주세요.</div>}
             <div className="chat-checkline"><span className="web-search-status"><Globe2 size={13} />
               {chatbotTarget ? "Studio Chatbot · 원격 감사 로그가 저장될 수 있음" :
                 thread.purpose === "meeting-summary" ? "로컬 회의 요약 · 웹 검색 꺼짐" :
                 thread.webSearchMode === "off" ? "웹 검색을 사용하지 않음" : thread.webSearchMode === "auto"
-                ? "최신 정보가 필요한 질문만 웹 검색" : thread.webSearchMode === "deep"
-                  ? "Sonar로 3~4개 검색을 교차 검증 · 총 최대 6회 API 호출" : hasNativeWebSearch(modelId)
-                  ? "선택 모델이 직접 웹 검색" : "Sonar 검색 후 선택 모델이 답변"}</span>
+                ? selectedModel && nativeSearchProvider(selectedModel) === "sonar"
+                  ? "Sonar 모델 자체 검색 · 일반 질문에서도 검색 가능" : "최신 정보가 필요한 질문만 웹 검색" : thread.webSearchMode === "deep"
+                  ? "Sonar로 3~4개 검색을 교차 검증 · 총 최대 6회 API 호출" : searchRouteLabel}</span>
               {needsConsent && !attachmentConsent
                 ? <button type="button" className="privacy-confirm-link"
                     onClick={() => setPrivacyDialog("history")}>첨부 자료 전송 확인</button>

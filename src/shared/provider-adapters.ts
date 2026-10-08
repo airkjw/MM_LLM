@@ -5,13 +5,19 @@ import {
   tokenUsage, type NormalizedRunEvent, type ProviderKind
 } from "./advanced-chat.ts";
 import { responseOutputText } from "./responses-lifecycle.ts";
+import { buildGeminiSearchRequest, normalizeGeminiEvent } from "./gemini-adapter.ts";
+import { nativeSearchSettingsError } from "./search-capability.ts";
+import type { NativeSearchProvider } from "./contracts";
 
 export const PROVIDER_API_REFERENCE = {
   lastVerified: "2026-09-16",
   chat: "https://docs.mindlogic.ai/docs/khu/api-gateway/reference/chat-completions",
   responses: "https://docs.mindlogic.ai/docs/khu/api-gateway/reference/responses-api",
   claude: "https://docs.mindlogic.ai/docs/khu/api-gateway/reference/messages-api",
-  chatbot: "https://docs.mindlogic.ai/docs/khu/api-gateway/reference/chatbot-chat"
+  chatbot: "https://docs.mindlogic.ai/docs/khu/api-gateway/reference/chatbot-chat",
+  nativeSearch: { lastVerified: "2026-10-08",
+    tools: "https://docs.mindlogic.ai/docs/khu/api-gateway/reference/server-tools",
+    gemini: "https://docs.mindlogic.ai/docs/khu/api-gateway/reference/gemini-native" }
 } as const;
 
 export type ProviderMessage = {
@@ -29,6 +35,7 @@ type BuildInput = {
   advanced: ChatAdvancedSettings;
   stream?: boolean;
   previousResponseId?: string;
+  nativeSearch?: NativeSearchProvider;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -126,7 +133,7 @@ export function buildResponsesPayload(input: BuildInput): Record<string, unknown
   const useChain = Boolean(advanced.responses?.chain && input.previousResponseId);
   const split = responseInput(input.messages, useChain);
   const effort = reasoningEffortFromMode(input.reasoningMode);
-  const tools = responsesToolsPayload(advanced.tools);
+  const tools = [...(responsesToolsPayload(advanced.tools) ?? []), ...(input.nativeSearch === "responses" ? [{ type: "web_search" }] : [])];
   return {
     model: input.model.id, ...split, stream: input.stream ?? !advanced.responses?.background,
     ...(advanced.maxOutputTokens !== undefined ? { max_output_tokens: advanced.maxOutputTokens } : {}),
@@ -232,7 +239,8 @@ export function buildClaudePayload(input: BuildInput): { body: Record<string, un
     }
   }
   if (lastPdf) lastPdf.cache_control = { type: "ephemeral" };
-  const tools = claudeToolsPayload(advanced.tools);
+  const tools = [...(claudeToolsPayload(advanced.tools) ?? []), ...(input.nativeSearch === "claude"
+    ? [{ type: "web_search_20250305", name: "web_search", max_uses: 2 }] : [])];
   const beta = ["prompt-caching-2024-07-31"];
   if (thinking?.mode === "manual" && /^claude-sonnet-4[-.]6(?:-|$)/.test(model.id.toLowerCase())) {
     beta.push("interleaved-thinking-2025-05-14");
@@ -258,7 +266,14 @@ export function buildClaudePayload(input: BuildInput): { body: Record<string, un
 export function buildProviderRequest(input: BuildInput): {
   provider: ProviderKind; path: string; body: Record<string, unknown>; headers?: Record<string, string>;
 } {
-  const provider = isOpenAiModel(input.model) && input.advanced.tools?.length &&
+  if (input.nativeSearch) {
+    if (input.model.searchCapability?.status !== "supported" || input.model.searchCapability.provider !== input.nativeSearch) {
+      throw new Error("이 계정·모델의 자체 검색 지원이 확인되지 않았습니다.");
+    }
+    const error = nativeSearchSettingsError(input.nativeSearch, input.advanced); if (error) throw new Error(error);
+    if (input.nativeSearch === "gemini") return buildGeminiSearchRequest(input.model, input.messages, input.advanced);
+  }
+  const provider = input.nativeSearch === "responses" ? "responses" : isOpenAiModel(input.model) && input.advanced.tools?.length &&
     reasoningEffortFromMode(input.reasoningMode) ? "responses" : providerForModel(input.model, input.advanced);
   if (provider === "responses") return { provider, path: "/responses/", body: buildResponsesPayload(input) };
   if (provider === "claude") {
@@ -335,6 +350,7 @@ export class ProviderEventNormalizer {
   constructor(provider: ProviderKind) { this.provider = provider; }
 
   accept(event: Record<string, unknown>): NormalizedRunEvent[] {
+    if (this.provider === "gemini") return normalizeGeminiEvent(event);
     if (this.provider === "responses") return this.responses(event);
     if (this.provider === "claude") return this.claude(event);
     return this.chat(event);
@@ -448,6 +464,7 @@ export class ProviderEventNormalizer {
   private claude(event: Record<string, unknown>): NormalizedRunEvent[] {
     const events: NormalizedRunEvent[] = [];
     if (event.type === "content_block_start" && isRecord(event.content_block)) {
+      this.claudeBlock = null; this.claudeTool = null;
       if (event.content_block.type === "tool_use") {
         this.claudeTool = { id: String(event.content_block.id ?? ""), name: String(event.content_block.name ?? ""), arguments: "" };
         this.claudeBlock = { type: "tool_use", id: this.claudeTool.id, name: this.claudeTool.name, input: {} };
@@ -490,7 +507,7 @@ export class ProviderEventNormalizer {
         this.claudeUsage = mergeUsage(this.claudeUsage, usage); events.push({ type: "usage", usage: this.claudeUsage });
       }
     }
-    if (event.type === "message_delta" && isRecord(event.delta) && event.delta.stop_reason === "max_tokens") {
+    if (event.type === "message_delta" && isRecord(event.delta) && ["max_tokens", "pause_turn"].includes(String(event.delta.stop_reason))) {
       events.push({ type: "status", status: "incomplete" });
     }
     if (event.type === "message_stop" && this.claudeBlocks.some((block) => block.type === "tool_use") &&

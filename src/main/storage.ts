@@ -7,6 +7,7 @@ import { redactChatbotPublicUrls } from "../shared/chatbot-files";
 import type { AppSettings, BackgroundResponse, CreateThreadRequest, PendingMediaJob, PublicMessage, ThreadSearchResult, ThreadSnapshot, ThreadSummary, WebSearchMode } from "../shared/contracts";
 import { MAX_BACKGROUND_RESPONSE_BYTES, planBackgroundReconciliation, upsertBackgroundResponseRecord } from "../shared/responses-lifecycle";
 import { assertStoreGrowth, assertThreadCapacity } from "../shared/storage-limits";
+import { sanitizeWebSearch } from "../shared/search-evidence";
 import type { WebSearchCacheEntry } from "../shared/web-search";
 import { writeAtomic } from "./atomic-file";
 import { assertPendingJobResultSize } from "./media-jobs";
@@ -366,7 +367,7 @@ function normalizeThread(raw: InternalThread): InternalThread {
         Buffer.byteLength(message.reasoningSummary, "utf8") <= 64 * 1024 ? message.reasoningSummary : undefined;
       const reconciledBackgroundResponseId = typeof message.reconciledBackgroundResponseId === "string" &&
         message.reconciledBackgroundResponseId.length <= 500 ? message.reconciledBackgroundResponseId : undefined;
-      return { ...message, text, apiContent, reasoningSummary, reconciledBackgroundResponseId,
+      return { ...message, text, apiContent, reasoningSummary, webSearch: sanitizeWebSearch(message.webSearch), reconciledBackgroundResponseId,
         ...(attachmentContext.length ? { attachmentContext } : {}) };
     }) : []
   };

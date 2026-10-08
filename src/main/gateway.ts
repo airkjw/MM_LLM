@@ -4,29 +4,34 @@ import { assertAdvancedOptionsForModel, isOpenAiModel, providerRoute } from "../
 import { MAX_STT_JSON_BYTES, readJsonResponseWithLimit } from "../shared/bounded-json";
 import { chatbotRequestBody, chatbotUsageSummary, MAX_CHATBOT_USAGE_BYTES, normalizeChatbotUsage } from "../shared/chatbot-adapter";
 import { BufferedChatbotTextSanitizer, chatbotFileExpiry, MAX_CHATBOT_FILE_BYTES, validateChatbotFileUrl } from "../shared/chatbot-files";
-import type { AudioRequest, BackgroundResponse, ChatAdvancedSettings, CreditBalance, GatewayModel, ImageRequest, ManualToolCall, MediaResult, ReasoningMode, TokenUsage, VideoRequest, WebSearchMode } from "../shared/contracts";
+import type { AudioRequest, BackgroundResponse, ChatAdvancedSettings, CreditBalance, GatewayModel, ImageRequest, ManualToolCall, MediaResult, ReasoningMode, TokenUsage, VideoRequest, WebSearchMode, SearchCapability, WebSearchExecution } from "../shared/contracts";
 import { parseCreditsChargedHeader } from "../shared/credit-usage";
 import { combineResearchResults, parseResearchPlan } from "../shared/deep-research";
 import { audioLaneForModel, imageRequestPayload, musicRequestPayload, ttsRequestPayload, videoRequestPayload } from "../shared/media-capabilities";
 import { imageUsage, musicResponseMetadata, ttsTokenUsage, videoResponseMetadata } from "../shared/media-response-metadata";
 import { parseTranscriptResult } from "../shared/meeting-transcript";
-import { parseGatewayModels } from "../shared/model-catalog";
+import { parseGatewayModels, parseSearchPricing } from "../shared/model-catalog";
 import { buildClaudeCountTokensRequest, buildProviderRequest, buildResponsesPayload, ProviderEventNormalizer } from "../shared/provider-adapters";
 import { backgroundFailure, backgroundUsage, nextBackgroundPollDelay, normalizeBackgroundStatus, responseOutputText, responseReasoningSummary, responseToolCalls } from "../shared/responses-lifecycle";
 import { ChatStreamBudget, ChatStreamLimitError, MAX_CHAT_RESPONSE_BYTES } from "../shared/stream-limits";
 import { sttKickoffBilling } from "../shared/stt-billing";
-import { availableSearchModel, hasNativeWebSearch, shouldSearchWebInAuto } from "../shared/web-search";
+import { availableSearchModel, shouldSearchWebInAuto } from "../shared/web-search";
 import { GatewayError, gatewayRequest } from "./gateway-transport";
 import { persistChatbotFileResponse, persistMediaBytes, persistMediaCandidate, persistMediaResponse, persistPcmResponse, pinnedHttpsRequest } from "./media-store";
 import { mockModels } from "./mock";
 import { gatewayScheduler } from "./request-scheduler";
+import { ModelSearchCache } from "./model-search-cache";
+import { searchCapabilityFromDetail, nativeSearchSettingsError, nativeSearchProvider, sharedEvidenceModelError } from "../shared/search-capability";
+import { SearchEvidenceNormalizer, safeCitation } from "../shared/search-evidence";
 
 export const GATEWAY = "https://factchat-cloud.mindlogic.ai/v1/gateway";
 let apiKey: string | null = null;
 let models: GatewayModel[] = [];
+const modelSearchCache = new ModelSearchCache();
 const MOCK = process.env.MM_LLM_MOCK === "1" && !app.isPackaged;
 
 export function setGatewayKey(key: string | null): void {
+  if (apiKey !== key) modelSearchCache.clear();
   apiKey = key;
   if (!key) {
     models = [];
@@ -34,8 +39,9 @@ export function setGatewayKey(key: string | null): void {
 }
 
 export function commitGatewaySession(key: string, validatedModels: GatewayModel[]): void {
+  if (apiKey !== key) modelSearchCache.clear();
   apiKey = key;
-  models = validatedModels;
+  models = validatedModels.map((model) => ({ ...model, searchCapability: modelSearchCache.peek(model.id) }));
 }
 
 function requireKey(): string {
@@ -79,13 +85,44 @@ export async function listModelsForKey(key: string, signal?: AbortSignal): Promi
   }
   const release = await gatewayScheduler.acquire("standard", signal);
   try { const response = await gatewayFetchWithKey("/models/", key, { signal });
-    const json = await response.json() as Record<string, unknown>; return parseGatewayModels(json); }
+    const json = await readJsonResponseWithLimit(response, 1024 * 1024); return parseGatewayModels(json); }
   finally { release(); }
 }
 
 export async function listModels(): Promise<GatewayModel[]> {
+  modelSearchCache.clear();
   models = await listModelsForKey(requireKey());
   return models;
+}
+
+/** Optional account-scoped GET, triggered only by explicit confirmation or sending a search request. */
+export async function checkModelSearch(modelId: string, signal?: AbortSignal): Promise<SearchCapability> {
+  const model = assertModel(modelId, "llm"); const key = requireKey();
+  const capability = await modelSearchCache.get(modelId, async (detailSignal) => {
+    const checkedAt = new Date().toISOString();
+    if (MOCK) return searchCapabilityFromDetail(model, { id: modelId, pricing: {
+      web_search_per_1k: /^(claude-|gpt-|gemini-|sonar-)/.test(modelId) ? 0 : null
+    } }, checkedAt);
+    let release: (() => void) | undefined;
+    try {
+      release = await gatewayScheduler.acquire("standard", detailSignal);
+      const response = await gatewayFetchWithKey(`/models/${encodeURIComponent(modelId)}/`, key, { signal: detailSignal });
+      const detail = await readJsonResponseWithLimit(response, 256 * 1024);
+      detailSignal.throwIfAborted();
+      if (isRecord(detail) && detail.id === modelId && apiKey === key) {
+        const pricing = parseSearchPricing(detail).pricing; if (pricing) model.pricing = pricing;
+      }
+      return searchCapabilityFromDetail(model, detail, checkedAt);
+    } catch (error) {
+      detailSignal.throwIfAborted();
+      return { status: "unknown", checkedAt, reason: error instanceof GatewayError && [401, 403, 404].includes(error.status)
+        ? "이 계정에서 모델 상세 확인 불가" : "모델 상세 조회 실패·검색 지원 미확인" };
+    } finally { release?.(); }
+  }, signal);
+  signal?.throwIfAborted();
+  const current = models.find((item) => item.id === modelId && item.type === "llm");
+  if (current && apiKey === key) current.searchCapability = capability;
+  return capability;
 }
 
 export function currentModels(): GatewayModel[] {
@@ -128,8 +165,8 @@ async function* parseSse(response: Response): AsyncGenerator<Record<string, unkn
   try {
     while (true) {
       const result = await reader.read();
-      if (result.done) break;
-      buffer += decoder.decode(result.value, { stream: true });
+      buffer += result.done ? decoder.decode() : decoder.decode(result.value, { stream: true });
+      if (result.done && buffer.trim()) buffer += "\n\n";
       if (Buffer.byteLength(buffer, "utf8") > MAX_SSE_BUFFER) throw new Error("스트리밍 응답 이벤트가 너무 큽니다.");
       let boundary: number;
       while ((boundary = buffer.search(/\r?\n\r?\n/)) >= 0) {
@@ -146,6 +183,7 @@ async function* parseSse(response: Response): AsyncGenerator<Record<string, unkn
           yield parsed;
         }
       }
+      if (result.done) break;
     }
   } finally {
     await reader.cancel().catch(() => undefined);
@@ -187,6 +225,7 @@ type ChatMessage = { role: "system" | "developer" | "user" | "assistant" | "tool
   content: ChatContent; tool_call_id?: string; tool_calls?: Array<Record<string, unknown>>;
   claudeContinuation?: Array<Record<string, unknown>> };
 export type ChatStreamItem =
+  | { type: "web_search"; search: WebSearchExecution }
   | { type: "delta"; text: string }
   | { type: "reasoning_summary"; text: string }
   | { type: "progress"; message: string }
@@ -304,13 +343,9 @@ function sourceUrls(value: Record<string, unknown>, budget = new ChatStreamBudge
   const urls = new Set<string>();
   const add = (candidate: unknown) => {
     if (typeof candidate !== "string") return;
-    let url: URL;
-    try {
-      url = new URL(candidate);
-    } catch { return; /* Ignore malformed citations returned by a provider. */ }
-    if (!["https:", "http:"].includes(url.protocol)) return;
-    // Budget errors are security limits and must propagate instead of being treated as malformed URLs.
-    if (budget.acceptCitation(url.href)) urls.add(url.href);
+    const citation = safeCitation({ url: candidate }); if (!citation) return;
+    // Budget errors are security limits and propagate instead of being treated as malformed URLs.
+    if (budget.acceptCitation(citation.url)) urls.add(citation.url);
   };
   if (Array.isArray(value.citations)) value.citations.forEach(add);
   for (const key of ["search_results", "sources"]) {
@@ -344,13 +379,16 @@ function appendToLatestUser(messages: ChatMessage[], addition: string): ChatMess
   return result;
 }
 
-async function searchWeb(query: string, controller: AbortController, lane: "standard" | "deep" = "standard"): Promise<string> {
+async function searchWeb(query: string, controller: AbortController, lane: "standard" | "deep" = "standard",
+  onSearch?: (search: WebSearchExecution) => void): Promise<string> {
   const signal = controller.signal;
   const searchModel = availableSearchModel(models);
   if (!searchModel) {
     throw new Error("웹 검색 모델(Sonar)을 사용할 수 없습니다. 모델 목록을 새로고침해 주세요.");
   }
   if (MOCK) {
+    onSearch?.({ route: "sonar", provider: "sonar", status: "executed", queries: [query.slice(0, 512)],
+      citations: [{ url: "https://example.com/mm-llm-search", title: "모의 검색 출처" }], requestCount: 1 });
     return "테스트 웹 검색 요약입니다.\n\n출처:\n- https://example.com/mm-llm-search";
   }
   const today = new Date().toISOString().slice(0, 10);
@@ -378,6 +416,9 @@ async function searchWeb(query: string, controller: AbortController, lane: "stan
   } finally {
     release?.();
   }
+  const evidence = new SearchEvidenceNormalizer("sonar");
+  evidence.accept(json);
+  onSearch?.({ ...evidence.snapshot(true), route: "sonar", queries: [query.slice(0, 512)] });
   const summary = responseText(json);
   if (!summary) throw new Error("웹 검색 결과가 비어 있습니다. 잠시 후 다시 시도해 주세요.");
   const budget = new ChatStreamBudget();
@@ -391,14 +432,18 @@ async function searchWeb(query: string, controller: AbortController, lane: "stan
     : summary;
 }
 
-async function deepResearch(query: string, controller: AbortController): Promise<string> {
+async function deepResearch(query: string, controller: AbortController, onSearch?: (search: WebSearchExecution) => void): Promise<string> {
   const searchModel = availableSearchModel(models);
   if (!searchModel) throw new Error("딥리서치는 현재 API 키에 Sonar 모델이 있을 때 사용할 수 있습니다.");
-  if (MOCK) return combineResearchResults([
-    { query: `${query} 공식 자료`, content: "모의 딥리서치 결과\n- https://example.com/research" },
-    { query: `${query} 최신 연구`, content: "모의 교차 검증 결과\n- https://example.org/evidence" },
-    { query: `${query} 정책`, content: "모의 정책 자료" }
-  ]);
+  if (MOCK) {
+    onSearch?.({ route: "sonar", provider: "sonar", status: "executed", queries: [query.slice(0, 512)],
+      citations: [{ url: "https://example.com/research", title: "모의 딥리서치 출처" }], requestCount: 3 });
+    return combineResearchResults([
+      { query: `${query} 공식 자료`, content: "모의 딥리서치 결과\n- https://example.com/research" },
+      { query: `${query} 최신 연구`, content: "모의 교차 검증 결과\n- https://example.org/evidence" },
+      { query: `${query} 정책`, content: "모의 정책 자료" }
+    ]);
+  }
   const plannerPrompt = [
     "다음 의료경영 질문을 검증하기 위한 서로 겹치지 않는 웹 검색어 3~4개를 설계하세요.",
     "공식 통계·원문 연구·정책 자료·반대 근거를 고르게 확인하세요.",
@@ -412,12 +457,21 @@ async function deepResearch(query: string, controller: AbortController): Promise
       messages: [{ role: "user", content: plannerPrompt }], stream: false, temperature: 0 }, controller.signal));
     planText = responseText(await readJsonObjectLimited(response, controller));
   } finally { release?.(); }
+  controller.signal.throwIfAborted();
   const queries = parseResearchPlan(planText, query);
   const child = new AbortController();
   const abortChild = () => child.abort(controller.signal.reason);
   controller.signal.addEventListener("abort", abortChild, { once: true });
+  const searches: WebSearchExecution[] = [];
   const tasks = queries.map(async (planned) => ({ query: planned,
-    content: await searchWeb(planned, child, "deep") }));
+    content: await searchWeb(planned, child, "deep", (search) => {
+      searches.push(search);
+      const citations = [...new Map(searches.flatMap((item) => item.citations).map((item) => [item.url, item])).values()];
+      if (citations.length > 64) throw new Error("딥리서치 출처 수가 안전 한도를 넘었습니다.");
+      onSearch?.({ route: "sonar", provider: "sonar", status: searches.some((s) => s.status === "failed") ? "failed"
+        : searches.some((s) => s.status === "missing") ? "missing" : citations.length ? "executed" : "empty",
+        queries: searches.flatMap((s) => s.queries), citations, requestCount: searches.reduce((n, s) => n + (s.requestCount ?? 0), 0) });
+    }) }));
   try { return combineResearchResults(await Promise.all(tasks)); }
   catch (error) {
     child.abort(error); await Promise.allSettled(tasks); throw error;
@@ -425,15 +479,14 @@ async function deepResearch(query: string, controller: AbortController): Promise
 }
 
 async function webGroundedMessages(
-  modelId: string,
   query: string,
   messages: ChatMessage[],
   controller: AbortController,
   mode: WebSearchMode,
   cachedContext?: string,
-  onContext?: (context: string) => void
+  onContext?: (context: string) => void,
+  onSearch?: (search: WebSearchExecution) => void
 ): Promise<ChatMessage[]> {
-  const signal = controller.signal;
   if (mode === "off") return messages;
   const shouldSearch = mode === "always" || mode === "deep" || shouldSearchWebInAuto(query);
   if (!shouldSearch) {
@@ -443,14 +496,7 @@ async function webGroundedMessages(
       "새 검색은 하지 않았습니다. 필요할 때만 위 자료를 참고하세요."
     ].join("\n")) : messages;
   }
-  if (mode !== "deep" && hasNativeWebSearch(modelId)) {
-    return appendToLatestUser(messages, [
-      "[웹 검색 지침]",
-      "답변 전에 직접 웹을 검색해 최신 정보를 확인하세요.",
-      "핵심 사실에는 확인 가능한 출처 링크를 붙이고, 검색으로 확인되지 않은 내용은 명확히 구분하세요."
-    ].join("\n"));
-  }
-  const research = mode === "deep" ? await deepResearch(query, controller) : await searchWeb(query, controller);
+  const research = mode === "deep" ? await deepResearch(query, controller, onSearch) : await searchWeb(query, controller, "standard", onSearch);
   onContext?.(research);
   return appendToLatestUser(messages, [
     mode === "deep" ? "[딥리서치 조사 자료]" : "[웹 검색 조사 자료]",
@@ -463,10 +509,13 @@ async function webGroundedMessages(
 
 /** Build one shared evidence package for compare runs so every model receives the same sources. */
 export async function prepareSharedWebEvidence(
-  query: string, mode: WebSearchMode, controller: AbortController
+  query: string, mode: WebSearchMode, controller: AbortController, onSearch?: (search: WebSearchExecution) => void, answerModelIds?: string[]
 ): Promise<string | undefined> {
+  for (const id of answerModelIds ?? []) {
+    const error = sharedEvidenceModelError(assertModel(id, "llm")); if (error) throw new Error(error);
+  }
   if (mode === "off" || mode === "auto" && !shouldSearchWebInAuto(query)) return undefined;
-  return mode === "deep" ? deepResearch(query, controller) : searchWeb(query, controller);
+  return mode === "deep" ? deepResearch(query, controller, onSearch) : searchWeb(query, controller, "standard", onSearch);
 }
 
 export function appendSharedWebEvidence(
@@ -494,14 +543,45 @@ export async function* streamChat(
     try { budget.acceptDelta(delta); return delta; }
     catch (error) { controller.abort(error); throw error; }
   };
-  const acceptSources = (value: Record<string, unknown>): string[] => {
-    try { return sourceUrls(value, budget); }
-    catch (error) { controller.abort(error); throw error; }
-  };
   const model = assertModel(modelId, "llm");
   assertAdvancedOptionsForModel(model, generation.advanced);
-  const groundedMessages = await webGroundedMessages(modelId, searchQuery, messages, controller,
-    web.mode, web.cachedContext, web.onContext);
+  const shouldSearch = web.mode === "always" || web.mode === "deep" || web.mode === "auto" &&
+    (nativeSearchProvider(model) === "sonar" || shouldSearchWebInAuto(searchQuery));
+  if (nativeSearchProvider(model) === "sonar" && (!shouldSearch || web.mode === "deep")) {
+    throw new Error("Sonar는 검색 끄기를 보장하지 않습니다. 자동·항상 검색을 사용하는 일반 대화 또는 다른 답변 모델을 선택해 주세요.");
+  }
+  const capability = shouldSearch && web.mode !== "deep" ? await checkModelSearch(modelId, signal) : undefined;
+  const nativeSearch = capability?.status === "supported" ? capability.provider : undefined;
+  if (nativeSearchProvider(model) === "sonar" && !nativeSearch) {
+    throw new Error("Sonar 자체 검색 지원이 미확인 또는 미지원입니다. 검색 기능을 다시 확인하거나 다른 답변 모델을 직접 선택해 주세요.");
+  }
+  if (nativeSearch) {
+    const settingsError = nativeSearchSettingsError(nativeSearch, generation.advanced);
+    if (settingsError) throw new Error(settingsError);
+    if (nativeSearch === "gemini" && generation.reasoningMode !== "auto" &&
+        generation.advanced.thinkingLevel === undefined && generation.advanced.thinkingBudget === undefined) {
+      throw new Error("Gemini 자체 검색에서는 사고 수준·예산을 직접 설정하거나 사고 강도를 자동으로 선택해 주세요.");
+    }
+  }
+  // Validate the selected route/body before any billed Sonar request as well.
+  buildProviderRequest({ model, messages, reasoningMode: generation.reasoningMode, advanced: generation.advanced, nativeSearch,
+    previousResponseId: generation.previousResponseId });
+  let search: WebSearchExecution = { route: nativeSearch ? "native" : shouldSearch ? "sonar"
+    : web.mode !== "off" && web.cachedContext ? "cache" : "none", provider: nativeSearch ?? (shouldSearch ? "sonar" : undefined),
+    status: shouldSearch ? "pending" : web.mode !== "off" && web.cachedContext ? "cached" : "not_requested", queries: [], citations: [] };
+  yield { type: "web_search", search };
+  if (shouldSearch) yield { type: "progress", message: nativeSearch ? "모델 자체 검색 준비 · 검색 도구 추가 과금 가능"
+    : "Sonar 공통 검색 후 선택 모델 답변 · 추가 검색 요청" };
+  let groundedMessages: ChatMessage[];
+  try {
+    groundedMessages = nativeSearch ? appendToLatestUser(messages, "웹 검색 도구로 확인하고 확인된 출처를 붙여 주세요. 검색이 실행되지 않았다면 그 사실을 알려 주세요.")
+      : await webGroundedMessages(searchQuery, messages, controller, web.mode, web.cachedContext, web.onContext, (execution) => { search = execution; });
+  } catch (error) {
+    yield { type: "web_search", search: { ...search, status: "failed" } }; throw error;
+  }
+  if (shouldSearch && !nativeSearch) {
+    yield { type: "web_search", search };
+  }
   if (MOCK) {
     for (const delta of ["의료경영 분석을 ", "시작하겠습니다. ", "핵심 지표와 근거를 함께 확인해요."]) {
       signal.throwIfAborted();
@@ -509,11 +589,12 @@ export async function* streamChat(
       yield { type: "delta", text: acceptDelta(delta) };
     }
     yield { type: "usage", usage: { inputTokens: 18, outputTokens: 24, totalTokens: 42 } };
+    if (nativeSearch) yield { type: "web_search", search: { ...search, status: "missing" } };
     return;
   }
   const request = buildProviderRequest({ model, messages: groundedMessages,
     reasoningMode: generation.reasoningMode, advanced: generation.advanced, stream: true,
-    previousResponseId: generation.previousResponseId });
+    previousResponseId: generation.previousResponseId, nativeSearch });
   if (Buffer.byteLength(JSON.stringify(request.body), "utf8") > 22 * 1024 * 1024) {
     throw new Error("대화와 첨부 자료의 크기가 API 한도에 가깝습니다. 파일을 줄이거나 새 대화를 시작해 주세요.");
   }
@@ -524,11 +605,17 @@ export async function* streamChat(
     const headers = new Headers(init.headers);
     for (const [name, value] of Object.entries(request.headers ?? {})) headers.set(name, value);
     if (request.provider === "claude") headers.set("x-api-key", requireKey());
+    if (request.provider === "gemini") headers.set("x-goog-api-key", requireKey());
     const response = await gatewayFetch(request.path, { ...init, headers });
     const normalizer = new ProviderEventNormalizer(request.provider);
-    const citations = new Set<string>();
+    const evidence = nativeSearch ? new SearchEvidenceNormalizer(nativeSearch) : undefined;
+    let lastSearch = JSON.stringify(search);
     for await (const event of parseSse(response)) {
-      acceptSources(event).forEach((url) => citations.add(url));
+      signal.throwIfAborted();
+      if (evidence) {
+        search = evidence.accept(event); const fingerprint = JSON.stringify(search);
+        if (fingerprint !== lastSearch) { lastSearch = fingerprint; yield { type: "web_search", search }; }
+      }
       for (const normalized of normalizer.accept(event)) {
         if (normalized.type === "text") yield { type: "delta", text: acceptDelta(normalized.text) };
         else if (normalized.type === "error") throw new Error(normalized.message);
@@ -541,10 +628,14 @@ export async function* streamChat(
         else if (normalized.type === "files") yield normalized;
       }
     }
-    if (web.mode !== "off" && hasNativeWebSearch(modelId) && citations.size) {
-      const citationBlock = `\n\n### 웹 출처\n${[...citations].map((url) => `- ${url}`).join("\n")}`;
-      yield { type: "delta", text: acceptDelta(citationBlock) };
+    signal.throwIfAborted();
+    if (evidence) {
+      search = evidence.snapshot(true); yield { type: "web_search", search };
+      if (search.status === "failed") throw new Error("모델 자체 검색 도구가 실패했습니다. 추가 유료 호출은 하지 않았습니다.");
     }
+  } catch (error) {
+    if (nativeSearch) yield { type: "web_search", search: { ...search, status: "failed" } };
+    throw error;
   } finally {
     release?.();
   }
@@ -608,6 +699,9 @@ export async function startBackgroundResponse(
   web?: { query: string; mode: WebSearchMode; cachedContext?: string; onContext?: (context: string) => void }
 ): Promise<BackgroundResponse> {
   const model = assertModel(modelId, "llm");
+  if (web && (web.mode === "always" || web.mode === "deep" || web.mode === "auto" && shouldSearchWebInAuto(web.query))) {
+    throw new Error("백그라운드 응답과 웹 검색을 함께 사용할 수 없습니다. 검색을 끄거나 일반 응답을 선택해 주세요.");
+  }
   if (!isOpenAiModel(model)) throw new Error("백그라운드 Responses는 OpenAI 모델에서만 사용할 수 있습니다.");
   assertAdvancedOptionsForModel(model, generation.advanced);
   if (MOCK) {
@@ -615,7 +709,7 @@ export async function startBackgroundResponse(
     return { id: `resp_mock_${Date.now()}`, threadId, modelId, status: "queued", createdAt: now,
       updatedAt: now, nextPollAt: new Date(Date.now() + 5_000).toISOString(), pollCount: 0 };
   }
-  const preparedMessages = web ? await webGroundedMessages(modelId, web.query, messages, controller,
+  const preparedMessages = web ? await webGroundedMessages(web.query, messages, controller,
     web.mode, web.cachedContext, web.onContext) : messages;
   const payload = buildResponsesPayload({ model, messages: preparedMessages, reasoningMode: generation.reasoningMode,
     advanced: { ...generation.advanced, responses: { ...generation.advanced.responses, background: true } },

@@ -26,16 +26,12 @@ type Screen = SidebarScreen;
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
 const AUDIO_LANES = ["tts", "stt", "music"] as const;
 
-async function repairRemovedThreadModel(snapshot: ThreadSnapshot, models: GatewayModel[]): Promise<{
+async function checkStoredThreadModel(snapshot: ThreadSnapshot, models: GatewayModel[]): Promise<{
   snapshot: ThreadSnapshot; removedModelId?: string;
 }> {
   const resolved = resolveLiveThreadModel(snapshot.modelId, models);
-  if (!resolved.removed || !resolved.modelId) return { snapshot };
-  const updated = await window.mmllm.updateThreadSettings(snapshot.id, {
-    modelId: resolved.modelId, instruction: snapshot.instruction,
-    reasoningMode: snapshot.reasoningMode, advanced: snapshot.advanced
-  });
-  return { snapshot: updated, removedModelId: snapshot.modelId };
+  if (!resolved.removed) return { snapshot };
+  return { snapshot, removedModelId: snapshot.modelId };
 }
 
 export default function App() {
@@ -279,10 +275,10 @@ export default function App() {
         ? await window.mmllm.loadThread(items[0].id)
         : await window.mmllm.createThread({ modelId: defaultModel(state.models) });
       if (next) {
-        const repaired = await repairRemovedThreadModel(next, state.models);
+        const repaired = await checkStoredThreadModel(next, state.models);
         next = repaired.snapshot;
         if (repaired.removedModelId) removedModelNotice =
-          `${repaired.removedModelId} 모델이 현재 목록에서 사라져 ${next.modelId}(으)로 변경했습니다.`;
+          `${repaired.removedModelId} 모델은 현재 사용할 수 없습니다. 전송 전에 사용할 모델을 직접 선택해 주세요.`;
       }
       if (!items.length) nextThreads = [{
         id: next.id, title: next.title, modelId: next.modelId,
@@ -613,12 +609,12 @@ export default function App() {
     const epoch = uiEpochRef.current;
     try {
       const loaded = await window.mmllm.loadThread(id);
-      const repaired = await repairRemovedThreadModel(loaded, session?.models ?? []);
+      const repaired = await checkStoredThreadModel(loaded, session?.models ?? []);
       const next = repaired.snapshot;
       if (!selectGateRef.current.isLatest(request) || epoch !== uiEpochRef.current) return;
       setTemplateDraft(null); setThread(next); setModelId(next.modelId); setScreen("chat");
       if (repaired.removedModelId) setInfo(
-        `${repaired.removedModelId} 모델이 현재 목록에서 사라져 ${next.modelId}(으)로 변경했습니다.`
+        `${repaired.removedModelId} 모델은 현재 사용할 수 없습니다. 전송 전에 사용할 모델을 직접 선택해 주세요.`
       );
     } catch (error) {
       if (selectGateRef.current.isLatest(request) && epoch === uiEpochRef.current) setError(errorText(error));
@@ -639,12 +635,12 @@ export default function App() {
         const loaded = remaining.length
           ? await window.mmllm.loadThread(remaining[0].id)
           : await window.mmllm.createThread({ modelId: modelId || defaultModel(session?.models ?? []) });
-        const repaired = await repairRemovedThreadModel(loaded, session?.models ?? []);
+        const repaired = await checkStoredThreadModel(loaded, session?.models ?? []);
         const next = repaired.snapshot;
         if (!selectGateRef.current.isLatest(request) || epoch !== uiEpochRef.current) return;
         setThread(next); setModelId(next.modelId); await refreshThreads();
         if (repaired.removedModelId) setInfo(
-          `${repaired.removedModelId} 모델이 현재 목록에서 사라져 ${next.modelId}(으)로 변경했습니다.`
+          `${repaired.removedModelId} 모델은 현재 사용할 수 없습니다. 전송 전에 사용할 모델을 직접 선택해 주세요.`
         );
       }
     } catch (error) {
@@ -669,12 +665,12 @@ export default function App() {
       if (epoch !== uiEpochRef.current) return;
       setSession((state) => state ? { ...state, models } : state);
       if (thread) {
-        const repaired = await repairRemovedThreadModel(thread, models);
+        const repaired = await checkStoredThreadModel(thread, models);
         if (epoch !== uiEpochRef.current) return;
         setThread(repaired.snapshot); setModelId(repaired.snapshot.modelId);
         if (repaired.removedModelId) {
           await refreshThreads();
-          setInfo(`${repaired.removedModelId} 모델이 현재 목록에서 사라져 ${repaired.snapshot.modelId}(으)로 변경했습니다.`);
+          setInfo(`${repaired.removedModelId} 모델은 현재 사용할 수 없습니다. 전송 전에 사용할 모델을 직접 선택해 주세요.`);
         }
       } else if (!models.some((item) => item.type === "llm" && item.id === modelId)) {
         setModelId(defaultModel(models));

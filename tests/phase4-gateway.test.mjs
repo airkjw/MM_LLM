@@ -524,3 +524,59 @@ test("journaled project deletion resumes idempotently after a crash", async () =
   await completeJournaledProjectDeletion(ops);
   assert.equal(vaultExists, false); assert.equal(journalExists, false);
 });
+
+import { claudeEvents, openaiEvents, geminiEvents } from "./fixtures/native-search.mjs";
+import { SearchEvidenceNormalizer } from "../src/shared/search-evidence.ts";
+
+test("three native search request bodies follow official contracts and preserve Claude PDF/thinking and Responses chain", () => {
+  const supported = (model, provider) => ({ ...model, searchCapability: { status: "supported", provider } });
+  const pdf = Buffer.from("%PDF-1.7\n").toString("base64");
+  const c = buildProviderRequest({ model: supported(claude, "claude"), messages: [...messages, { role: "user", content: [
+    { type: "text", text: "full synthetic document tail" }, { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdf } }
+  ] }], reasoningMode: "auto", advanced: { claudeThinking: { mode: "adaptive", effort: "high" } }, nativeSearch: "claude" });
+  assert.equal(c.path, "/claude/v1/messages/");
+  assert.deepEqual(c.body.tools, [{ type: "web_search_20250305", name: "web_search", max_uses: 2 }]);
+  assert.equal(c.headers["anthropic-version"], "2023-06-01"); assert.equal(c.body.thinking.type, "adaptive");
+  assert.equal(c.body.messages.at(-1).content.at(-1).source.data, pdf);
+  const o = buildProviderRequest({ model: supported(openai, "responses"), messages, reasoningMode: "auto",
+    advanced: { responses: { chain: true } }, previousResponseId: "resp_old", nativeSearch: "responses" });
+  assert.equal(o.path, "/responses/"); assert.deepEqual(o.body.tools, [{ type: "web_search" }]); assert.equal(o.body.previous_response_id, "resp_old");
+  const g = buildProviderRequest({ model: supported(gemini, "gemini"), messages: [messages[0], { role: "user", content: [
+    { type: "text", text: "full synthetic document tail" }, { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } }
+  ] }], reasoningMode: "auto", advanced: { temperature: .4, topP: .8, maxOutputTokens: 1000, stop: ["END"], thinkingLevel: "high" }, nativeSearch: "gemini" });
+  assert.equal(g.path, "/gemini/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse");
+  assert.deepEqual(g.body.tools, [{ google_search: {} }]); assert.equal(g.body.systemInstruction.parts[0].text, "stable");
+  assert.equal(g.body.contents[0].parts[0].text, "full synthetic document tail");
+  assert.deepEqual(g.body.contents[0].parts[1].inlineData, { mimeType: "image/png", data: "iVBORw0KGgo=" });
+  assert.deepEqual(g.body.generationConfig, { temperature: .4, topP: .8, maxOutputTokens: 1000, stopSequences: ["END"], thinkingConfig: { thinkingLevel: "HIGH" } });
+  assert.throws(() => buildProviderRequest({ model: gemini, messages, reasoningMode: "auto", advanced: {}, nativeSearch: "gemini" }), /계정/);
+});
+
+test("native tool events verify search and usage without becoming manual calls or exposing opaque provider state", () => {
+  for (const [provider, fixture] of [["claude", claudeEvents], ["responses", openaiEvents], ["gemini", geminiEvents]]) {
+    const normalizer = new ProviderEventNormalizer(provider); const evidence = new SearchEvidenceNormalizer(provider);
+    const normalized = fixture.flatMap((event) => { evidence.accept(event); return normalizer.accept(event); });
+    assert.equal(normalized.filter((event) => event.type === "text").map((event) => event.text).join(""), "합성 통계 답변");
+    assert.equal(normalized.filter((event) => event.type === "tool_call").length, 0);
+    const search = evidence.snapshot(true); assert.equal(search.status, "executed"); assert.equal(search.requestCount, 1);
+    assert.equal(search.citations.length, 1); assert.deepEqual(search.queries, ["synthetic public statistic"]);
+    assert.doesNotMatch(JSON.stringify(search), /encrypted_|hidden reasoning|thoughtSignature|script/);
+    const usage = normalized.filter((event) => event.type === "usage").at(-1).usage;
+    assert.equal(usage.inputTokens, 10); assert.equal(usage.outputTokens, provider === "gemini" ? 10 : 7);
+  }
+});
+
+test("native search missing, empty, failed and Gemini blocked states are truthful", () => {
+  const missing = new SearchEvidenceNormalizer("claude");
+  missing.accept({ type: "message_stop" }); assert.equal(missing.snapshot(true).status, "missing");
+  const empty = new SearchEvidenceNormalizer("claude");
+  empty.accept({ type: "content_block_start", content_block: { type: "web_search_tool_result", tool_use_id: "srv", content: [] } });
+  assert.equal(empty.snapshot(true).status, "empty");
+  const failed = new SearchEvidenceNormalizer("claude");
+  failed.accept({ type: "content_block_start", content_block: { type: "web_search_tool_result", tool_use_id: "srv",
+    content: { type: "web_search_tool_result_error", error_code: "unavailable" } } });
+  assert.equal(failed.snapshot(true).status, "failed");
+  const blocked = new ProviderEventNormalizer("gemini");
+  assert.equal(blocked.accept({ promptFeedback: { blockReason: "SAFETY" } })[0].type, "error");
+  assert.equal(blocked.accept({ candidates: [{ finishReason: "MAX_TOKENS" }] })[0].status, "incomplete");
+});

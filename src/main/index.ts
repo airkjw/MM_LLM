@@ -20,7 +20,7 @@ import {
   beginProjectDeletion, finishProjectDeletion, pendingProjectDeletion
 } from "./storage";
 import {
-  assertModel, commitGatewaySession, currentModels, GatewayError, generateImage, generateVideo, getCredits,
+  assertModel, checkModelSearch, commitGatewaySession, currentModels, GatewayError, generateImage, generateVideo, getCredits,
   listModels, listModelsForKey, pollMediaOperation, runAudio, setGatewayKey, streamChat,
   startBackgroundResponse, pollBackgroundResponse as pollGatewayBackgroundResponse,
   cancelBackgroundResponse as cancelGatewayBackgroundResponse, appendSharedWebEvidence,
@@ -37,6 +37,7 @@ import { configureOcrDataRoot } from "./document-text";
 import { MAX_FILE_BYTES } from "./attachments";
 import { createPendingMediaJob, isPermanentMediaPollFailure, mediaJobIsExpired,
   nextMediaPollAt, shouldReleaseMediaSource, terminalMediaResult } from "./media-jobs";
+import { sharedEvidenceModelError } from "../shared/search-capability";
 import { relevantCachedWebContext, webQueryFingerprint } from "../shared/web-search";
 import { applyAssistantOutcome } from "./chat-history";
 import { activateSavedSession, transitionLogin } from "./session-flow";
@@ -442,6 +443,10 @@ function registerHandlers(): void {
       return result;
     } finally { activeModelRefreshes--; }
   });
+  ipcMain.handle("models:search-capability", async (event, rawId: unknown) => {
+    trustedInvoke(event); assertSessionStable();
+    return runSessionBound(async (controller) => checkModelSearch(shortString(rawId, 200, "모델"), controller.signal));
+  });
   ipcMain.handle("credits:get", async (event, rawForce: unknown) => {
     trustedInvoke(event);
     if (rawForce !== undefined && typeof rawForce !== "boolean") throw new Error("새로고침 설정이 올바르지 않습니다.");
@@ -692,7 +697,7 @@ function registerHandlers(): void {
       thread.title = `비교 · ${run.prompt.slice(0, 30)}`;
       thread.messages.push({ id: randomUUID(), role: "user", text: run.prompt, apiContent: run.prompt,
         createdAt: run.createdAt }, { id: randomUUID(), role: "assistant", text: result.text,
-        apiContent: result.text, modelId, createdAt: new Date().toISOString(), status: "complete", usage: result.usage });
+        apiContent: result.text, modelId, createdAt: new Date().toISOString(), status: "complete", usage: result.usage, webSearch: run.webSearch });
     });
     });
   });
@@ -1102,19 +1107,24 @@ function registerHandlers(): void {
           request.modelIds.some((id) => typeof id !== "string") || new Set(request.modelIds).size !== request.modelIds.length) {
           throw new Error("서로 다른 대화 모델을 2~3개 선택해 주세요.");
         }
-        const modelIds = request.modelIds.map((id) => shortString(id, 200, "비교 모델")); modelIds.forEach((id) => assertModel(id, "llm"));
+        const modelIds = request.modelIds.map((id) => shortString(id, 200, "비교 모델")); modelIds.forEach((id) => {
+          const model = assertModel(id, "llm"); const error = sharedEvidenceModelError(model); if (error) throw new Error(error);
+        });
         if (!["always", "auto", "deep", "off"].includes(request.webSearchMode)) throw new Error("웹 검색 설정이 올바르지 않습니다.");
         attachmentIds = ids(request.attachmentIds);
         if (attachmentIds.length && request.deidentifiedConfirmed !== true) throw new Error("첨부 자료의 비식별화를 확인해 주세요.");
         const prepared = await contentForChat(prompt, attachmentIds, () => undefined, abort.signal);
         const settings = await loadSettings();
-        const evidence = await prepareSharedWebEvidence(prompt, request.webSearchMode, abort);
+        let sharedSearch: PublicMessage["webSearch"];
+        const evidence = await prepareSharedWebEvidence(prompt, request.webSearchMode, abort, (search) => {
+          sharedSearch = { ...search, route: "shared" };
+        }, modelIds);
         const preparedMessage = { id: randomUUID(), role: "user" as const, text: prompt,
           apiContent: prepared.content, attachmentContext: prepared.attachmentContext,
           attachments: prepared.names, createdAt: new Date().toISOString() };
         run = { id: randomUUID(), prompt, modelIds, webSearchMode: request.webSearchMode,
           createdAt: new Date().toISOString(), attachmentNames: prepared.names,
-          sharedEvidence: boundedCompareEvidence(evidence),
+          sharedEvidence: boundedCompareEvidence(evidence), webSearch: sharedSearch,
           results: modelIds.map((modelId) => ({ modelId, status: "running", text: "" })) };
         await upsertCompareRun(getActiveProfileId(), run); send({ type: "snapshot", run });
         const compareBudget = new CompareTextBudget();
@@ -1188,7 +1198,7 @@ function registerHandlers(): void {
         assertModel(COMPARE_SYNTHESIS_MODEL_ID, "llm");
         if (!run.sharedEvidence && run.webSearchMode !== "off") {
           run.sharedEvidence = boundedCompareEvidence(
-            await prepareSharedWebEvidence(run.prompt, run.webSearchMode, abort)
+            await prepareSharedWebEvidence(run.prompt, run.webSearchMode, abort, (search) => { run!.webSearch = { ...search, route: "shared" }; })
           );
         }
         run.synthesis = { modelId: COMPARE_SYNTHESIS_MODEL_ID, status: "running", text: "",
@@ -1277,6 +1287,7 @@ function registerHandlers(): void {
       let claudeContinuation: Array<Record<string, unknown>> | undefined;
       let terminalStatus = "completed";
       let chargedCredits: number | undefined;
+      let webSearch: PublicMessage["webSearch"];
       let chatbotFiles: NonNullable<PublicMessage["files"]> = [];
       let rawChatbotFiles: Array<Record<string, unknown>> = [];
       try {
@@ -1410,7 +1421,7 @@ function registerHandlers(): void {
               if (item.type === "usage") { usage = item.usage; continue; }
               if (item.type === "credits") { chargedCredits = item.credits; send(item); continue; }
               if (item.type === "files") { rawChatbotFiles.push(...item.files); continue; }
-              if (item.type === "progress" || item.type === "status" || item.type === "tool_call" || item.type === "provider_state") continue;
+              if (item.type === "progress" || item.type === "status" || item.type === "tool_call" || item.type === "provider_state" || item.type === "web_search") continue;
               text += item.text; send({ type: "delta", text: item.text });
             }
           } catch (error) { chatbotError = error; }
@@ -1483,6 +1494,7 @@ function registerHandlers(): void {
           onContext: (context) => { nextWebContext = context; }
         }, { reasoningMode: thread.reasoningMode ?? "auto", advanced: thread.advanced ?? {},
           previousResponseId: chainPreviousId })) {
+          if (item.type === "web_search") { webSearch = item.search; send(item); continue; }
           if (item.type === "usage") { usage = item.usage; continue; }
           if (item.type === "progress") { send(item); continue; }
           if (item.type === "reasoning_summary") {
@@ -1510,6 +1522,7 @@ function registerHandlers(): void {
           applyAssistantOutcome(item.messages, text, terminalStatus === "incomplete" ? "incomplete" : "complete", regenerateIndex,
             randomUUID(), new Date().toISOString(), usage, answerModelId);
           const stored = item.messages.at(-1);
+          if (stored && webSearch) stored.webSearch = webSearch;
           if (stored && reasoningSummary) stored.reasoningSummary = reasoningSummary;
           if (stored && toolCalls.length) stored.toolCalls = toolCalls;
           if (stored && claudeContinuation?.length && toolCalls.length) stored.claudeContinuation = claudeContinuation;
@@ -1520,13 +1533,14 @@ function registerHandlers(): void {
         if (
           savedUser &&
           threadId &&
-          (text || reasoningSummary || toolCalls.length || chatbotFiles.length || chargedCredits !== undefined || usage !== undefined)
+          (text || reasoningSummary || toolCalls.length || chatbotFiles.length || chargedCredits !== undefined || usage !== undefined || webSearch !== undefined)
         ) {
           await updateThread(threadId, (item) => {
             if (continueIndex >= 0 && item.messages[continueIndex]) item.messages[continueIndex].status = "resolved";
             applyAssistantOutcome(item.messages, text, "incomplete", regenerateIndex,
               randomUUID(), new Date().toISOString(), usage, answerModelId);
             const stored = item.messages.at(-1);
+            if (stored && webSearch) stored.webSearch = webSearch;
             if (stored && reasoningSummary) stored.reasoningSummary = reasoningSummary;
             if (stored && toolCalls.length) stored.toolCalls = toolCalls;
             if (stored && claudeContinuation?.length && toolCalls.length) stored.claudeContinuation = claudeContinuation;

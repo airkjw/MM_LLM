@@ -1,3 +1,4 @@
+import { sanitizeWebSearch, webSearchStatusLabel } from "./search-evidence.ts";
 import type { ThreadSnapshot } from "./contracts";
 
 function clean(value: string): string {
@@ -24,6 +25,12 @@ export function serializeThreadMarkdown(thread: ThreadSnapshot): string {
   for (const message of thread.messages) {
     lines.push(`### ${message.role === "user" ? "사용자" : "MM_LLM"}`, "", clean(message.text));
     if (message.role === "assistant") lines.push("", `생성 모델: ${message.modelId ? clean(message.modelId) : "기록 없음"} · 생성 시각: ${message.createdAt}`);
+    const search = sanitizeWebSearch(message.webSearch);
+    if (search) {
+      lines.push("", webSearchStatusLabel(search));
+      if (search.queries.length) lines.push(`검색어: ${search.queries.join(" · ")}`);
+      for (const citation of search.citations) lines.push(`- <${citation.url}>`);
+    }
     if (message.reasoningSummary) lines.push("", "#### 추론 요약", "", clean(message.reasoningSummary));
     if (message.attachments?.length) lines.push("", `첨부: ${message.attachments.map(clean).join(", ")}`);
     if (message.status === "incomplete") lines.push("", "> 이 답변은 생성 도중 중단되었습니다.");

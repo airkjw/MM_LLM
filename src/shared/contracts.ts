@@ -1,4 +1,20 @@
-export type ModelKind = "llm" | "image" | "audio" | "video";
+export type ModelKind = "llm" | "embedding" | "rerank" | "decisions" | "realtime" | "image" | "audio" | "video";
+export type NativeSearchProvider = "claude" | "responses" | "gemini" | "sonar";
+export type SearchCapability = {
+  status: "supported" | "unsupported" | "unknown";
+  provider?: NativeSearchProvider;
+  checkedAt?: string;
+  reason: string;
+};
+export type WebCitation = { url: string; title: string; citedText?: string; startIndex?: number; endIndex?: number };
+export type WebSearchExecution = {
+  route: "native" | "sonar" | "shared" | "cache" | "none";
+  provider?: NativeSearchProvider;
+  status: "pending" | "executed" | "missing" | "failed" | "empty" | "cached" | "not_requested";
+  queries: string[];
+  citations: WebCitation[];
+  requestCount?: number;
+};
 export type WebSearchMode = "always" | "auto" | "deep" | "off";
 export type ReasoningMode = "auto" | "fast" | "balanced" | "deep";
 export type ThemeMode = "system" | "light" | "dark";
@@ -77,6 +93,8 @@ export type GatewayModel = {
   type: ModelKind;
   profile_image_url?: string | null;
   audio_client?: string;
+  pricing?: { web_search_per_1k?: number | null };
+  searchCapability?: SearchCapability;
 };
 
 export type CreditBalance = {
@@ -101,6 +119,7 @@ export type PublicMessage = {
   credits?: number;
   files?: Array<{ id: string; name: string; mediaUrl: string; expiresAt: string }>;
   backgroundResponseId?: string;
+  webSearch?: WebSearchExecution;
 };
 
 export type ThreadTarget =
@@ -170,6 +189,7 @@ export type ChatRequest = {
 };
 
 export type ChatEvent =
+  | { type: "web_search"; search: WebSearchExecution }
   | { type: "delta"; text: string }
   | { type: "reasoning_summary"; text: string }
   | { type: "progress"; message: string }
@@ -232,6 +252,7 @@ export type CompareRun = {
   attachmentNames: string[];
   /** Shared public web evidence stored in the encrypted local workspace record. */
   sharedEvidence?: string;
+  webSearch?: WebSearchExecution;
   results: Array<{ modelId: string; status: "running" | "completed" | "incomplete" | "failed" | "cancelled";
     text: string; usage?: TokenUsage; error?: string }>;
   synthesis?: {
@@ -366,6 +387,7 @@ export type DesktopApi = {
   cancelLogin(): Promise<boolean>;
   logout(): Promise<void>;
   refreshModels(): Promise<GatewayModel[]>;
+  checkModelSearch(modelId: string): Promise<SearchCapability>;
   getCredits(force?: boolean): Promise<CreditBalance>;
   getSettings(): Promise<AppSettings>;
   updateSettings(settings: AppSettings): Promise<AppSettings>;

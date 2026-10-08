@@ -1,3 +1,5 @@
+import { sharedEvidenceModelError } from "../../shared/search-capability";
+import { webSearchStatusLabel } from "../../shared/search-evidence";
 import { Bot, CircleHelp, Columns3, Edit3, FileText, FolderOpen, Paperclip, Plus, Search, Settings, ShieldCheck, Sparkles, Square, Trash2, X } from "lucide-react";
 import { serializeCompareAnalysis } from "../../shared/compare-export";
 import type { AppSettings, ChatbotBookmark, ChatbotUsageReport, CompareRun, GatewayModel, PickedAttachment, ProjectSummary, ThreadSearchResult, ThreadSnapshot, ThreadSummary, WebSearchMode } from "../../shared/contracts";
@@ -133,9 +135,12 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
           </label>
           <fieldset className="compare-models"><legend>모델 2~3개</legend>{llmModels.map((model) => <label key={model.id}>
             <input type="checkbox" checked={compareModels.includes(model.id)} disabled={compareBusy || compareSynthesisBusy ||
+              Boolean(sharedEvidenceModelError(model)) && !compareModels.includes(model.id) ||
               !compareModels.includes(model.id) && compareModels.length >= 3} onChange={(event) => setCompareModels((items) =>
                 event.target.checked ? [...items, model.id] : items.filter((id) => id !== model.id))} />
-            <span>{modelLabel(model.id)}</span></label>)}</fieldset>
+            <span>{modelLabel(model.id)}{sharedEvidenceModelError(model) && " · 공통 근거 전용 비교 미지원"}</span></label>)}</fieldset>
+          {llmModels.some((model) => compareModels.includes(model.id) && sharedEvidenceModelError(model)) &&
+            <p role="status">Sonar는 검색 끄기가 확인되지 않아 비교 답변에 사용할 수 없습니다. Sonar 선택을 해제하고 다른 모델을 직접 선택해 주세요.</p>}
           <div className="compare-controls"><label>웹 근거<select value={compareMode} disabled={compareBusy || compareSynthesisBusy}
             onChange={(event) => setCompareMode(event.target.value as WebSearchMode)}>
             <option value="always">항상 검색 · 공통 1회</option><option value="auto">필요할 때 검색</option>
@@ -154,7 +159,7 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
           <div className="compare-run-actions">{compareBusy
             ? <button type="button" className="secondary-button" onClick={() => compareStopRef.current?.()}><Square size={14} /> 중단</button>
             : <button type="button" className="primary-button" disabled={compareSynthesisBusy || !comparePrompt.trim() || compareModels.length < 2 ||
-                compareModels.length > 3 || compareAttachments.length > 0 && !compareConfirmed}
+                compareModels.length > 3 || llmModels.some((model) => compareModels.includes(model.id) && sharedEvidenceModelError(model)) || compareAttachments.length > 0 && !compareConfirmed}
               onClick={() => void startCompare()}><Columns3 size={15} /> 비교 실행</button>}</div></details>
           {compareBusy && !compareRun && <p className="inline-progress" role="status">첨부 자료와 웹 검색 설정에 따라 비교를 준비하고 있습니다…</p>}
           {compareRun && <><h4 className="compare-step">모델별 답변 <small>관점과 근거를 나란히 검토하세요</small></h4><div className="compare-results" aria-live="polite">{compareRun.results.map((result) => <article key={result.modelId}>
@@ -181,6 +186,7 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
           {compareRun.synthesis && <section className="compare-synthesis" aria-live="polite">
             <p className="compare-synthesis-warning">답변 간 합의만으로 정답이 확정되지는 않습니다.
               아래의 사실 검토와 불확실성을 함께 확인해 주세요.
+              {compareRun.webSearch && <> {webSearchStatusLabel(compareRun.webSearch)}.</>}
               {compareRun.sharedEvidence ? " 공통 웹 근거를 비교 자료에 포함했습니다." : " 공통 웹 근거가 없어 별도 출처 확인이 필요합니다."}</p>
             {compareRun.synthesis.text && <div className="dialog-actions">
               <button type="button" className="secondary-button" onClick={() => {

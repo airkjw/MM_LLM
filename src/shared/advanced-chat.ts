@@ -11,7 +11,7 @@ export const MAX_TOOL_ARGUMENT_BYTES = 64 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const MAX_TOOL_CALLS_PER_TURN = 8;
 
-export type ProviderKind = "chat" | "responses" | "claude" | "chatbot";
+export type ProviderKind = "chat" | "responses" | "claude" | "chatbot" | "gemini";
 export type ClaudeEffort = NonNullable<NonNullable<ChatAdvancedSettings["claudeThinking"]>["effort"]>;
 export type ClaudeThinkingCapabilities = {
   adaptive: boolean; manual: boolean; canDisable: boolean; efforts: ClaudeEffort[];
