@@ -2,7 +2,7 @@
 
 ## 현재 상태·범위·소유권
 
-**구현·저장 보정·로컬 합성 gate 완료 / 별도 전체 Phase 4 독립 검토 대기 / 실계정·OS 하드웨어·CI 미검증.** 수락된 Phase 3 HEAD `2d98a502eea512124016e89333ec5acdc1920be6`의 깨끗한 feature worktree에서 시작했다. 최초 제품은 `2963ea9e903807076d950262a9b0d1df4fea2057`, 최신 저장 보정 제품은 `8513d186067876053a405e6e0349cf4ce0eecb90`이다. 단일 구현 소유자 `task_6f1a1328f5c8` / `ctx_e882a4b52487`가 shared/main/preload/renderer/storage 경로/CSS/packaging 및 테스트를 직렬 편집했다. 내부 순서는 OpenAI Realtime → Gemini Live → Soniox 받아쓰기이며 위임하지 않았다. Coordinator가 다음 별도 읽기 전용 전체 독립 검토·필요 보정 배정·수락·통합을 소유한다. 구현자의 검증을 독립 acceptance로 보고하지 않는다.
+**전체 독립 검토 CHANGES_REQUIRED 후 다섯 P2 lifecycle 보정·로컬 gate 459/459 완료 / 별도 좁은 독립 acceptance 대기 / 실계정·OS 하드웨어·CI 미검증.** 수락된 Phase 3 HEAD `2d98a502eea512124016e89333ec5acdc1920be6`의 깨끗한 feature worktree에서 시작했다. 최초 제품은 `2963ea9e903807076d950262a9b0d1df4fea2057`, 사전 검토 저장 보정 제품은 `8513d186067876053a405e6e0349cf4ce0eecb90`, 현재 lifecycle 보정 제품은 `839bf75a8e0137209e6ef325daef7adcf8dee53e`이다. 단일 구현 소유자 `task_6f1a1328f5c8` / `ctx_e882a4b52487`가 shared/main/preload/renderer/storage 경로/CSS/packaging 및 테스트를 직렬 편집했다. 내부 순서는 OpenAI Realtime → Gemini Live → Soniox 받아쓰기이며 위임하지 않았다. 전체 독립 검토는 settle/release/ACK됐으며 Coordinator가 다음 다섯 지적과 인접 guard의 별도 좁은 독립 acceptance·수락·통합을 소유한다. 구현자의 검증을 독립 acceptance로 보고하지 않는다.
 
 직접 runtime 의존성 `ws` 8.21.3과 dev `@types/ws` 8.18.1을 편집 전에 이유와 함께 선언했다. 모두 기존 전이 설치 버전과 같으며 기존 package 버전 상승은 0건이다. Node built-in WebSocket은 browser-compatible API이므로 ws 전용 maxPayload/handshakeTimeout/followRedirects 옵션을 제공한다고 가정하지 않았다. [공식 ws API](https://github.com/websockets/ws/blob/master/doc/ws.md)와 설치 소스에서 payload 제한, bufferedAmount, close/terminate, redirect 정책을 확인했고 직접 의존성·lock의 ws production 분류만 반영했다. 앱은 v0.5.1을 유지한다.
 
@@ -73,3 +73,29 @@ VoicePanel은 동기 예약과 session/target/component epoch를 캡처한다. p
 Ignored 근거는 `.orca/phase4-save-correction/gates/8513d186067876053a405e6e0349cf4ce0eecb90/`이다. 명령별 full stdout/stderr·exit·cwd/argv·UTC 시각·비밀값 redacted 환경·source-before/after·제품 Git blob manifest를 보존했다. 169개 제품 입력의 전후 SHA-256과 제품/current Git blob이 모두 같으며 built voice-capture bytes도 원본과 같다. 통합 gate index `manifest.json` SHA-256은 `4e32bd2110a2c18527ffadbbc180450952f0a0045ca31a2563fa36b3593268af`, 공통 source manifest는 `2318c572c5182f87ed6674f0ed5407432f7a07d924f3850be535e66b1c15c91f`, 제품 blob manifest는 `fd234a57138100ae2d05cc78421580dfee299a66c5c21b978c60385ee1d4049f`다. `.orca/phase4-save-correction/report.txt`, `receipt.json`, `verification.json`에 최종 제품/docs SHA와 명령별 hash를 인계한다. 기존 415개 gate·원본 재현 실패의 raw 로그와 receipt hash도 그대로 대조했다. Coordinator가 다음 별도 **전체 Phase 4** 독립 검토와 수락을 소유하며 저장 보정만의 검토로 대체하지 않는다.
 
 Coordinator가 제품 commit·docs-only 기록·raw receipt를 별도 Sol reviewer에게 인계해 독립 검토와 필요한 후속 Dispatch를 소유한다. 실계정 권한·실제 provider 음성/차감·OS permission/hardware·시각적 수동 검증·CI·macOS 서명/공증·Windows 설치는 미실시다. Linux 빌드를 그 성공으로 승격하지 않는다. 기존 desktop-to-compact open-dialog focus-return 문제는 Phase 3 이전부터 있던 deferred 항목으로 보존했다. main merge/push/release/version 변경·추가 설계 감사는 하지 않았다.
+
+## 전체 독립 검토 후 lifecycle 보정 — 좁은 acceptance 대기
+
+전체 읽기 전용 독립 검토 `task_f602ce552735` / `ctx_0179f336f020`는 다섯 P2로 CHANGES_REQUIRED 판정 후 settle/release/ACK됐다. 동결 보고 `.orca/phase4-review/report.txt` SHA-256은 `e9ea03201be17949f878e56ac6de4d5c07c8a6021d7f1d84f5ce4b09114b2302`다. 기준 docs `e8fec573577bd50b53f86195d95807cccf6c2b11` / 제품 `8513d186067876053a405e6e0349cf4ce0eecb90`에서 단일 보정 소유자 `task_7e22146377c9` / `ctx_54549387433f`가 아래 범위를 직렬 수정했다. 제품은 `839bf75a8e0137209e6ef325daef7adcf8dee53e`이며 기능 commit `50542b6` 뒤 새 test bridge의 EOF 공백만 정리했다. 저장 트랜잭션·동기 예약과 이전 단계는 보존했다.
+
+| 지적 | 보정 결과·등록된 실제 경로 검증 |
+| --- | --- |
+| P2-A 전환 socket 유실 | 기존 mutex를 유지하고 모든 session generation 전환 전에 음성·완료 claim을 정리하고 renderer에 통지한다. 백업 취소·실패한 계정 확인도 명시적 종료/미저장 텍스트 폐기를 표시한다. 준비·발급 대기·handshake·active·muted·Soniox stopping, 전환 이전 epoch 통지, pending save 취소·이미 commit된 암호문 보존과 명시적 재시작을 검사했다. delivery 32개 포화도 terminal discard를 차단하거나 claim을 재생성하지 않는다. |
+| P2-B 예전 IPC 실패 | session/target/component epoch와 active owner를 재확인하고 Stop 시 이전 제어 callback을 retire한다. 늦은 played/interrupted/mute/stop 성공·실패가 교체 owner를 닫지 않는다. 아직 소유한 제어·오디오/Stop 실패는 자원을 닫고 오류를 알리며 재시작할 수 있다. |
+| P2-C 폐기된 Save | 완료된 대화에는 claim 폐기 통지를 받을 한 listener만 남기며 오디오와 timer는 즉시 닫는다. 저장 성공·새 시작·collapse·전환·target/unmount에서 listener를 제거한다. collapse는 대화 preview/저장 동의를 지우고 폐기를 설명하므로 재개해도 잘못된 Save 요청이 없다. 의도적으로 보존하는 받아쓰기 final append는 유지했다. 실제 main↔React IPC bridge가 retryable 실패·collapse 후 새 pending save·예전 결과·전환 중 pending save를 검사한다. |
+| P2-D Gemini 확정 입력 누락 | [raw WS reference](https://ai.google.dev/api/live.md#BidiGenerateContentServerContent)에 따라 `inputTranscription`을 도착 순서로 한 번씩 final에 기록하며 model turn에 임의 대응시키지 않는다. `interimInputTranscription`은 교체 가능한 preview만 제공한다. 출력은 generationComplete/turnComplete에서 한 번 확정하고 Stop/interrupt로 미완성 출력을 승격하지 않는다. 두 모델의 input/output 순서·늦은 입력·filler·Stop/interrupt·반복된 동일 입력·12,000자 한도와 실제 암호화 save/backup을 검사했다. 현재 thread LLM·voice 출처와 별도 text opt-in을 유지한다. |
+| P2-E activity 미표시 | mic/mute·경과 시간과 듣는 중/생각 중/응답 중을 함께 표시한다. filler 뒤 background thinking도 보존하며 재생 큐가 남으면 응답 중을 유지한다. 시작 시 activity를 초기화하고 Stop/오류/닫힘·dictation·빈 상태, status/live 속성·native focus·420px portrait·두 테마를 DOM으로 검사했다. |
+
+원본 review tree의 **81개 파일**은 bytes/hash 그대로 유지했다. actionable 원본 재현과 유효 control은 총 30개가 통과하며 별도 등록 추가 회귀는 Node 12개·DOM 14개다. 집중 등록 결과는 main/session 43/43, VoicePanel/App DOM 27/27이다. 전체 독립 검토가 제외한 Gemini top-level/status-only probes와 초기 TSX loader 실패는 제품 finding으로 승격하지 않았다. 필터 첫 시도의 file-parent 매칭으로 제외된 두 진단만 실행/실패한 로그도 보존했고 `--test-skip-pattern=extended-thinking (status-only|documented top-level)`로 유효 11 control만 통과시켰다. protocol schema/assertion을 낮추지 않았다. evidence verifier의 최초 archive 경로 착오도 로그/스크립트를 보존하고 review-index의 정확한 `validatedAt`으로 고쳤다.
+
+| 제품 commit 고정 뒤 각각 1회 실행 | 결과 |
+| --- | --- |
+| `npm run typecheck` | exit 0 |
+| `npm test` | exit 0; **Node 350/350 + DOM 109/109 = 459/459**, fail/cancelled/skipped/todo 0 |
+| `npm run ui:audit` | exit 0; 테마 tokens 각 39, hardcoded color 0, contrast 68, control mappings 32 |
+| `npm run build` | exit 0; Linux production build와 script 내부 typecheck |
+| 기준 docs → 제품 `git diff --check` | exit 0 |
+
+Ignored `.orca/phase4-lifecycle-correction/gates/839bf75a8e0137209e6ef325daef7adcf8dee53e/`에 per-command full stdout/stderr·exit·cwd/argv·UTC·환경의 비밀값 redaction·source-before/after·product Git blob manifest를 보존했다. **170개** 제품 입력의 전후 bytes/hash와 제품/current Git blobs가 일치한다. gate index `manifest.json` SHA-256은 `851c0a62a44b97aa2ba7c9b4ae38c319f4e7545dfc4cf1e4f0f0eb6584c39267`, source manifest는 `ef9c60131c642c1a7fae26cb5a9c16696a5dcc036a8c13a360fe3010b76c9572`, product blob manifest는 `a2d3dc6397dd8cc709fd50451860a4bd0627d0b80a9d41d311656e83d132068b`다. historical 415/433 gate·실패 원본도 log/source/Git byte 일치를 검증하고 반복 실행하지 않았다. built voice worklet은 원본과 byte-identical이다. `.orca/phase4-lifecycle-correction/report.txt`, `receipt.json`, `verification.json`은 최종 제품/docs SHA와 raw command/hash를 인계한다.
+
+다음 소유자는 coordinator와 별도 **다섯 지적·인접 lifecycle/save guard의 좁은 독립 acceptance**다. 전체 Phase 4 재감사나 구현자 self-acceptance는 하지 않는다. Linux 합성 DOM·격리 암호화 vault·mock mic/context/WS와 로컬 native WS/Fetch 검증이다. 실계정 권한/실제 과금·provider 실행·OS 마이크/hardware·수동 시각/assistive technology·CI·macOS 서명/공증·Windows 설치는 미실시다. 기존 compact dialog focus-return deferred 항목, 최초 창 비율/복원과 업무 UI를 보존했다. main branch·merge/push·버전·의존성·릴리즈 변경은 없다.
