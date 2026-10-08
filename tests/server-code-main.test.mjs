@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { claudePauseEvents, source } from "./fixtures/native-search.mjs";
+import { redirectFixture } from "./fixtures/gateway-redirect.mjs";
 
 // Exercise the real IPC handlers, attachments, context, Gateway and encrypted stores.
 // Only Electron startup/updater and local document extraction are fixtures.
@@ -87,6 +88,34 @@ function addFiles(name, count, size, prefix) {
   return picked.map((item) => item.id);
 }
 function sse(events) { return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")); }
+
+for (const id of ["claude-sonnet-5", "gpt-6-astra"]) {
+  test(`actual ${id} main code path rejects native 301/302/303/307/308 redirects with one paid POST and no done`, async () => {
+    for (const status of [301, 302, 303, 307, 308]) for (const sameOrigin of [true, false]) {
+      session(); const fixture = await redirectFixture(status, sameOrigin); const urls = [];
+      try {
+        globalThis.fetch = (url, init) => {
+          urls.push(String(url));
+          assert.equal(String(url), gateway.GATEWAY + (id.startsWith("claude") ? "/claude/v1/messages/" : "/responses/"));
+          return originalFetch(fixture.origin + "/initial", init);
+        };
+        const thread = await storage.createThread({ modelId: id });
+        await storage.updateThread(thread.id, value => { value.advanced = { serverCode: true }; value.webSearchMode = "off"; });
+        const events = await invoke("chat:stream", { threadId: thread.id, modelId: id, text: "synthetic redirect probe", attachmentIds: [] });
+        assert.equal(urls.length, 1); assert.equal(fixture.first.length, 1); assert.equal(fixture.first[0].method, "POST");
+        assert.deepEqual(fixture.target, [], "redirect target receives no calls, credentials or POST body");
+        const body = JSON.parse(fixture.first[0].body);
+        assert.equal(body.model, id); assert.match(fixture.first[0].body, /synthetic redirect probe/);
+        assert.equal(body.tools[0].type, id.startsWith("claude") ? "code_execution_20250825" : "code_interpreter");
+        assert.match(fixture.first[0].headers.authorization, /^Bearer synthetic-/);
+        if (id.startsWith("claude")) assert.match(fixture.first[0].headers["x-api-key"], /^synthetic-/);
+        assert.equal(events.some(event => event.type === "done"), false);
+        assert.equal(events.at(-1).type, "error"); assert.match(events.at(-1).message, /서버에 연결/);
+        assert.equal(events.at(-1).snapshot.messages.at(-1).status, "incomplete");
+      } finally { globalThis.fetch = originalFetch; await fixture.close(); }
+    }
+  });
+}
 
 test('real chat main/transport emits Claude code payload/header, results/errors and encrypted restore/backup metadata', async()=>{
   session();let paid=0;let request;

@@ -45,6 +45,9 @@ export function parseMediaQuote(value: unknown, request: MediaEstimateRequest, n
     return { item: raw.item as MediaQuote["lines"][number]["item"], credits: raw.credits, bound: raw.bound,
       exact: raw.exact as boolean, basis: raw.basis, ...(note(raw.note) ? { note: note(raw.note) } : {}) };
   });
+  // A total cannot promise more certainty than its lines. Approximate totals may
+  // conservatively retain any line bound; minimum/maximum allow exact lines too.
+  if (lines.some(line => value.bound !== "approximate" && line.bound !== "exact" && line.bound !== value.bound)) return fail();
   if (!lines.some(line => line.item === request.kind) || Math.abs(lines.reduce((sum,line)=>sum+line.credits,0)-value.credits) > .0002) return fail();
   return { kind: request.kind, modelId: request.modelId, credits: value.credits, bound: value.bound, exact: value.exact as boolean,
     lines, ...(note(value.note) ? { note: note(value.note) } : {}), fingerprint: estimateFingerprint(request), quotedAt: now };

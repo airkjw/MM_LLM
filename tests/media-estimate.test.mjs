@@ -20,6 +20,23 @@ test('all four price bounds preserve exact flags, filter lines and bounded notes
     assert.equal(result.lines[1].item,'content_filter');assert.equal(result.note.length,2000);assert.equal(result.quotedAt,'2026-10-08T00:00:00Z');}
   const zero=wire(image);zero.credits=0;zero.lines=[{...zero.lines[0],credits:0}];assert.equal(parseMediaQuote(zero,image).credits,0);
 });
+test('total certainty is compatible with every generation/filter bound, allowing conservative totals without rewriting lines',()=>{
+  for(const total of ['exact','minimum','maximum','approximate']) for(const line of ['exact','minimum','maximum','approximate']) {
+    const compatible=total==='approximate'||line==='exact'||line===total;
+    // Apply uncertainty to either generation or the separately billed filter.
+    for(const item of [0,1]) {
+      const value=wire(image,total);value.lines=wire(image).lines;
+      value.lines[item]={...value.lines[item],bound:line,exact:line==='exact'};
+      if(!compatible) assert.throws(()=>parseMediaQuote(value,image),/견적.*확인할 수 없습니다/);
+      else {
+        const parsed=parseMediaQuote(value,image);assert.equal(parsed.bound,total);assert.equal(parsed.exact,total==='exact');
+        assert.equal(parsed.credits,3.5);assert.deepEqual(parsed.lines,value.lines);
+      }
+    }
+  }
+  const mixed=wire(image,'approximate');mixed.lines[0].bound='minimum';mixed.lines[1].bound='maximum';mixed.lines[1].exact=false;
+  assert.deepEqual(parseMediaQuote(mixed,image).lines,mixed.lines);
+});
 test('missing/bad/nonfinite/negative price, mismatched model-kind, malformed bounds/lines never become zero',()=>{
   for(const patch of [{credits:undefined},{credits:null},{credits:''},{credits:'0'},{credits:-1},{credits:NaN},{credits:Infinity},
     {model:'other-model'},{kind:'music'},{bound:'guess'},{exact:false},{lines:[]},{lines:wire(image).lines.map(l=>({...l,credits:NaN}))},

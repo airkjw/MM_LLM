@@ -1,6 +1,46 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { gatewayRequest, GatewayError, retryDelay } from "../src/main/gateway-transport.ts";
+import { redirectFixture } from "./fixtures/gateway-redirect.mjs";
+
+test("native Fetch fixture exposes default 307 paid POST replay and custom credential forwarding", async () => {
+  const fixture = await redirectFixture(307);
+  try {
+    const response = await fetch(fixture.origin + "/initial", { method: "POST", headers: { "x-api-key": "synthetic-only" }, body: "synthetic-body" });
+    assert.equal(response.redirected, true); await response.body.cancel();
+    assert.equal(fixture.first.length, 1); assert.equal(fixture.target.length, 1);
+    assert.equal(fixture.target[0].method, "POST"); assert.equal(fixture.target[0].headers["x-api-key"], "synthetic-only");
+    assert.equal(fixture.target[0].body, "synthetic-body");
+  } finally { await fixture.close(); }
+});
+
+for (const status of [301, 302, 303, 307, 308]) for (const sameOrigin of [true, false]) {
+  test(`typed Gateway native Fetch rejects ${status} ${sameOrigin ? "same" : "cross"}-origin paid redirects despite caller follow/manual`, async () => {
+    for (const redirect of [undefined, "follow", "manual"]) {
+      const fixture = await redirectFixture(status, sameOrigin);
+      let calls = 0;
+      try {
+        const body = JSON.stringify({ model: "synthetic-model", prompt: "synthetic-body" });
+        await assert.rejects(gatewayRequest(fixture.origin + "/initial", {
+          method: "POST", body, headers: { "x-api-key": "synthetic-only", Authorization: "Bearer synthetic-only" }, redirect
+        }, { fetch: (url, init) => { calls++; assert.equal(init.redirect, "error"); return originalFetch(url, init); } }), /서버에 연결/);
+        assert.equal(calls, 1); assert.equal(fixture.first.length, 1); assert.equal(fixture.first[0].method, "POST");
+        assert.equal(fixture.first[0].body, body); assert.equal(fixture.first[0].headers["x-api-key"], "synthetic-only");
+        assert.deepEqual(fixture.target, [], "target must receive zero calls, bodies and headers");
+      } finally { await fixture.close(); }
+    }
+  });
+}
+
+for (const method of ["GET", "HEAD"]) test(`${method} native Fetch never follows or retries a Gateway redirect`, async () => {
+  for (const status of [301, 302, 303, 307, 308]) for (const sameOrigin of [true, false]) {
+    const fixture = await redirectFixture(status, sameOrigin);
+    try {
+      await assert.rejects(gatewayRequest(fixture.origin + "/initial", { method }, { fetch: originalFetch }), /서버에 연결/);
+      assert.equal(fixture.first.length, 1); assert.equal(fixture.first[0].method, method); assert.deepEqual(fixture.target, []);
+    } finally { await fixture.close(); }
+  }
+});
 
 test("GET retries throttling with Retry-After, preserving authorization", async () => {
   const delays = []; let calls = 0;
@@ -17,6 +57,17 @@ test("billed POST is never automatically replayed", async () => {
     fetch: async () => { calls++; return new Response("{}", { status: 503 }); }
   }), (error) => error instanceof GatewayError && error.status === 503);
   assert.equal(calls, 1);
+});
+test("HEAD retries only established 429/503 conditions with a three-request cap; failed POST and other statuses never retry", async () => {
+  for (const status of [429, 503, 500, 408, 301, 302, 303, 307, 308]) for (const method of ["HEAD", "POST"]) {
+    let calls = 0; let delays = 0;
+    await assert.rejects(gatewayRequest("https://example.invalid/initial", { method, redirect: "manual" }, {
+      fetch: async (_url, init) => { calls++; assert.equal(init.redirect, "error"); return new Response(null, { status }); },
+      sleep: async () => { delays++; }
+    }));
+    const retries = method === "HEAD" && [429, 503].includes(status) ? 2 : 0;
+    assert.equal(calls, retries + 1); assert.equal(delays, retries);
+  }
 });
 test("timeout releases a hanging login request and reports retry guidance", async () => {
   const keepAlive = setInterval(() => {}, 1000);
@@ -100,6 +151,48 @@ async function collect(id, mode = "always", options = {}, controller = new Abort
   return items;
 }
 const lastSearch = (items) => items.filter((item) => item.type === "web_search").at(-1).search;
+
+test("actual model list/detail and shared Sonar search wrappers reject native redirects without replacement routes", async () => {
+  for (const operation of ["models", "detail", "search"]) {
+    session([model("gpt-6-astra"), sonar]);
+    const fixture = await redirectFixture(308);
+    const urls = [];
+    try {
+      globalThis.fetch = (url, init) => {
+        urls.push(String(url)); assert.ok(String(url).startsWith(gateway.GATEWAY + "/"));
+        return originalFetch(fixture.origin + "/initial", init);
+      };
+      if (operation === "detail") {
+        const capability = await gateway.checkModelSearch("gpt-6-astra");
+        assert.equal(capability.status, "unknown"); assert.match(capability.reason, /조회 실패/);
+      } else await assert.rejects(() => operation === "models" ? gateway.listModelsForKey("synthetic-only")
+        : gateway.prepareSharedWebEvidence("synthetic query", "always", new AbortController()));
+      assert.equal(urls.length, 1); assert.equal(fixture.first.length, 1); assert.deepEqual(fixture.target, []);
+      assert.equal(fixture.first[0].method, operation === "search" ? "POST" : "GET");
+      assert.match(urls[0], operation === "models" ? /\/models\/$/ : operation === "detail" ? /\/models\/gpt-6-astra\/$/ : /\/chat\/completions\/$/);
+    } finally { globalThis.fetch = originalFetch; await fixture.close(); }
+  }
+});
+
+test("actual native Claude/Responses/Gemini search POSTs reject redirects and mark search failed without a bridge replay", async () => {
+  for (const id of ["claude-sonnet-5", "gpt-6-astra", "gemini-3.8-flash"]) {
+    session([model(id), sonar]); const fixture = await redirectFixture(307); const events = []; let gets = 0; let posts = 0;
+    try {
+      globalThis.fetch = (url, init) => {
+        if (init.method !== "POST") { gets++; assert.equal(url, `${gateway.GATEWAY}/models/${id}/`); return Promise.resolve(Response.json({ id, pricing: { web_search_per_1k: 0 } })); }
+        posts++; assert.ok(String(url).startsWith(gateway.GATEWAY + "/")); return originalFetch(fixture.origin + "/initial", init);
+      };
+      await assert.rejects(async () => {
+        for await (const event of gateway.streamChat(id, messages, "synthetic query", new AbortController(), { mode: "always" }, generation)) events.push(event);
+      }, /서버에 연결/);
+      assert.equal(gets, 1); assert.equal(posts, 1); assert.equal(fixture.first.length, 1); assert.equal(fixture.first[0].method, "POST");
+      const body = JSON.parse(fixture.first[0].body);
+      assert.deepEqual(body.tools, id.startsWith("claude") ? [{ type: "web_search_20250305", name: "web_search", max_uses: 2 }]
+        : id.startsWith("gemini") ? [{ google_search: {} }] : [{ type: "web_search" }]);
+      assert.deepEqual(fixture.target, []); assert.equal(lastSearch(events).status, "failed");
+    } finally { globalThis.fetch = originalFetch; await fixture.close(); }
+  }
+});
 
 test("actual Gateway sends exact native URL/header/body and verifies final citations after split SSE", async () => {
   for (const [id, fixture, suffix] of [["claude-sonnet-5", claudeEvents, "/claude/v1/messages/"],

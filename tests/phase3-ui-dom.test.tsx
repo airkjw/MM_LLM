@@ -171,6 +171,35 @@ test('actual MediaPanel quote unavailable supports explicit unquoted generation 
   assert.match(document.body.textContent!,/견적 불가.*403/);assert.doesNotMatch(document.body.textContent!,/견적 0 크레딧/);assert.equal(m.counts.generation,0);
   await click(field('환자 식별정보').querySelector('input')!);await click(button('견적 없이 생성'));assert.equal(m.counts.generation,1);
 });
+test('actual MediaPanel rejects certainty contradicted by generation/filter lines without confirmed cost or invented zero',async()=>{
+  for(const [total,line,item] of [
+    ['exact','minimum',0],['exact','maximum',0],['exact','approximate',0],
+    ['minimum','maximum',0],['minimum','approximate',0],['maximum','minimum',0],['maximum','approximate',0],
+    ['exact','minimum',1]
+  ] as const) {
+    let calls=0;
+    const m=await media('image',{estimateMedia:async(_id:string,r:any)=>{
+      calls++;const value=quoteFor(r,total);value.lines[item]={...value.lines[item],bound:line,exact:false};return value;
+    }});
+    await click(button('비용 확인'));
+    const text=document.querySelector('[aria-label="공식 생성 견적"]')!.textContent!;
+    assert.match(text,/견적 불가.*비용을 확인할 수 없습니다/);assert.doesNotMatch(text,/확정 견적|0 크레딧/);
+    assert.equal(calls,1);assert.equal(m.counts.generation,0);assert.equal(m.counts.uploads,0);
+    await render(<></>);
+  }
+});
+test('actual MediaPanel malformed certainty retains separate explicit unquoted generation with normalized options once',async()=>{
+  let calls=0;
+  const m=await media('image',{estimateMedia:async(_id:string,r:any)=>{
+    calls++;const value=quoteFor(r);value.lines[0]={...value.lines[0],bound:'minimum',exact:false};return value;
+  }});
+  await input(document.querySelector('.media-form textarea')!,'SYNTHETIC');await select(field('품질').querySelector('select')!,'high');
+  await click(button('비용 확인'));assert.match(document.body.textContent!,/견적 불가/);assert.equal(m.counts.generation,0);
+  await click(field('환자 식별정보').querySelector('input')!);
+  await act(async()=>{button('견적 없이 생성').click();button('견적 없이 생성').click()});
+  assert.equal(calls,1);assert.equal(m.counts.generation,1);assert.equal(m.generations[0].quality,'high');
+  assert.equal(m.generations[0].deidentifiedConfirmed,true);assert.equal(m.counts.uploads,0);
+});
 test('actual quote DOM labels all four bounds and rejects model-kind/absent price instead of displaying zero',async()=>{
   for(const [bound,label] of [['exact','확정'],['minimum','최소'],['maximum','최대'],['approximate','대략']]) {
     await media('image',{estimateMedia:async(_id:string,r:any)=>quoteFor(r,bound)});await click(button('비용 확인'));

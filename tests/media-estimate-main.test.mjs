@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { claudePauseEvents, source } from "./fixtures/native-search.mjs";
+import { redirectFixture } from "./fixtures/gateway-redirect.mjs";
 
 // Exercise the real IPC handlers, attachments, context, Gateway and encrypted stores.
 // Only Electron startup/updater and local document extraction are fixtures.
@@ -94,6 +95,44 @@ async function quote(request, id='11111111-1111-4111-8111-111111111111') {return
 function quoteSession() { gateway.commitGatewaySession('synthetic-estimate-key',[{id:'gpt-image-2',type:'image'},{id:'fal-ai/vidu/q3',type:'video'},{id:'elevenlabs-music',type:'audio',audio_client:'elevenlabs'},{id:'gemini-tts',type:'audio',audio_client:'google'}]); }
 const image={kind:'image',modelId:'gpt-image-2',numberOfImages:1,quality:'high',imageSize:'1536x1024'};
 function response(r) {return {object:'estimate',kind:r.kind,model:r.modelId,credits:3,exact:true,bound:'exact',lines:[{item:r.kind,credits:3,exact:true,bound:'exact',basis:'fixed'}]};}
+test('actual main quote accepts conservative compatible bounds and rejects total exact/opposite certainty without retry',async()=>{
+  quoteSession();await storage.saveKey('synthetic-estimate-key');let posts=0;
+  for(const total of ['exact','minimum','maximum','approximate']) for(const line of ['exact','minimum','maximum','approximate']) {
+    const value={...response(image),credits:3.5,bound:total,exact:total==='exact',lines:[
+      {item:'image',credits:3,bound:line,exact:line==='exact',basis:'fixed'},
+      {item:'content_filter',credits:.5,bound:'exact',exact:true,basis:'per_request'}]};
+    globalThis.fetch=async(url,init)=>{posts++;assert.match(String(url),/\/estimate\/$/);assert.equal(init.method,'POST');return Response.json(value)};
+    if(total==='approximate'||line==='exact'||line===total) {
+      const result=await quote(image);assert.equal(result.bound,total);assert.equal(result.exact,total==='exact');
+      assert.equal(result.credits,3.5);assert.deepEqual(result.lines,value.lines);
+    } else await assert.rejects(()=>quote(image),/견적.*확인할 수 없습니다/);
+  }
+  assert.equal(posts,16);
+  // A nonexact filter cannot be hidden behind an exact generation/total either.
+  globalThis.fetch=async()=>{posts++;return Response.json({...response(image),credits:3.5,lines:[...response(image).lines,
+    {item:'content_filter',credits:.5,bound:'minimum',exact:false,basis:'per_request'}]})};
+  await assert.rejects(()=>quote(image),/견적/);assert.equal(posts,17);
+});
+
+test('actual main estimate/image/video/music reject native redirects before a second route or paid POST',async()=>{
+  quoteSession();await storage.saveKey('synthetic-estimate-key');
+  const requests=[
+    {channel:'media:estimate',request:image,route:'/estimate/'},
+    {channel:'media:image',request:{modelId:image.modelId,numberOfImages:image.numberOfImages,quality:image.quality,imageSize:image.imageSize,prompt:'synthetic',imageAttachmentIds:[],deidentifiedConfirmed:true},route:'/images/generate/'},
+    {channel:'media:video',request:{modelId:'fal-ai/vidu/q3',prompt:'synthetic',imageAttachmentIds:[],durationSeconds:8,resolution:'1080p',audio:true,deidentifiedConfirmed:true},route:'/video/generation/'},
+    {channel:'media:audio',request:{lane:'music',modelId:'elevenlabs-music',prompt:'synthetic',durationSeconds:60,instrumental:true,deidentifiedConfirmed:true},route:'/audio/music/'}
+  ];
+  for(const status of [307,308]) for(const {channel,request,route} of requests) {
+    const fixture=await redirectFixture(status);const urls=[];
+    try {
+      globalThis.fetch=(url,init)=>{urls.push(String(url));assert.equal(String(url),gateway.GATEWAY+route);return originalFetch(fixture.origin+'/initial',init)};
+      await assert.rejects(()=>channel==='media:estimate'?quote(request):handlers.get(channel)(trusted,request),/서버에 연결/);
+      assert.equal(urls.length,1);assert.equal(fixture.first.length,1);assert.equal(fixture.first[0].method,'POST');
+      assert.equal(fixture.first[0].headers.authorization,'Bearer synthetic-estimate-key');assert.deepEqual(fixture.target,[]);
+      assert.equal(JSON.parse(fixture.first[0].body).model,request.modelId);
+    } finally {globalThis.fetch=originalFetch;await fixture.close()}
+  }
+});
 test('actual main IPC/transport sends one free estimate POST with same model options and no private payload',async()=>{
   quoteSession();await storage.saveKey('synthetic-estimate-key');let posts=[];
   globalThis.fetch=async(url,init)=>{posts.push({url:String(url),body:JSON.parse(init.body),headers:new Headers(init.headers)});return Response.json(response(image));};
