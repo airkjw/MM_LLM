@@ -1,3 +1,4 @@
+import { sanitizeServerCode, CODE_ARTIFACT_NOTICE } from "./server-code.ts";
 import { sanitizeWebSearch, webSearchStatusLabel } from "./search-evidence.ts";
 import { unsupportedContinuationMessage, sanitizeUnsupportedContinuationReason } from "./chat-continuation.ts";
 import type { ThreadSnapshot } from "./contracts";
@@ -31,6 +32,15 @@ export function serializeThreadMarkdown(thread: ThreadSnapshot): string {
       lines.push("", webSearchStatusLabel(search));
       if (search.queries.length) lines.push(`검색어: ${search.queries.join(" · ")}`);
       for (const citation of search.citations) lines.push(`- <${citation.url}>`);
+    }
+    for (const result of sanitizeServerCode(message.serverCodeResults) ?? []) {
+      lines.push("", `#### 서버 코드 실행 · ${result.provider} · ${result.status}`, "", clean(result.summary));
+      if (result.code) lines.push("", "코드:", "", clean(result.code));
+      if (result.stdout !== undefined) lines.push("", "표준 출력:", "", clean(result.stdout));
+      if (result.outputLogs !== undefined) lines.push("", "도구 로그 (표준 출력·오류 구분 미제공):", "", clean(result.outputLogs));
+      if (result.stderr !== undefined) lines.push("", "표준 오류:", "", clean(result.stderr));
+      for (const artifact of result.artifacts) lines.push("", `산출물: ${artifact.kind} ${artifact.name ?? artifact.id ?? "이름 없음"}`);
+      if (result.artifacts.length) lines.push("", CODE_ARTIFACT_NOTICE);
     }
     if (message.reasoningSummary) lines.push("", "#### 추론 요약", "", clean(message.reasoningSummary));
     if (message.attachments?.length) lines.push("", `첨부: ${message.attachments.map(clean).join(", ")}`);

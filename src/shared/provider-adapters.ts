@@ -1,3 +1,4 @@
+import { ServerCodeNormalizer } from "./server-code.ts";
 import type { ChatAdvancedSettings, GatewayModel, ManualToolCall, ReasoningMode, TokenUsage } from "./contracts";
 import {
   assertAdvancedOptionsForModel, chatToolChoice, chatToolsPayload, claudeToolChoice, claudeToolsPayload, isGeminiModel, isOpenAiModel,
@@ -133,7 +134,8 @@ export function buildResponsesPayload(input: BuildInput): Record<string, unknown
   const useChain = Boolean(advanced.responses?.chain && input.previousResponseId);
   const split = responseInput(input.messages, useChain);
   const effort = reasoningEffortFromMode(input.reasoningMode);
-  const tools = [...(responsesToolsPayload(advanced.tools) ?? []), ...(input.nativeSearch === "responses" ? [{ type: "web_search" }] : [])];
+  const tools = [...(responsesToolsPayload(advanced.tools) ?? []), ...(input.nativeSearch === "responses" ? [{ type: "web_search" }] : []),
+    ...(advanced.serverCode ? [{ type: "code_interpreter", container: { type: "auto" } }] : [])];
   return {
     model: input.model.id, ...split, stream: input.stream ?? !advanced.responses?.background,
     ...(advanced.maxOutputTokens !== undefined ? { max_output_tokens: advanced.maxOutputTokens } : {}),
@@ -240,8 +242,10 @@ export function buildClaudePayload(input: BuildInput): { body: Record<string, un
   }
   if (lastPdf) lastPdf.cache_control = { type: "ephemeral" };
   const tools = [...(claudeToolsPayload(advanced.tools) ?? []), ...(input.nativeSearch === "claude"
-    ? [{ type: "web_search_20250305", name: "web_search", max_uses: 2 }] : [])];
+    ? [{ type: "web_search_20250305", name: "web_search", max_uses: 2 }] : []),
+    ...(advanced.serverCode ? [{ type: "code_execution_20250825", name: "code_execution" }] : [])];
   const beta = ["prompt-caching-2024-07-31"];
+  if (advanced.serverCode) beta.push("code-execution-2025-08-25");
   if (thinking?.mode === "manual" && /^claude-sonnet-4[-.]6(?:-|$)/.test(model.id.toLowerCase())) {
     beta.push("interleaved-thinking-2025-05-14");
   }
@@ -266,6 +270,7 @@ export function buildClaudePayload(input: BuildInput): { body: Record<string, un
 export function buildProviderRequest(input: BuildInput): {
   provider: ProviderKind; path: string; body: Record<string, unknown>; headers?: Record<string, string>;
 } {
+  assertAdvancedOptionsForModel(input.model, input.advanced);
   if (input.nativeSearch) {
     if (input.model.searchCapability?.status !== "supported" || input.model.searchCapability.provider !== input.nativeSearch) {
       throw new Error("이 계정·모델의 자체 검색 지원이 확인되지 않았습니다.");
@@ -351,12 +356,40 @@ export class ProviderEventNormalizer {
   private claudeToolCount = 0;
   private claudeUsage: TokenUsage | undefined;
   readonly provider: ProviderKind;
-  constructor(provider: ProviderKind) { this.provider = provider; }
+  private readonly code?: ServerCodeNormalizer;
+  constructor(provider: ProviderKind) { this.provider = provider;
+    if (provider === "claude" || provider === "responses") this.code = new ServerCodeNormalizer(provider);
+  }
 
   accept(event: Record<string, unknown>): NormalizedRunEvent[] {
     if (this.provider === "gemini") return normalizeGeminiEvent(event);
-    if (this.provider === "responses") return this.responses(event);
-    if (this.provider === "claude") return this.claude(event);
+    const code: NormalizedRunEvent[] = this.code?.accept(event).map((result) => ({ type: "server_code", result })) ?? [];
+    if (this.provider === "responses") {
+      if (event.object === "response") return [...code,
+        ...this.responses({ type: `response.${event.status}`, response: event }),
+        ...(Array.isArray(event.output) ? event.output.filter(isRecord).filter(i => i.type === "function_call")
+          .flatMap(item => this.responses({ type: "response.output_item.done", item })) : [])];
+      return [...code, ...this.responses(event)];
+    }
+    if (this.provider === "claude") {
+      if (event.type === "message" && Array.isArray(event.content)) {
+        const events: NormalizedRunEvent[] = [...code, ...this.claude({ type: "message_start", message: event })];
+        for (const [index, block] of event.content.entries()) {
+          if (!isRecord(block) || !["text", "tool_use", "thinking", "redacted_thinking"].includes(String(block.type))) continue;
+          events.push(...this.claude({ type: "content_block_start", index, content_block: block }));
+          if (block.type === "text") events.push(...this.claude({ type: "content_block_delta", index, delta: { type: "text_delta", text: block.text } }));
+          if (block.type === "tool_use") events.push(...this.claude({ type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: JSON.stringify(block.input ?? {}) } }));
+          if (block.type === "thinking") {
+            this.claude({ type: "content_block_delta", index, delta: { type: "thinking_delta", thinking: block.thinking } });
+            this.claude({ type: "content_block_delta", index, delta: { type: "signature_delta", signature: block.signature } });
+          }
+          events.push(...this.claude({ type: "content_block_stop", index }));
+        }
+        events.push(...this.claude({ type: "message_delta", delta: { stop_reason: event.stop_reason } }), ...this.claude({ type: "message_stop" }));
+        return events;
+      }
+      return [...code, ...this.claude(event)];
+    }
     return this.chat(event);
   }
 

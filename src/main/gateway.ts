@@ -1,3 +1,5 @@
+import { normalizeEstimateRequest, estimatePayload, parseMediaQuote } from "../shared/media-estimate";
+import { sanitizeServerCode, ServerCodeNormalizer } from "../shared/server-code";
 import { app } from "electron";
 import { randomUUID } from "node:crypto";
 import { assertAdvancedOptionsForModel, isOpenAiModel, providerRoute } from "../shared/advanced-chat";
@@ -8,7 +10,7 @@ import type { AudioRequest, BackgroundResponse, ChatAdvancedSettings, CreditBala
 import { parseCreditsChargedHeader } from "../shared/credit-usage";
 import { combineResearchResults, parseResearchPlan } from "../shared/deep-research";
 import { audioLaneForModel, imageRequestPayload, musicRequestPayload, ttsRequestPayload, videoRequestPayload } from "../shared/media-capabilities";
-import { imageUsage, musicResponseMetadata, ttsTokenUsage, videoResponseMetadata } from "../shared/media-response-metadata";
+import { generationBilling, imageUsage, musicResponseMetadata, ttsTokenUsage, videoResponseMetadata } from "../shared/media-response-metadata";
 import { parseTranscriptResult } from "../shared/meeting-transcript";
 import { parseGatewayModels, parseSearchPricing } from "../shared/model-catalog";
 import { buildClaudeCountTokensRequest, buildProviderRequest, buildResponsesPayload, ProviderEventNormalizer } from "../shared/provider-adapters";
@@ -225,6 +227,7 @@ type ChatMessage = { role: "system" | "developer" | "user" | "assistant" | "tool
   content: ChatContent; tool_call_id?: string; tool_calls?: Array<Record<string, unknown>>;
   claudeContinuation?: Array<Record<string, unknown>> };
 export type ChatStreamItem =
+  | { type: "server_code"; result: import("../shared/contracts").ServerCodeResult }
   | { type: "web_search"; search: WebSearchExecution }
   | { type: "delta"; text: string }
   | { type: "reasoning_summary"; text: string }
@@ -627,7 +630,10 @@ export async function* streamChat(
     const normalizer = new ProviderEventNormalizer(request.provider);
     const evidence = nativeSearch ? new SearchEvidenceNormalizer(nativeSearch) : undefined;
     let lastSearch = JSON.stringify(search);
-    for await (const event of parseSse(response)) {
+    const events = generation.advanced.serverCode && response.headers.get("content-type")?.includes("application/json")
+      ? (async function* () { yield await readJsonObjectLimited(response, controller, "코드 도구 응답"); })()
+      : parseSse(response);
+    for await (const event of events) {
       signal.throwIfAborted();
       if (evidence) {
         search = evidence.accept(event); const fingerprint = JSON.stringify(search);
@@ -638,7 +644,7 @@ export async function* streamChat(
         else if (normalized.type === "error") throw new Error(normalized.message);
         else if (normalized.type === "usage") yield normalized;
         else if (normalized.type === "progress" || normalized.type === "reasoning_summary") yield normalized;
-        else if (normalized.type === "tool_call") yield normalized;
+        else if (normalized.type === "tool_call" || normalized.type === "server_code") yield normalized;
         else if (normalized.type === "provider_state") yield normalized;
         else if (normalized.type === "status") yield normalized;
         else if (normalized.type === "credits") yield normalized;
@@ -699,6 +705,7 @@ function backgroundFromJson(value: Record<string, unknown>, base: {
   threadId: string; modelId: string; createdAt?: string; pollCount?: number; cancelRequested?: boolean;
 }): BackgroundResponse {
   const now = new Date().toISOString(); const status = normalizeBackgroundStatus(value.status);
+  const serverCodeResults = sanitizeServerCode(new ServerCodeNormalizer("responses").accept(value));
   return { id: responseId(value.id), threadId: base.threadId, modelId: base.modelId, status,
     createdAt: base.createdAt ?? now, updatedAt: now,
     nextPollAt: new Date(Date.now() + nextBackgroundPollDelay(base.pollCount ?? 0)).toISOString(),
@@ -707,6 +714,7 @@ function backgroundFromJson(value: Record<string, unknown>, base: {
     ...(responseOutputText(value) ? { outputText: responseOutputText(value) } : {}),
     ...(responseReasoningSummary(value) ? { reasoningSummary: responseReasoningSummary(value) } : {}),
     ...(backgroundFailure(value) ? { error: backgroundFailure(value) } : {}),
+    ...(serverCodeResults ? { serverCodeResults } : {}),
     ...(responseToolCalls(value).length ? { toolCalls: responseToolCalls(value) } : {}) };
 }
 
@@ -798,9 +806,9 @@ export async function generateImage(
   try { response = await gatewayFetch("/images/generate/", jsonInit(imageRequestPayload(request, inputImages)));
     result = await response.json() as Record<string, unknown>; } finally { release(); }
   if (typeof result.operation_id === "string") {
-    return { operationId: result.operation_id, status: asText(result.status) || "processing" };
+    return { operationId: result.operation_id, status: asText(result.status) || "processing", ...generationBilling(result) };
   }
-  return { urls: await mediaUrls(result, profileId), status: "completed", usage: imageUsage(result) };
+  return { urls: await mediaUrls(result, profileId), status: "completed", usage: imageUsage(result), ...generationBilling(result) };
 }
 
 export async function generateVideo(
@@ -815,7 +823,7 @@ export async function generateVideo(
     result = await response.json() as Record<string, unknown>; } finally { release(); }
   const operationId = asText(result.operation_id);
   if (!operationId) throw new Error("비디오 작업 ID가 반환되지 않았습니다.");
-  return { operationId, status: asText(result.status) || "processing", ...videoResponseMetadata(result) };
+  return { operationId, status: asText(result.status) || "processing", ...videoResponseMetadata(result), ...generationBilling(result) };
 }
 
 async function pollVideo(operationId: string, modelId: string, profileId: string, signal?: AbortSignal): Promise<MediaResult> {
@@ -826,7 +834,7 @@ async function pollVideo(operationId: string, modelId: string, profileId: string
       `/video/generation/${operationPath(operationId)}/?model=${encodeURIComponent(modelId)}`, { signal }
     ); result = await response.json() as Record<string, unknown>; } finally { release(); }
   const url = asText(result.video_uri) || asText(result.video_url) || asText(result.url);
-  const metadata = videoResponseMetadata(result);
+  const metadata = { ...videoResponseMetadata(result), ...generationBilling(result) };
   if (result.status === "failed") return { operationId, status: "failed",
     error: asText(result.error) || "비디오 생성이 실패했습니다.", ...metadata };
   if (result.status === "completed") {
@@ -894,7 +902,7 @@ export async function runAudio(
       url = await persistMediaResponse(response, profileId, "audio", 50 * 1024 * 1024); }
     finally { release(); }
     return { audioUrl: url, status: "completed", actualCredits, ...metadata,
-      creditDisplay: actualCredits === undefined ? "실제 차감은 크레딧 잔액에서 확인하세요." : `실제 차감 ${actualCredits} 크레딧` };
+      creditDisplay: actualCredits === undefined ? "실제 생성 차감 미확인 · 잔액에서 확인하세요. content_filter는 별도 차감입니다." : `실제 생성 차감 ${actualCredits} 크레딧 · content_filter는 별도 차감입니다.` };
   }
   if (audioLaneForModel(model) !== "stt") throw new Error("받아쓰기 모델을 선택해 주세요.");
   if (!audioFile) throw new Error("오디오 파일을 선택해 주세요.");
@@ -928,8 +936,8 @@ export async function pollMediaOperation(
     try { const response = await gatewayFetch(`/images/generate/${operationPath(operationId)}/?model=${encodeURIComponent(modelId)}`, { signal });
       result = await response.json() as Record<string, unknown>; } finally { release(); }
     if (result.status === "failed") return { operationId, status: "failed",
-      error: asText(result.error) || "이미지 생성이 실패했습니다." };
-    return { operationId, status: asText(result.status) || "processing",
+      error: asText(result.error) || "이미지 생성이 실패했습니다.", ...generationBilling(result) };
+    return { operationId, status: asText(result.status) || "processing", ...generationBilling(result),
       ...(result.status === "completed" ? { urls: await mediaUrls(result, profileId), usage: imageUsage(result) } : {}) };
   }
   assertModel(modelId, "audio");
@@ -943,4 +951,17 @@ export async function pollMediaOperation(
   if (result.status === "failed") return { operationId, status: "failed",
     error: asText(result.error) || "받아쓰기가 실패했습니다." };
   return { operationId, status: asText(result.status) || "processing", ...parseTranscriptResult(result) };
+}
+
+/** Explicit quote only: no upload, reservation, retry or endpoint/model fallback. */
+export async function estimateMedia(raw: import("../shared/contracts").MediaEstimateRequest, controller: AbortController): Promise<import("../shared/contracts").MediaQuote> {
+  const request = normalizeEstimateRequest(raw);
+  const model = assertModel(request.modelId, request.kind === "music" ? "audio" : request.kind);
+  if (request.kind === "music" && audioLaneForModel(model) !== "music") throw new Error("음악 모델만 견적을 확인할 수 있습니다.");
+  const release = await gatewayScheduler.acquire("standard", controller.signal);
+  try {
+    const response = await gatewayFetch("/estimate/", jsonInit(estimatePayload(request), controller.signal));
+    const value = await readJsonObjectLimited(response, controller, "공식 견적", 64 * 1024);
+    controller.signal.throwIfAborted(); return parseMediaQuote(value, request);
+  } finally { release(); }
 }

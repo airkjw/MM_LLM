@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  audioLaneForModel, imageCapability, imageEstimate, imageRequestPayload, MEDIA_DOCS, musicEstimate,
-  musicRequestPayload, sttEstimate, ttsRequestPayload, VIDEO_MODEL_IDS, videoCapability, videoEstimate,
+  audioLaneForModel, imageCapability, imageRequestPayload, MEDIA_DOCS,
+  musicRequestPayload, sttEstimate, ttsRequestPayload, VIDEO_MODEL_IDS, videoCapability,
   videoRequestPayload
 } from "../src/shared/media-capabilities.ts";
 import {
@@ -67,32 +67,32 @@ test("video payload maps provider-specific duration and resolution fields", () =
     imageAttachmentIds: [], audio: true, deidentifiedConfirmed: true }, []).parameters.audio, true);
 });
 
-test("KHU video matrix includes all 19 current fixed-price models and their documented controls", () => {
+test("KHU video matrix includes all 19 reviewed models and their documented controls", () => {
   const expected = {
-    "veo-3.1-generate-preview": [1600, [4, 6, 8], undefined, undefined, ["16:9", "9:16"]],
-    "bytedance/seedance-2.5": [1165, [5, 10, 15, 30], undefined, ["480p", "720p"]],
-    "fal-ai/vidu/q3": [770, undefined, [2, 16], ["360p", "540p", "720p", "1080p"]],
-    "bytedance/seedance-2.0": [756, [5, 10], undefined, ["720p", "1080p"]],
-    "lightricks/ltx-2.5/pro": [720, [6, 8, 10], undefined, ["720p", "1080p"]],
-    "bytedance/seedance-2.0/fast": [605, [5, 10], undefined, ["720p"]],
-    "veo-3.1-fast-generate-preview": [600, [4, 6, 8], undefined, undefined, ["16:9", "9:16"]],
-    "lightricks/ltx-2.5/fast": [540, [6, 8, 10], undefined, ["720p", "1080p"]],
-    "fal-ai/luma-dream-machine/ray-2": [500, [5, 9], undefined, ["540p", "720p", "1080p"]],
-    "fal-ai/kling-video/o3": [420, undefined, [3, 15]],
-    "fal-ai/kling-video/v3": [420, undefined, [3, 15]],
-    "kwaivgi/kling-v2.5-turbo-pro": [350, [5, 10]],
-    "pixverse/pixverse-v5": [300, [5, 8], undefined, ["360p", "480p", "540p", "720p", "1080p"]],
-    "xai/grok-imagine-video": [300, undefined, [1, 15], ["480p", "720p"]],
-    "minimax/hailuo-02": [270, [6], undefined, ["768p", "1080p"]],
-    "bytedance/seedance-1-pro": [256, undefined, [2, 12], ["480p", "720p", "1080p"]],
-    "veo-3.1-lite-generate-preview": [200, [4, 6, 8], undefined, undefined, ["16:9", "9:16"]],
-    "bytedance/seedance-1.5-pro": [130, [5, 10], undefined, ["480p", "720p", "1080p"]],
-    "bytedance/seedance-1.0-pro/fast": [97, [5, 10], undefined, ["480p", "720p", "1080p"]]
+    "veo-3.1-generate-preview": [[4, 6, 8], undefined, undefined, ["16:9", "9:16"]],
+    "bytedance/seedance-2.5": [[5, 10, 15, 30], undefined, ["480p", "720p"]],
+    "fal-ai/vidu/q3": [undefined, [2, 16], ["360p", "540p", "720p", "1080p"]],
+    "bytedance/seedance-2.0": [[5, 10], undefined, ["720p", "1080p"]],
+    "lightricks/ltx-2.5/pro": [[6, 8, 10], undefined, ["720p", "1080p"]],
+    "bytedance/seedance-2.0/fast": [[5, 10], undefined, ["720p"]],
+    "veo-3.1-fast-generate-preview": [[4, 6, 8], undefined, undefined, ["16:9", "9:16"]],
+    "lightricks/ltx-2.5/fast": [[6, 8, 10], undefined, ["720p", "1080p"]],
+    "fal-ai/luma-dream-machine/ray-2": [[5, 9], undefined, ["540p", "720p", "1080p"]],
+    "fal-ai/kling-video/o3": [undefined, [3, 15]],
+    "fal-ai/kling-video/v3": [undefined, [3, 15]],
+    "kwaivgi/kling-v2.5-turbo-pro": [[5, 10]],
+    "pixverse/pixverse-v5": [[5, 8], undefined, ["360p", "480p", "540p", "720p", "1080p"]],
+    "xai/grok-imagine-video": [undefined, [1, 15], ["480p", "720p"]],
+    "minimax/hailuo-02": [[6], undefined, ["768p", "1080p"]],
+    "bytedance/seedance-1-pro": [undefined, [2, 12], ["480p", "720p", "1080p"]],
+    "veo-3.1-lite-generate-preview": [[4, 6, 8], undefined, undefined, ["16:9", "9:16"]],
+    "bytedance/seedance-1.5-pro": [[5, 10], undefined, ["480p", "720p", "1080p"]],
+    "bytedance/seedance-1.0-pro/fast": [[5, 10], undefined, ["480p", "720p", "1080p"]]
   };
   assert.deepEqual([...VIDEO_MODEL_IDS].sort(), Object.keys(expected).sort());
-  for (const [id, [credits, durations, range, resolutions, ratios]] of Object.entries(expected)) {
+  for (const [id, [durations, range, resolutions, ratios]] of Object.entries(expected)) {
     const capability = videoCapability(id);
-    assert.equal(capability.creditsPerVideo, credits, id);
+    assert.equal(capability.creditsPerVideo, undefined, id);
     assert.deepEqual(capability.durations, durations, `${id}: durations`);
     assert.deepEqual(capability.durationRange, range, `${id}: duration range`);
     assert.deepEqual(capability.resolutions, resolutions, `${id}: resolutions`);
@@ -235,11 +235,9 @@ test("settings, create-thread, thread-settings, and chat IPC objects reject unkn
 });
 
 test("price estimates are versioned and unknown prices stay honest", () => {
-  assert.match(imageEstimate("gpt-image-2", 2), /106/);
-  assert.match(videoEstimate("veo-3.1-fast-generate-preview"), /600/);
-  assert.match(musicEstimate("elevenlabs-music", 60), /150/);
+
   assert.match(sttEstimate(90), /9.0/);
-  assert.match(videoEstimate("future-video"), /확인할 수 없습니다/);
+  assert.equal(imageCapability("gpt-image-2").creditsPerImage, undefined);
   for (const entry of Object.values(MEDIA_DOCS)) {
     assert.match(entry.url, /^https:\/\/docs\.mindlogic\.ai\//);
     assert.equal(entry.lastVerified, "2026-09-16");

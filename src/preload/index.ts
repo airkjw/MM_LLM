@@ -108,6 +108,8 @@ const desktopApi: DesktopApi = {
     const stop = () => { if (!stopped) port1.postMessage({ type: "cancel" }); };
     return stop;
   },
+  estimateMedia: (id, request) => ipcRenderer.invoke("media:estimate", id, request),
+  cancelMediaEstimate: (id) => ipcRenderer.invoke("media:estimate-cancel", id),
   generateImage: (request: ImageRequest) => ipcRenderer.invoke("media:image", request),
   generateVideo: (request: VideoRequest) => ipcRenderer.invoke("media:video", request),
   runAudio: (request: AudioRequest) => ipcRenderer.invoke("media:audio", request),

@@ -1,3 +1,6 @@
+import { estimateMedia } from "./gateway";
+import { normalizeEstimateRequest } from "../shared/media-estimate";
+import { mergeServerCode, settleServerCode } from "../shared/server-code";
 import {
   app, BrowserWindow, dialog, ipcMain, nativeTheme, protocol, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent
 } from "electron";
@@ -99,6 +102,7 @@ if (process.env.MM_LLM_MOCK === "1" && !app.isPackaged) {
 let mainWindow: BrowserWindow | null = null;
 let lastThemePreference: ThemePreference | null = null;
 const activeRuns = new Map<string, AbortController>();
+const quoteRuns = new Map<string, AbortController>();
 const researchRuns = new Map<string, AbortController>();
 const mcpClient = new McpClient();
 const documentRetrieval = new DocumentRetrieval();
@@ -878,6 +882,23 @@ function registerHandlers(): void {
     trustedInvoke(event); assertSessionStable();
     discardAttachments(ids(value, 20));
   });
+  ipcMain.handle("media:estimate", (event, rawId: unknown, raw: unknown) => {
+    trustedInvoke(event); assertSessionStable();
+    const id = shortString(rawId, 100, "견적 요청 ID");
+    if (!/^[a-f0-9-]{36}$/.test(id) || quoteRuns.size > 0) throw new Error("이미 비용을 확인 중입니다.");
+    const request = normalizeEstimateRequest(raw);
+    const pending = new AbortController(); quoteRuns.set(id, pending);
+    return runSessionBound(async (controller) => {
+      const relay = () => controller.abort(pending.signal.reason);
+      pending.signal.addEventListener("abort", relay, { once: true });
+      if (pending.signal.aborted) relay();
+      try { controller.signal.throwIfAborted(); return await estimateMedia(request, controller); }
+      finally { pending.signal.removeEventListener("abort", relay); }
+    }).finally(() => { if (quoteRuns.get(id) === pending) quoteRuns.delete(id); });
+  });
+  ipcMain.handle("media:estimate-cancel", (event, rawId: unknown) => {
+    trustedInvoke(event); quoteRuns.get(shortString(rawId, 100, "견적 요청 ID"))?.abort(new Error("비용 확인을 취소했습니다."));
+  });
   ipcMain.handle("media:image", async (event, value: unknown) => {
     trustedInvoke(event); assertSessionStable();
     if (!isRecord(value)) throw new Error("이미지 요청이 올바르지 않습니다.");
@@ -1019,14 +1040,17 @@ function registerHandlers(): void {
           durationSeconds: polled.durationSeconds ?? job.durationSeconds,
           billedDurationSeconds: job.billedDurationSeconds,
           videoModelId: polled.videoModelId ?? job.videoModelId,
-          creditDisplay: polled.creditDisplay ?? (job.actualCredits === undefined ? undefined :
-            `실제 차감 ${job.actualCredits} 크레딧`) };
+          creditDisplay: polled.actualCredits === undefined && job.actualCredits !== undefined
+            ? job.kind === "stt" ? `실제 차감 ${job.actualCredits} 크레딧`
+              : `실제 생성 차감 ${job.actualCredits} 크레딧 · content_filter는 별도 차감입니다.`
+            : polled.creditDisplay };
         const terminal = ["completed", "failed"].includes(result.status ?? "");
         const updated = await updatePendingJob(job.id, (item) => {
           item.attempts = (item.attempts ?? 0) + 1;
           item.status = result.status ?? "processing";
           if (result.durationSeconds !== undefined) item.durationSeconds = result.durationSeconds;
           if (result.videoModelId) item.videoModelId = result.videoModelId;
+          if (result.actualCredits !== undefined) item.actualCredits = result.actualCredits;
           if (terminal) item.result = result;
           else item.nextPollAt = nextMediaPollAt(item, now);
         }, profileId);
@@ -1354,6 +1378,7 @@ function registerHandlers(): void {
       let attachmentIds: string[] = [];
       let usage: TokenUsage | undefined;
       const toolCalls: NonNullable<PublicMessage["toolCalls"]> = [];
+      let serverCodeResults: NonNullable<PublicMessage["serverCodeResults"]> = [];
       let claudeContinuation: Array<Record<string, unknown>> | undefined;
       let continuationUnsupportedReason: PublicMessage["continuationUnsupportedReason"];
       let terminalStatus = "completed";
@@ -1493,6 +1518,7 @@ function registerHandlers(): void {
             for await (const item of streamChatbot(chatbotTarget.chatbotId, messages, abort)) {
               if (item.type === "usage") { usage = item.usage; continue; }
               if (item.type === "credits") { chargedCredits = item.credits; send(item); continue; }
+              if (item.type === "server_code") continue;
               if (item.type === "files") { rawChatbotFiles.push(...item.files); continue; }
               if (item.type === "progress" || item.type === "status" || item.type === "tool_call" || item.type === "provider_state" || item.type === "web_search") continue;
               text += item.text; send({ type: "delta", text: item.text });
@@ -1592,6 +1618,7 @@ function registerHandlers(): void {
           if (item.type === "reasoning_summary") {
             reasoningSummary += item.text; send(item); continue;
           }
+          if (item.type === "server_code") { serverCodeResults = mergeServerCode(serverCodeResults, item.result); send(item); continue; }
           if (item.type === "tool_call") { toolCalls.push(item.call); send(item); continue; }
           if (item.type === "provider_state") { claudeContinuation = item.claudeContinuation; continue; }
           if (item.type === "status") {
@@ -1623,15 +1650,18 @@ function registerHandlers(): void {
           if (stored && webSearch) stored.webSearch = webSearch;
           if (stored && reasoningSummary) stored.reasoningSummary = reasoningSummary;
           if (stored && toolCalls.length) stored.toolCalls = toolCalls;
+          if (stored && serverCodeResults.length) stored.serverCodeResults = settleServerCode(serverCodeResults, "failed", "실행 완료 미확인 · 자동 이어 실행 없음");
           if (stored && claudeContinuation?.length && toolCalls.length) stored.claudeContinuation = claudeContinuation;
           if (stored && chargedCredits !== undefined) stored.credits = chargedCredits;
         });
         send({ type: "done", snapshot: updated, usage });
       } catch (error) {
+        serverCodeResults = settleServerCode(serverCodeResults, abort.signal.aborted ? "cancelled" : "failed",
+          abort.signal.aborted ? "사용자 또는 계정 전환으로 중단 · 서버 실행·과금 여부 미확인" : "응답 실패 · 실행 완료 미확인");
         if (
           savedUser &&
           threadId &&
-          (text || reasoningSummary || toolCalls.length || chatbotFiles.length || chargedCredits !== undefined || usage !== undefined || webSearch !== undefined || continuationUnsupportedReason)
+          (text || reasoningSummary || toolCalls.length || serverCodeResults.length || chatbotFiles.length || chargedCredits !== undefined || usage !== undefined || webSearch !== undefined || continuationUnsupportedReason)
         ) {
           await updateThread(threadId, (item) => {
             if (continueIndex >= 0 && item.messages[continueIndex]) item.messages[continueIndex].status = "resolved";
@@ -1642,6 +1672,7 @@ function registerHandlers(): void {
             if (stored && webSearch) stored.webSearch = webSearch;
             if (stored && reasoningSummary) stored.reasoningSummary = reasoningSummary;
             if (stored && toolCalls.length) stored.toolCalls = toolCalls;
+            if (stored && serverCodeResults.length) stored.serverCodeResults = serverCodeResults;
             if (stored && claudeContinuation?.length && toolCalls.length) stored.claudeContinuation = claudeContinuation;
             if (stored && chargedCredits !== undefined) stored.credits = chargedCredits;
             if (stored && chatbotFiles.length) stored.files = chatbotFiles;

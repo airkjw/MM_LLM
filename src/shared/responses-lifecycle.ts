@@ -1,3 +1,4 @@
+import { sanitizeServerCode, settleServerCode } from "./server-code.ts";
 import type { BackgroundResponse, ChatAdvancedSettings, ManualToolCall, PublicMessage, TokenUsage } from "./contracts";
 import { parseToolArguments, tokenUsage } from "./advanced-chat.ts";
 
@@ -184,6 +185,8 @@ export function reconcileTerminalBackground(
   message.usage = job.usage;
   message.modelId = job.modelId;
   message.reasoningSummary = job.reasoningSummary;
+  const code = sanitizeServerCode(job.serverCodeResults);
+  if (code) message.serverCodeResults = settleServerCode(code, job.status === "cancelled" ? "cancelled" : "failed", "실행 완료 미확인");
   if (job.toolCalls?.length) message.toolCalls = job.toolCalls;
   message.status = job.status === "completed" ? "complete" : "incomplete";
   message.reconciledBackgroundResponseId = job.id;

@@ -919,3 +919,10 @@ a:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
 .retrieval-settings .compare-consent { align-items: start; }
 .retrieval-progress { display: grid; gap: 5px; color: var(--color-text-secondary); }
 .retrieval-settings article p, .research-results p { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.media-quote { margin-top: 10px; padding: 10px; border: 1px solid var(--color-border); border-radius: 10px;
+  color: var(--color-text-secondary); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.media-quote > button { margin: 0 8px 8px 0; }
+.media-quote strong, .media-quote small { display: block; }
+.media-quote ul { padding-left: 18px; }
+.media-quote p { margin: 6px 0; }

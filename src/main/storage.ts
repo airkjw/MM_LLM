@@ -1,3 +1,4 @@
+import { sanitizeServerCode } from "../shared/server-code";
 import { app, safeStorage } from "electron";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, unlink } from "node:fs/promises";
@@ -368,7 +369,7 @@ function normalizeThread(raw: InternalThread): InternalThread {
         Buffer.byteLength(message.reasoningSummary, "utf8") <= 64 * 1024 ? message.reasoningSummary : undefined;
       const reconciledBackgroundResponseId = typeof message.reconciledBackgroundResponseId === "string" &&
         message.reconciledBackgroundResponseId.length <= 500 ? message.reconciledBackgroundResponseId : undefined;
-      return { ...message, text, apiContent, reasoningSummary, webSearch: sanitizeWebSearch(message.webSearch), reconciledBackgroundResponseId,
+      return { ...message, text, apiContent, reasoningSummary, serverCodeResults: sanitizeServerCode(message.serverCodeResults), webSearch: sanitizeWebSearch(message.webSearch), reconciledBackgroundResponseId,
         continuationUnsupportedReason: sanitizeUnsupportedContinuationReason(message.continuationUnsupportedReason),
         ...(attachmentContext.length ? { attachmentContext } : {}) };
     }) : []

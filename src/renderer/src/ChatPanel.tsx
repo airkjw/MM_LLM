@@ -1,3 +1,4 @@
+import { CODE_BILLING_NOTICE, CODE_ARTIFACT_NOTICE, serverCodeProvider, mergeServerCode } from "../../shared/server-code";
 import { ActionBarPrimitive, AssistantRuntimeProvider, ComposerPrimitive, MessagePrimitive, ThreadPrimitive, useAui, useExternalStoreRuntime, type ThreadMessageLike } from "@assistant-ui/react";
 import { ArrowRight, ArrowUp, CircleHelp, Copy, Download, FileText, Globe2, Image as ImageIcon, LoaderCircle, Paperclip, RefreshCw, Settings, ShieldCheck, Sparkles, Square, X } from "lucide-react";
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
@@ -101,12 +102,13 @@ function ManualToolCards({ messageId, calls, disabled, onSubmit }: {
 }
 
 function AssistantMessage({ incomplete, onContinue, disabled, usage, credits, backgroundResponseId, onCancelBackground,
-  messageId, toolCalls, files, reasoningSummary, onSubmitTool, modelId, createdAt, webSearch, continuationUnsupportedReason }: {
+  messageId, toolCalls, files, reasoningSummary, onSubmitTool, modelId, createdAt, webSearch, continuationUnsupportedReason, serverCodeResults }: {
   modelId?: string; createdAt?: string; webSearch?: WebSearchExecution;
   incomplete: boolean; onContinue: () => void; disabled: boolean; usage?: PublicMessage["usage"]; credits?: number;
   backgroundResponseId?: string; onCancelBackground: (id: string) => void;
   messageId: string; toolCalls?: PublicMessage["toolCalls"];
   files?: PublicMessage["files"];
+  serverCodeResults?: PublicMessage["serverCodeResults"];
   reasoningSummary?: string;
   continuationUnsupportedReason?: PublicMessage["continuationUnsupportedReason"];
   onSubmitTool: (messageId: string, results: Array<{ toolCallId: string; result: string }>) => void;
@@ -139,6 +141,18 @@ function AssistantMessage({ incomplete, onContinue, disabled, usage, credits, ba
         </details>}
       </div>}
       {sourceError && <div className="inline-error" role="alert">{sourceError}</div>}
+      {serverCodeResults?.length ? <div className="manual-tool-list" aria-label="서버 코드 실행 결과">
+        <small>긴 코드·출력은 일부만 표시·저장됩니다. 서버 출력은 신뢰하지 않는 자료입니다.</small>
+        {serverCodeResults.map((result) => <section className="manual-tool-card" key={result.id}>
+          <strong>{result.provider === "claude" ? "Claude" : "OpenAI"} 서버 코드 실행 · {{ executing: "실행 중", completed: "완료", failed: "실패", cancelled: "중단" }[result.status]}</strong>
+          <p role="status">{result.summary}</p>
+          {result.code && <details><summary>서버 실행 코드</summary><pre>{result.code}</pre></details>}
+          {result.stdout !== undefined && <details><summary>표준 출력</summary><pre>{result.stdout || "(빈 출력)"}</pre></details>}
+          {result.outputLogs !== undefined && <details><summary>도구 로그 · 표준 출력·오류 구분 미제공</summary><pre>{result.outputLogs || "(빈 로그)"}</pre></details>}
+          {result.stderr !== undefined && <details><summary>표준 오류</summary><pre>{result.stderr || "(빈 오류 출력)"}</pre></details>}
+          {result.artifacts.length > 0 && <><ul>{result.artifacts.map((a, i) => <li key={i}>{a.kind} · {a.name ?? a.id ?? "이름 미확인"}</li>)}</ul><small>{CODE_ARTIFACT_NOTICE}</small></>}
+        </section>)}
+      </div> : null}
       {reasoningSummary && <details className="reasoning-summary">
         <summary>추론 요약</summary><p>{reasoningSummary}</p>
       </details>}
@@ -350,6 +364,14 @@ export function ChatPanel({
           setMessages((previous) => previous.map((item) =>
             item.id === assistantId ? { ...item, text: item.text + event.text } : item
           ));
+        } else if (event.type === "server_code") {
+          if (!current) return;
+          setMessages((previous) => previous.map((item) => item.id === assistantId
+            ? { ...item, serverCodeResults: mergeServerCode(item.serverCodeResults, event.result) } : item));
+        } else if (event.type === "tool_call") {
+          if (!current) return;
+          setMessages((previous) => previous.map((item) => item.id === assistantId
+            ? { ...item, toolCalls: [...(item.toolCalls ?? []), event.call] } : item));
         } else if (event.type === "web_search") {
           if (!current) return;
           setMessages((previous) => previous.map((item) => item.id === assistantId ? { ...item, webSearch: event.search } : item));
@@ -633,7 +655,7 @@ export function ChatPanel({
                 messageId={stored?.id ?? message.id} modelId={stored?.modelId} createdAt={stored?.createdAt}
                 toolCalls={stored?.toolCalls}
                 files={stored?.files}
-                reasoningSummary={stored?.reasoningSummary}
+                reasoningSummary={stored?.reasoningSummary} serverCodeResults={stored?.serverCodeResults}
                 onSubmitTool={(messageId, results) => void run("수동 도구 결과를 제출합니다.", false, undefined, undefined, {
                   assistantMessageId: messageId, results
                 }).catch((error) => setError(errorText(error)))}
@@ -869,6 +891,16 @@ export function ChatPanel({
               placeholder={'{"type":"object","properties":{},"required":[],"additionalProperties":false}'} />
             <small>루트 object · 모든 object의 additionalProperties false · 최대 64KB</small>
           </label>}
+          <fieldset className="advanced-section"><legend>서버 코드 실행</legend>
+            <label><input type="checkbox" aria-label="서버 코드 실행 사용" checked={Boolean(advancedDraft.serverCode)}
+              disabled={!selectedModel || !serverCodeProvider(selectedModel) && !advancedDraft.serverCode}
+              onChange={(event) => setAdvancedDraft((value) => ({ ...value, serverCode: event.target.checked }))} />서버 코드 실행 사용 · 기본 꺼짐</label>
+            <small>{CODE_BILLING_NOTICE}</small>
+            <small>{selectedModel && serverCodeProvider(selectedModel) ? "공식 지원 모델 · 현재 계정 목록에 있음. 도구별 권한은 서버가 최종 확인합니다." : "선택한 모델의 코드 실행 지원 미확인 · 사용 불가"}</small>
+            {claudeNative && <small>코드 실행과 수동 함수 도구를 함께 사용하려면 Claude 사고 모드를 꺼 주세요.</small>}
+            <small>코드·첨부 자료도 제공사로 전송됩니다. 기존 첨부 전송 확인이 필요합니다.</small>
+            <small>{CODE_ARTIFACT_NOTICE}</small>
+          </fieldset>
           <label className="settings-field">수동 function 도구 정의 JSON
             <textarea value={toolsDraft} onChange={(event) => setToolsDraft(event.target.value)}
               placeholder={'[{"name":"lookup_metric","description":"...","parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false}}]'} />

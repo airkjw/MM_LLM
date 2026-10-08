@@ -1,7 +1,8 @@
+import { estimateFingerprint, normalizeEstimateRequest, parseMediaQuote, QUOTE_LABELS, QUOTE_NOTICE } from "../../shared/media-estimate";
 import { CircleHelp, Copy, Download, Image as ImageIcon, LoaderCircle, MessageCircle, Mic2, Music2, Paperclip, Plus, Sparkles, Video, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AudioRequest, GatewayModel, MediaResult, PendingMediaJob, PickedAttachment } from "../../shared/contracts";
-import { audioLaneForModel, imageCapability, imageEstimate, musicCapability, musicEstimate, sttEstimate, supportsMultiSpeakerTts, TTS_VOICES, videoCapability, videoEstimate } from "../../shared/media-capabilities";
+import type { AudioRequest, GatewayModel, MediaEstimateRequest, MediaQuote, MediaResult, PendingMediaJob, PickedAttachment } from "../../shared/contracts";
+import { audioLaneForModel, imageCapability, musicCapability, sttEstimate, supportsMultiSpeakerTts, TTS_VOICES, videoCapability } from "../../shared/media-capabilities";
 import { formatTranscriptTimestamp, transcriptForChat } from "../../shared/meeting-transcript";
 import { LatestRequestGate } from "../../shared/request-generation";
 import { useConfirm } from "./components/ConfirmDialog";
@@ -46,6 +47,12 @@ export function MediaPanel({
   const [deidentified, setDeidentified] = useState(false);
   const [dropActive, setDropActive] = useState(false);
   const [busy, setBusy] = useState(false);
+  const generationBusyRef = useRef(false);
+  const [quote, setQuote] = useState<MediaQuote | null>(null);
+  const [quoteError, setQuoteError] = useState("");
+  const [quoting, setQuoting] = useState(false);
+  const quoteIdRef = useRef<string | null>(null);
+  const quoteBusyRef = useRef(false);
   const { notice, setError, setInfo, clear: clearNotice } = useNotice();
   const [result, setResult] = useState<MediaResult | null>(null);
   const [jobs, setJobs] = useState<PendingMediaJob[]>([]);
@@ -79,6 +86,54 @@ export function MediaPanel({
   const musicCaps = screen === "audio" && audioLane === "music" ? musicCapability(modelId) : undefined;
   const inputImageMax = screen === "image" ? imageCaps?.inputImageMax ?? 0 : screen === "video"
     ? videoCaps?.inputImageMax ?? 1 : 0;
+
+  const quoteKind = screen === "image" ? "image" : screen === "video" ? "video" : audioLane === "music" ? "music" : undefined;
+  function currentQuoteRequest(): MediaEstimateRequest {
+    return normalizeEstimateRequest(quoteKind === "image" ? {
+      kind: "image", modelId, aspectRatio: ratio || undefined, numberOfImages: imageCount,
+      quality: quality || undefined, imageSize: mediaSize || undefined, background: background || undefined
+    } : quoteKind === "video" ? {
+      kind: "video", modelId, aspectRatio: ratio || undefined, durationSeconds, resolution: mediaSize || undefined,
+      mode: videoMode || undefined, loop: videoCaps?.loop ? loopVideo : undefined,
+      audio: videoCaps?.audio || videoCaps?.generateAudio ? videoAudio : undefined
+    } : { kind: "music", modelId, durationSeconds, instrumental: instrumental || undefined });
+  }
+  let optionFingerprint = "";
+  try { if (quoteKind && modelId) optionFingerprint = estimateFingerprint(currentQuoteRequest()); } catch { /* Explicit action displays validation. */ }
+  // Edits invalidate even when the quote does not need private text/reference data.
+  const quoteContext = JSON.stringify([workspaceEpochRef.current, quoteKind, optionFingerprint, modelId, ratio, imageCount,
+    quality, background, mediaSize, durationSeconds, videoMode, loopVideo, videoAudio, instrumental, prompt, lyrics, picked.map(p => p.id)]);
+  const quoteContextRef = useRef(quoteContext); quoteContextRef.current = quoteContext;
+  const acceptedContextRef = useRef("");
+  const displayedQuote = quote && quote.fingerprint === optionFingerprint && acceptedContextRef.current === quoteContext ? quote : null;
+  function cancelQuote() {
+    const id = quoteIdRef.current; quoteIdRef.current = null; quoteBusyRef.current = false;
+    if (id) void window.mmllm.cancelMediaEstimate(id).catch(() => undefined);
+    setQuote(null); setQuoting(false); setQuoteError("");
+  }
+  useEffect(() => { cancelQuote(); }, [quoteContext]);
+  useEffect(() => () => { const id = quoteIdRef.current; quoteIdRef.current = null;
+    if (id) void window.mmllm.cancelMediaEstimate(id).catch(() => undefined); }, []);
+  async function checkCost() {
+    if (quoteBusyRef.current || generationBusyRef.current || !quoteKind || !modelId) return;
+    quoteBusyRef.current = true;
+    const id = crypto.randomUUID(); quoteIdRef.current = id;
+    const context = quoteContextRef.current; const epoch = workspaceEpochRef.current;
+    setQuoting(true); setQuote(null); setQuoteError("");
+    try {
+      const request = currentQuoteRequest();
+      const next = await window.mmllm.estimateMedia(id, request);
+      if (quoteIdRef.current !== id || quoteContextRef.current !== context || workspaceEpochRef.current !== epoch) return;
+      if (next.fingerprint !== estimateFingerprint(request) || next.modelId !== modelId || next.kind !== quoteKind) throw new Error("현재 생성 옵션과 견적이 일치하지 않습니다.");
+      const validated = parseMediaQuote({ ...next, object: "estimate", model: next.modelId }, request, next.quotedAt);
+      if (!Number.isFinite(Date.parse(next.quotedAt))) throw new Error("견적 시각이 올바르지 않습니다.");
+      acceptedContextRef.current = context; setQuote(validated);
+    } catch (error) {
+      if (quoteIdRef.current === id && quoteContextRef.current === context && workspaceEpochRef.current === epoch) setQuoteError(errorText(error));
+    } finally {
+      if (quoteIdRef.current === id) { quoteIdRef.current = null; quoteBusyRef.current = false; setQuoting(false); }
+    }
+  }
 
   useEffect(() => {
     if (!available.some((model) => model.id === modelId)) setModelId(available[0]?.id ?? "");
@@ -149,6 +204,7 @@ export function MediaPanel({
         sourceAudioUrl: job.sourceAudioUrl, actualCredits: job.actualCredits,
         durationSeconds: job.durationSeconds, billedDurationSeconds: job.billedDurationSeconds,
         videoModelId: job.videoModelId,
+        creditDisplay: job.actualCredits !== undefined ? `실제 ${job.kind === "stt" ? "" : "생성 "}차감 ${job.actualCredits} 크레딧${job.kind === "stt" ? "" : " · content_filter는 별도 차감입니다."}` : undefined,
         status: job.status, createdAt: job.createdAt, elapsedMs: Date.now() - Date.parse(job.createdAt) });
     setVisibleSegments(250);
   }
@@ -225,30 +281,28 @@ export function MediaPanel({
   };
 
   async function submit() {
-    if (busy) return;
+    if (generationBusyRef.current || quoteBusyRef.current) return;
     if (!deidentified) { setError("환자 식별정보를 제거했는지 확인해 주세요."); return; }
     if (!modelId) { setError("사용 가능한 모델이 없습니다."); return; }
+    generationBusyRef.current = true;
     const generation = submitGateRef.current.begin();
     const workspaceEpoch = workspaceEpochRef.current;
     const submitted = [...picked];
     setBusy(true); setError(""); setResult(null);
     try {
       let next: MediaResult;
+      const normalizedQuote = quoteKind ? currentQuoteRequest() : undefined;
+      const { kind: _quoteKind, ...quoteOptions } = normalizedQuote ?? { kind: undefined };
       if (screen === "image") {
         next = await window.mmllm.generateImage({
-          modelId, prompt, aspectRatio: ratio || undefined, numberOfImages: imageCount,
-          quality: quality || undefined, imageSize: mediaSize || undefined,
-          background: background || undefined, imageAttachmentIds: submitted.map((item) => item.id),
-          deidentifiedConfirmed: true
+          modelId, prompt, imageAttachmentIds: submitted.map((item) => item.id),
+          ...quoteOptions, deidentifiedConfirmed: true
         });
       } else if (screen === "video") {
         next = await window.mmllm.generateVideo({
-          modelId, prompt, aspectRatio: ratio || undefined, durationSeconds,
-          resolution: mediaSize || undefined, mode: videoMode || undefined,
-          loop: videoCaps?.loop ? loopVideo : undefined,
-          audio: videoCaps?.audio || videoCaps?.generateAudio ? videoAudio : undefined,
+          modelId, prompt,
           imageAttachmentIds: submitted.map((item) => item.id),
-          deidentifiedConfirmed: true
+          ...quoteOptions, deidentifiedConfirmed: true
         });
       } else {
         const request: AudioRequest = audioLane === "tts"
@@ -257,7 +311,7 @@ export function MediaPanel({
               deidentifiedConfirmed: true }
           : audioLane === "music"
             ? { lane: "music", modelId, prompt, lyrics: lyrics.trim() || undefined,
-                durationSeconds, instrumental: instrumental || undefined, deidentifiedConfirmed: true }
+                ...quoteOptions, deidentifiedConfirmed: true }
             : { lane: "stt", modelId, attachmentId: submitted[0]?.id ?? "",
                 languageHints: languageHints.split(",").map((item) => item.trim()).filter(Boolean),
                 enableSpeakerDiarization: diarization, deidentifiedConfirmed: true };
@@ -284,6 +338,7 @@ export function MediaPanel({
     finally {
       if (submitted.length) await window.mmllm.discardAttachments(submitted.map((item) => item.id)).catch(() => undefined);
       setPicked((items) => items.filter((item) => !submitted.some((sent) => sent.id === item.id)));
+      generationBusyRef.current = false;
       if (submitGateRef.current.isLatest(generation) && workspaceEpoch === workspaceEpochRef.current) setBusy(false);
     }
   }
@@ -359,9 +414,7 @@ export function MediaPanel({
   const icon = screen === "image" ? <ImageIcon size={23} /> :
     screen === "audio" ? <Mic2 size={23} /> : <Video size={23} />;
   const canRun = screen === "audio" && audioLane === "stt" ? picked.length > 0 : prompt.trim().length > 0;
-  const costNote = screen === "image" ? imageEstimate(modelId, imageCount) :
-    screen === "video" ? videoEstimate(modelId) : audioLane === "stt" ? sttEstimate(audioDuration) :
-      audioLane === "music" ? musicEstimate(modelId, durationSeconds) :
+  const costNote = quoteKind ? QUOTE_NOTICE : audioLane === "stt" ? sttEstimate(audioDuration) :
         "TTS 비용은 실제 입력·출력 토큰으로 확정됩니다.";
 
   function seekTranscript(milliseconds: number) {
@@ -521,10 +574,21 @@ export function MediaPanel({
           </div>}
           <div className="media-confirm"><DeidCheck checked={deidentified} onChange={setDeidentified} /></div>
           <div className="media-cost-note">{costNote}</div>
+          {quoteKind && <div className="media-quote" aria-label="공식 생성 견적">
+            <button type="button" className="secondary-button" disabled={busy || quoting || !modelId} onClick={() => void checkCost()}>{quoting ? "비용 확인 중…" : "비용 확인"}</button>
+            {(quoting || displayedQuote) && <button type="button" className="secondary-button" onClick={cancelQuote}>비용 확인 취소</button>}
+            {quoteError && <p className="inline-error" role="alert">견적 불가: {quoteError}</p>}
+            {displayedQuote && <div role="status">
+              <strong>{QUOTE_LABELS[displayedQuote.bound]} 견적 {displayedQuote.credits.toLocaleString("ko-KR")} 크레딧</strong>
+              <small>{displayedQuote.modelId} · <time dateTime={displayedQuote.quotedAt}>{new Date(displayedQuote.quotedAt).toLocaleString("ko-KR")}</time></small>
+              <ul>{displayedQuote.lines.map((line, i) => <li key={i}>{line.item === "content_filter" ? "프롬프트 검사 · 별도 차감" : "생성"} · {QUOTE_LABELS[line.bound]} {line.credits.toLocaleString("ko-KR")} 크레딧 · {({ fixed: "건당", price_schema: "옵션별", per_second: "초당", per_generation: "생성당", per_request: "요청당", actual_cost: "제공사 원가", fixed_fallback: "고정 단가" } as Record<string, string>)[line.basis] ?? "단가 방식 미확인"}{line.note && <p>{line.note}</p>}</li>)}</ul>
+              {displayedQuote.note && <p>{displayedQuote.note}</p>}
+            </div>}
+          </div>}
           <button className="primary-button media-submit" type="button"
-            disabled={busy || !canRun || !deidentified || !modelId} onClick={submit}>
+            disabled={busy || quoting || !canRun || !deidentified || !modelId} onClick={() => void submit()}>
             {busy ? <><LoaderCircle size={17} className="spin" />작업 중...</> :
-              <><Sparkles size={17} />{screen === "audio" && audioLane === "stt" ? "받아쓰기 시작" : "생성하기"}</>}
+              <><Sparkles size={17} />{screen === "audio" && audioLane === "stt" ? "받아쓰기 시작" : quoteKind && !displayedQuote ? "견적 없이 생성" : "생성하기"}</>}
           </button>
           {pollNotice && <p className="notice-info" role="status">{pollNotice}</p>}
           <Notice notice={notice} onClose={clearNotice} />

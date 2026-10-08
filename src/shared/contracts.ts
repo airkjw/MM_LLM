@@ -62,7 +62,14 @@ export type ResponsesSettings = {
   reasoningSummary?: "auto" | "none";
 };
 
+export type ServerCodeResult = {
+  id: string; provider: "claude" | "responses"; status: "executing" | "completed" | "failed" | "cancelled";
+  code: string; stdout?: string; stderr?: string; outputLogs?: string; summary: string;
+  artifacts: Array<{ kind: "file" | "image"; id?: string; name?: string }>;
+};
+
 export type ChatAdvancedSettings = {
+  serverCode?: boolean;
   temperature?: number;
   maxOutputTokens?: number;
   topP?: number;
@@ -120,6 +127,7 @@ export type PublicMessage = {
   /** Provider-generated, user-visible reasoning summary. Raw hidden reasoning is never stored here. */
   reasoningSummary?: string;
   toolCalls?: ManualToolCall[];
+  serverCodeResults?: ServerCodeResult[];
   credits?: number;
   files?: Array<{ id: string; name: string; mediaUrl: string; expiresAt: string }>;
   backgroundResponseId?: string;
@@ -193,6 +201,7 @@ export type ChatRequest = {
 };
 
 export type ChatEvent =
+  | { type: "server_code"; result: ServerCodeResult }
   | { type: "web_search"; search: WebSearchExecution }
   | { type: "delta"; text: string }
   | { type: "reasoning_summary"; text: string }
@@ -219,6 +228,7 @@ export type BackgroundResponse = {
   reasoningSummary?: string;
   error?: string;
   toolCalls?: ManualToolCall[];
+  serverCodeResults?: ServerCodeResult[];
 };
 
 export type ProjectDocument = {
@@ -323,6 +333,17 @@ export type AudioRequest =
       enableSpeakerDiarization?: boolean; deidentifiedConfirmed: boolean }
   | { lane: "music"; modelId: string; prompt: string; lyrics?: string;
       durationSeconds?: number; instrumental?: boolean; deidentifiedConfirmed: boolean };
+
+export type QuoteBound = "exact" | "minimum" | "maximum" | "approximate";
+export type MediaEstimateRequest =
+  | ({ kind: "image" } & Pick<ImageRequest, "modelId" | "numberOfImages" | "aspectRatio" | "quality" | "imageSize" | "background">)
+  | ({ kind: "video" } & Pick<VideoRequest, "modelId" | "aspectRatio" | "durationSeconds" | "resolution" | "mode" | "loop" | "audio">)
+  | { kind: "music"; modelId: string; durationSeconds?: number; instrumental?: boolean };
+export type MediaQuote = {
+  kind: "image" | "video" | "music"; modelId: string; credits: number; bound: QuoteBound; exact: boolean;
+  lines: Array<{ item: "image" | "video" | "music" | "content_filter"; credits: number; bound: QuoteBound; exact: boolean; basis: string; note?: string }>;
+  note?: string; fingerprint: string; quotedAt: string;
+};
 
 export type TranscriptSegment = {
   speaker: string;
@@ -447,6 +468,8 @@ export type DesktopApi = {
   getChatbotUsage(bookmarkId: string): Promise<ChatbotUsageReport>;
   acknowledgeAttachmentPrivacy(threadId: string): Promise<ThreadSnapshot>;
   streamChat(request: ChatRequest, onEvent: (event: ChatEvent) => void): () => void;
+  estimateMedia(requestId: string, request: MediaEstimateRequest): Promise<MediaQuote>;
+  cancelMediaEstimate(requestId: string): Promise<void>;
   generateImage(request: ImageRequest): Promise<MediaResult>;
   generateVideo(request: VideoRequest): Promise<MediaResult>;
   runAudio(request: AudioRequest): Promise<MediaResult>;
