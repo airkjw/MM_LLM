@@ -3,7 +3,7 @@
 ## 상태·범위·소유권
 
 - 계획 기준: `418cb41e5651cc6bfb2ac17737d6c651732913fa`, 1단계 구현 기준: `609c05e9aa4d7aeb154f480521bd5edac4a76f14`, 앱 `v0.5.1`, Orca worktree `chatkhu-api-expansion-20261008`.
-- 사용자가 승인한 순서: **① 네이티브 웹 검색·모델 분류 → ② 논문·법령 검색·문서 검색 → ③ 제공사 코드 실행·공식 미디어 견적 → ④ 실시간 음성**. 1단계 구현·세 지적 보정·로컬 mock gate와 별도 Sol 독립 재검토(PASS)를 완료했고 실행 책임자가 코드를 수락했다. 실계정 확인·main 통합·push·배포는 미실시다. 2단계의 네 보정과 추가 composer 경합 보정은 별도 독립 검토에서 모두 PASS로 확인됐고 실행 책임자가 코드를 수락했다([구현 기록](chatkhu-phase2-implementation-2026-10-08.md)). 최신 전체 gate는 Node 256개·DOM 72개, 독립 집중 재검토는 13개가 통과했다. 3단계 코드 실행·공식 미디어 견적을 다음 단일 구현 Task로 배정하며 4단계는 미착수다.
+- 사용자가 승인한 순서: **① 네이티브 웹 검색·모델 분류 → ② 논문·법령 검색·문서 검색 → ③ 제공사 코드 실행·공식 미디어 견적 → ④ 실시간 음성**. 1단계 구현·세 지적 보정·로컬 mock gate와 별도 Sol 독립 재검토(PASS)를 완료했고 실행 책임자가 코드를 수락했다. 실계정 확인·main 통합·push·배포는 미실시다. 2단계의 네 보정과 추가 composer 경합 보정은 별도 독립 검토에서 모두 PASS로 확인됐고 실행 책임자가 코드를 수락했다([구현 기록](chatkhu-phase2-implementation-2026-10-08.md)). 최신 전체 gate는 Node 256개·DOM 72개, 독립 집중 재검토는 13개가 통과했다. 3단계 코드 실행·공식 미디어 견적 구현과 최종 Linux mock gate(Node 277개·DOM 80개)를 완료해 별도 독립 검토에 인계한다([구현 기록](chatkhu-phase3-implementation-2026-10-08.md)). 3단계 코드 수락과 4단계 착수는 독립 검토 결과 이후다.
 - 설계 자문은 Astra, 단계별 구현·보정은 Sol 1명, 독립 검토는 별도 Sol 1명, 계획 보정·통합·사용자 보고는 실행 책임자가 소유한다. [Orca 실행 규칙](orca-execution-policy.md)에 따라 실제 Task/Dispatch를 사용하며 이전 단계 수락 후 다음 단계를 배정한다.
 - 계획 Task의 수정 범위는 이 문서였으며, 수락된 후속 Task에서는 Sol 1명이 1단계 제품 소스·관련 테스트·진행 기록을 소유했다. 기존 구현 worker의 settle/release 뒤 단일 보정 Sol `ctx_e50790142144`가 같은 범위를 직렬 인계받았고 통합은 실행 책임자가 소유한다. 의존성·버전 변경, 유료 호출, push·릴리즈는 포함하지 않는다.
 - Guard, Decisions 실행, usage/revoke 신규 화면, Super Agent, 제공사 fileSearchStores 연동은 범위 밖이다. `decisions` 모델 분류만 보존한다. [모델 문서](https://docs.mindlogic.ai/docs/khu/api-gateway/getting-started/models/)는 Super Agent를 API 미지원으로 명시한다.
@@ -82,6 +82,8 @@
 **파일 소유권:** 구현자 1명이 `advanced-chat.ts`, `provider-adapters.ts`, `contracts.ts`, `request-validation.ts`, `src/main/{gateway,index,media-jobs}.ts`, 신규 estimate adapter, preload, `ChatPanel.tsx`, `MediaPanel.tsx`, `media-capabilities.ts`, `media-response-metadata.ts`와 관련 테스트를 소유한다.
 
 **완료 gate:** 2사 코드 도구의 실제 payload/header·진행/성공/실패/중단/수동 도구 혼합 fixture 및 UI 실행 상태 검증, 최소 비용 안내·꺼짐 기본값을 확인한다. 견적 4종 bound·비가격 모델·권한 오류·stale response·옵션 변경·취소·계정 교체·타이핑 시 0회·생성 버튼 연타 1회 요청을 실제 MediaPanel과 transport에서 검증한다. `phase3-media`, `phase4-gateway`, `media-jobs`, `media-security`, `gateway-transport` 회귀를 유지한다.
+
+**2026-10-08 구현 인계:** 단일 구현 `task_a6948ed6fec5` / `ctx_2a45f44422f0`가 기준 `06140d7a72c0a2ff8340413ffe03a132215d6046`에서 제품 `1e5471c`, literal type 보정 `81636b55b3a081dbbfab690491648470067fef1b`, 문서 `3afda009797354826fa8aaaaf79e2c542e4a0315`로 인계했다. 357개 테스트·typecheck·UI audit·Linux build가 통과했고 전체 raw 로그와 최초 typecheck 실패를 ignored `.orca/phase3/`에 보존했다. 별도 독립 검토·실행 책임자 수락은 대기이며 실계정·OS 설치·CI·main 통합·push·배포는 미실시다. Gateway 출력 include passthrough·산출물 다운로드·Claude 코드+수동 함수의 서명된 사고 replay 제한은 [기록](chatkhu-phase3-implementation-2026-10-08.md)에 명시했다.
 
 ## 4단계 — 실시간 음성 대화와 받아쓰기
 
