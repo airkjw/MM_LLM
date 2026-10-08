@@ -3,7 +3,7 @@
 ## 상태·범위·소유권
 
 - 계획 기준: `418cb41e5651cc6bfb2ac17737d6c651732913fa`, 1단계 구현 기준: `609c05e9aa4d7aeb154f480521bd5edac4a76f14`, 앱 `v0.5.1`, Orca worktree `chatkhu-api-expansion-20261008`.
-- 사용자가 승인한 순서: **① 네이티브 웹 검색·모델 분류 → ② 논문·법령 검색·문서 검색 → ③ 제공사 코드 실행·공식 미디어 견적 → ④ 실시간 음성**. 1단계 구현·세 지적 보정·로컬 mock gate와 별도 Sol 독립 재검토(PASS)를 완료했고 실행 책임자가 코드를 수락했다. 실계정 확인·main 통합·push·배포는 미실시다. 2단계의 네 보정과 추가 composer 경합 보정은 별도 독립 검토에서 모두 PASS로 확인됐고 실행 책임자가 코드를 수락했다([구현 기록](chatkhu-phase2-implementation-2026-10-08.md)). 수락된 2단계 gate는 Node 256개·DOM 72개, 독립 집중 재검토는 13개가 통과했다. 3단계 최초 구현 gate(Node 277개·DOM 80개) 뒤 독립 검토의 P1 redirect·P2 견적 확실성 지적을 보정했다. 제품 `b8361d6bc2dd04073a3413c768f610ecba8a47ba`의 네 gate와 Node 298개·DOM 82개가 통과했으며 **좁은 별도 독립 재검토·코드 수락 대기**다([구현 기록](chatkhu-phase3-implementation-2026-10-08.md)). 4단계는 3단계 독립 acceptance와 실행 책임자 수락 이후다.
+- 사용자가 승인한 순서: **① 네이티브 웹 검색·모델 분류 → ② 논문·법령 검색·문서 검색 → ③ 제공사 코드 실행·공식 미디어 견적 → ④ 실시간 음성**. 1단계 구현·세 지적 보정·로컬 mock gate와 별도 Sol 독립 재검토(PASS)를 완료했고 실행 책임자가 코드를 수락했다. 실계정 확인·main 통합·push·배포는 미실시다. 2단계의 네 보정과 추가 composer 경합 보정은 별도 독립 검토에서 모두 PASS로 확인됐고 실행 책임자가 코드를 수락했다([구현 기록](chatkhu-phase2-implementation-2026-10-08.md)). 수락된 2단계 gate는 Node 256개·DOM 72개, 독립 집중 재검토는 13개가 통과했다. 3단계 최초 구현 gate(Node 277개·DOM 80개) 뒤 독립 검토의 P1 redirect·P2 견적 확실성 지적을 보정했다. 제품 `b8361d6bc2dd04073a3413c768f610ecba8a47ba`의 네 gate와 Node 298개·DOM 82개가 통과했고, 별도 좁은 독립 acceptance 85/85 PASS를 확인해 실행 책임자가 3단계 코드를 수락했다([구현 기록](chatkhu-phase3-implementation-2026-10-08.md)). 4단계는 수락된 3단계 기준에서 순차 구현·별도 독립 검토한다.
 - 설계 자문은 Astra, 단계별 구현·보정은 Sol 1명, 독립 검토는 별도 Sol 1명, 계획 보정·통합·사용자 보고는 실행 책임자가 소유한다. [Orca 실행 규칙](orca-execution-policy.md)에 따라 실제 Task/Dispatch를 사용하며 이전 단계 수락 후 다음 단계를 배정한다.
 - 계획 Task의 수정 범위는 이 문서였으며, 수락된 후속 Task에서는 Sol 1명이 1단계 제품 소스·관련 테스트·진행 기록을 소유했다. 기존 구현 worker의 settle/release 뒤 단일 보정 Sol `ctx_e50790142144`가 같은 범위를 직렬 인계받았고 통합은 실행 책임자가 소유한다. 의존성·버전 변경, 유료 호출, push·릴리즈는 포함하지 않는다.
 - Guard, Decisions 실행, usage/revoke 신규 화면, Super Agent, 제공사 fileSearchStores 연동은 범위 밖이다. `decisions` 모델 분류만 보존한다. [모델 문서](https://docs.mindlogic.ai/docs/khu/api-gateway/getting-started/models/)는 Super Agent를 API 미지원으로 명시한다.
@@ -128,7 +128,9 @@
 | 계획 | 문서 작성·공개 문서/소스 대조 완료, 제품 검사 미실행 | 실행 책임자: 계획 수락·필요 보정, 1단계 배정 |
 | 1단계 | 구현·보정·로컬 gate 완료 / 독립 재검토 PASS·코드 수락 / 미실시 | 실행 책임자: 작업 브랜치 보존, 2단계 순차 배정 |
 | 2단계 | 네 보정·composer 경합 보정·로컬 gate 완료 / 독립 acceptance 13/13 PASS·코드 수락 (`06140d7`) / 미실시 | 실행 책임자: 수락된 기준 보존 |
-| 3단계 | 구현·P1/P2 보정·로컬 gate 완료 / CHANGES_REQUIRED의 보정 결과에 대한 좁은 독립 acceptance·수락 대기 / 미실시 | 실행 책임자: 별도 읽기 전용 Sol 재검토 배정·수락 판단 |
+| 3단계 | 구현·P1/P2 보정·로컬 gate 380/380 완료 / 독립 acceptance 85/85 PASS·코드 수락 / 미실시 | 실행 책임자: 수락된 기준 보존, 4단계 순차 배정 |
 | 4단계 | 미착수 / 미실시 / 미실시 | 3단계 수락 후 배정 |
 
 **1단계 최종 수락:** 보정 commit `7ab363caeea25ed6a0273afa46105720388b4ca3`을 별도 Sol이 독립 재검토해 PASS로 판정했다. 실행 책임자는 세 지적 해소, 최종 Node 233개·DOM 48개 및 typecheck·UI audit·Linux build 통과 근거를 확인해 작업 브랜치의 코드를 수락했다. 상세 내용과 실계정·OS·CI 미검증 범위는 [구현 기록](chatkhu-phase1-implementation-2026-10-08.md)에 남긴다.
+
+**3단계 최종 수락:** 별도 Sol `task_1432f33a29c1` / `ctx_1ff24a26e5c2`가 보정 제품 `b8361d6`과 docs HEAD `e61a63c`를 좁게 검토해 PASS로 판정했다. 원본 재현 3개·인접 4개·등록 회귀 78개, 총 85개가 모두 통과했고, 네 gate의 원본 로그·158개 명령별 소스 manifest와 현재/제품 Git blob 일치를 확인했다. 실행 책임자는 인증·과금 POST 리다이렉트와 견적 확실성 두 지적이 해소됐음을 확인해 코드를 수락했다. [수락 기록](chatkhu-phase3-implementation-2026-10-08.md#독립-acceptance-pass와-코드-수락)에 근거·실계정/OS/CI 미검증을 남긴다.

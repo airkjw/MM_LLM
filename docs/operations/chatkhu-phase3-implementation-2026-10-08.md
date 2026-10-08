@@ -108,3 +108,11 @@ Linux x86_64, Node `v24.21.0`, npm `11.19.0`에서 합성 temp userData·합성 
 최종 네 gate는 제품 commit 고정 뒤 각각 한 번 실행했다. `.orca/phase3-correction/gates/b8361d6bc2dd04073a3413c768f610ecba8a47ba/{typecheck,test,ui-audit,build,diff-check}/` 각각에 `stdout.log`, `stderr.log`, `receipt.json`, `source-before.json`, `source-after.json`이 있다. 각 receipt는 정확한 argv·cwd·시각·exit·HEAD·OS/Node/npm·환경 설정 및 log/manifest bytes·SHA-256을 담는다. 전체 환경 변수 이름은 보존하되 credential 가능성이 있는 값은 redacted로 기록한다. 158개 제품 입력 파일의 전후 hash가 같고 제품 Git blob과 모두 일치하며 로그 hash도 확인했다. 최종 인덱스는 `.orca/phase3-correction/receipt.json`, 검증 결과는 `verification.json`, 보정 인계 보고는 `report.txt`다. 앞 단계와 초기 보정 실패 receipt는 덮어쓰지 않았다.
 
 보정 완료이며 독립 acceptance는 아직 없다. 실행 책임자가 별도 좁은 재검토의 소유자이며 원본 P1/P2·인접 회귀와 위 exact commit 증거를 확인해 수락한다. 실계정 permission·실제 과금·OS keychain/시각적 수동 검사·CI·macOS 서명/공증·Windows 설치는 미검증이며 기존 include passthrough·산출물 다운로드·서명된 사고 replay 제한은 그대로다. Phase 4는 미착수다.
+
+## 독립 acceptance PASS와 코드 수락
+
+별도 읽기 전용 Sol `task_1432f33a29c1` / `ctx_1ff24a26e5c2`가 제품 `b8361d6bc2dd04073a3413c768f610ecba8a47ba` 및 문서 HEAD `e61a63ceff731dd37765cb78edebfa833672f9d0`를 검토해 **PASS**로 판정했다. 원본 재현 3개와 인접 4개, 등록 집중 회귀 78개를 합쳐 Node 72개·실제 DOM 13개, 총 **85/85**가 통과했다. 리다이렉트 대상 요청·인증 헤더·본문 0회, 원래 유료 POST 1회, caller 우회 불가, 모순된 견적의 unavailable 처리와 정상 네 bound·명시적 견적 없이 생성 동작을 확인했다. 기존 안전한 GET/HEAD 재시도·취소·도구 전용 완료/실패도 통과했다.
+
+최종 네 gate는 반복 실행하지 않고 전체 원본 로그·exit·명령별 전후 manifest를 대조했다. Node 298개·DOM 82개 및 typecheck·UI audit·Linux build가 통과했고, 158개 제품 파일의 현재/테스트 제품/docs HEAD hash가 일치한다. 원본 독립 보고와 재현 fixture는 변경하지 않았다. ignored `.orca/phase3-acceptance/report.txt`, `verification.json`, `artifacts.json`과 7개 집중 명령별 원문 receipt에 근거가 있다. 실행 책임자는 보고와 실제 Task/Dispatch settlement·검증 근거를 확인해 3단계 코드를 수락했으며 reviewer를 release하고 Delivery를 ACK했다.
+
+실계정 권한·실제 실행/차감·OS 마이크/키체인·CI·macOS 서명/공증·Windows 설치는 미검증이다. Gateway include passthrough·산출물 다운로드와 서명된 사고 replay 제한은 유지한다. 4단계 구현은 이 수락 기준에서 별도로 배정하며 main 통합·push·버전 변경·릴리즈는 수행하지 않았다.
