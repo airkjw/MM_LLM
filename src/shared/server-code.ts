@@ -110,7 +110,7 @@ export class ServerCodeNormalizer {
     if (!record(annotation) || annotation.type !== "container_file_citation" || !id(annotation.container_id) || !id(annotation.file_id)) return [];
     const key = this.containers.get(annotation.container_id as string); const result = key ? this.results.get(key) : undefined;
     if (!key || !result || result.artifacts.some(a => a.id === annotation.file_id)) return [];
-    return this.update(key, { artifacts: [...result.artifacts, { kind: "file", id: annotation.file_id as string,
+    return this.update(key, { artifacts: [...result.artifacts, { kind: "file" as const, id: annotation.file_id as string,
       ...(bounded(annotation.filename, 200) ? { name: bounded(annotation.filename, 200) } : {}) }].slice(0, 8) });
   }
   private messageArtifacts(message: Record<string, unknown>): ServerCodeResult[] {
