@@ -27,41 +27,39 @@ function TemplateCard({ item, onChoose, disabled }: {
   </button>;
 }
 
-function ComposerPrefill({ text, onApplied }: { text?: string; onApplied: () => void }) {
-  const aui = useAui();
-  useEffect(() => {
-    if (!text) return;
-    aui.composer.setText(text);
-    onApplied();
-  }, [aui, text, onApplied]);
-  return null;
-}
-
 export type EvidenceAppend = { id: string; threadId: string; text: string };
 export type ComposerHandle = { getText: () => string };
-function ComposerEvidence({ operations, onApplied, composerRef }: {
-  operations: EvidenceAppend[]; onApplied: (ids: string[]) => void; composerRef?: Ref<ComposerHandle>;
+function ComposerDraft({ text, onDraftApplied, operations, onEvidenceApplied, composerRef }: {
+  text?: string; onDraftApplied: () => void;
+  operations: EvidenceAppend[]; onEvidenceApplied?: (ids: string[]) => void; composerRef?: Ref<ComposerHandle>;
 }) {
   const aui = useAui();
+  const replacement = useRef<string | undefined>(undefined);
   const applied = useRef(new Set<string>());
   useImperativeHandle(composerRef, () => ({ getText: () => aui.composer.getState().text }), [aui]);
   useEffect(() => {
-    const ids: string[] = []; let next = aui.composer.getState().text;
-    let changed = false;
+    if (!text) replacement.current = undefined;
+    const replace = Boolean(text) && replacement.current !== text;
+    // An accepted replacement owns the base. setText does not update getState's
+    // rendered snapshot in this commit, so compose both intents before writing.
+    let next = replace ? text! : aui.composer.getState().text;
+    const ids: string[] = [];
     for (const operation of operations) {
       if (!applied.current.has(operation.id)) {
-        // Read at application time: neither a dialog snapshot nor a React closure owns the draft.
         const evidence = operation.text.slice(0, 30000) + (operation.text.length > 30000
           ? "\n[근거 일부 생략: 초안에 추가하는 자료는 30,000자까지입니다.]" : "");
         next += (next ? "\n\n" : "") + evidence;
-        changed = true;
         applied.current.add(operation.id);
+        ids.push(operation.id);
       }
-      ids.push(operation.id);
     }
-    if (changed) aui.composer.setText(next);
-    if (ids.length) onApplied(ids);
-  }, [aui, operations, onApplied]);
+    if (replace || ids.length) aui.composer.setText(next);
+    if (replace) {
+      replacement.current = text;
+      onDraftApplied();
+    }
+    if (ids.length) onEvidenceApplied?.(ids);
+  }, [aui, text, onDraftApplied, operations, onEvidenceApplied]);
   return null;
 }
 
@@ -593,8 +591,8 @@ export function ChatPanel({
     ? `tool:${advancedDraft.toolChoice.name}` : advancedDraft.toolChoice ?? "auto";
   return <AssistantRuntimeProvider runtime={runtime}>
     <ChatKeyboardShortcuts messages={messages} running={isRunning} stop={() => stopRef.current?.()} />
-    <ComposerPrefill text={initialDraft} onApplied={onDraftApplied} />
-    <ComposerEvidence operations={evidenceAppends} onApplied={onEvidenceApplied ?? (() => {})} composerRef={composerRef} />
+    <ComposerDraft text={initialDraft} onDraftApplied={onDraftApplied} operations={evidenceAppends}
+      onEvidenceApplied={onEvidenceApplied} composerRef={composerRef} />
     <div className="chat-panel" onDragEnter={handleDragEnter} onDragOver={(event) => {
       if (!event.dataTransfer.types.includes("Files")) return;
       event.preventDefault();

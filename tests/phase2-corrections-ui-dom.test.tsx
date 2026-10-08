@@ -96,7 +96,7 @@ const tool = { token: "synthetic-token", name: "synthetic_search", description: 
   fields: [{ name: "query", type: "string" as const, required: true }] };
 const result: ResearchResult = { id: "synthetic", suite: suite.slug, tool: tool.name, query: "Synthetic", searchedAt: now,
   rawText: "SYNTHETIC_EVIDENCE", sources: [], notice: "초록만 제공; 법령 현행 여부 미확인" };
-async function app(initial = llm, overrides: Record<string, unknown> = {}) {
+async function app(initial = llm, overrides: Record<string, unknown> = {}, strict = false) {
   const counts = { paid: 0, creates: 0, searches: 0 }; const discarded: string[] = [];
   const items = new Map([[initial.id, initial], [llm.id, llm]]);
   Object.assign(browser, { mmllm: {
@@ -113,7 +113,8 @@ async function app(initial = llm, overrides: Record<string, unknown> = {}) {
     searchResearch: async () => ({ ...result, rawText: `SYNTHETIC_EVIDENCE_${++counts.searches}` }), cancelResearch: async () => {},
     logout: async () => {}, ...overrides
   } });
-  await render(<ConfirmProvider><App /></ConfirmProvider>);
+  const ui = <ConfirmProvider><App /></ConfirmProvider>;
+  await render(strict ? <React.StrictMode>{ui}</React.StrictMode> : ui);
   return { counts, discarded, items };
 }
 async function research() {
@@ -204,4 +205,94 @@ test("actual ChatPanel keeps template replacement distinct from evidence append"
   assert.equal(composer().value, "TYPED_DRAFT\n\nAPPENDED_EVIDENCE");
   await render(<ConfirmProvider><ChatPanel {...props} initialDraft="TEMPLATE_TWO" evidenceAppends={evidence} /></ConfirmProvider>);
   assert.equal(composer().value, "TEMPLATE_TWO");
+});
+
+for (const strict of [false, true]) {
+  test(`actual App pending template and same-commit evidence use the accepted replacement (StrictMode=${strict})`, async () => {
+    const pristine = { ...llm, id: "synthetic-pristine", title: "새 대화", webSearchMode: "always" as const };
+    let resolve!: (thread: ThreadSnapshot) => void;
+    const pending = new Promise<ThreadSnapshot>((done) => { resolve = done; });
+    let settingsCalls = 0;
+    const { counts } = await app(pristine, {
+      updateThreadSettings: () => { settingsCalls++; return pending; }
+    }, strict);
+    await input(composer(), "OLD_UNSENT_BEFORE_TEMPLATE");
+    await click(document.querySelector(".template-card")!);
+    assert.equal(settingsCalls, 1);
+    await research();
+    const { templates } = await import("../src/renderer/src/ui-shared");
+    const add = button("근거 추가");
+    // Resolve the real App's template request and click its evidence button in
+    // the same React commit, without replacing any product component.
+    await act(async () => {
+      resolve({ ...pristine, instruction: templates[0].instruction });
+      await Promise.resolve();
+      add.click();
+    });
+    const expected = composer().value;
+    assert.ok(expected.startsWith(templates[0].prompt + "\n\n"));
+    assert.doesNotMatch(expected, /OLD_UNSENT_BEFORE_TEMPLATE/);
+    assert.equal((expected.match(/SYNTHETIC_EVIDENCE_1/g) ?? []).length, 1);
+    const ui = <ConfirmProvider><App /></ConfirmProvider>;
+    await render(strict ? <React.StrictMode>{ui}</React.StrictMode> : ui);
+    assert.equal(composer().value, expected);
+    assert.equal(settingsCalls, 1); assert.equal(counts.creates, 0); assert.equal(counts.paid, 0);
+  });
+
+  test(`actual ChatPanel mount composes replacement and evidence once (StrictMode=${strict})`, async () => {
+    let sent = 0; let replaced = 0; const acknowledged: string[] = [];
+    Object.assign(browser, { mmllm: { discardAttachments: async () => {}, streamChat: () => { sent++; return () => {}; } } });
+    const props = { thread: llm, modelId: llm.modelId, models: [{ id: llm.modelId, type: "llm" as const }],
+      onModelChange: () => {}, onThreadUpdated: () => {}, onRefreshThreads: () => {}, onUsageChanged: () => {},
+      onTemplateStart: async () => {}, onDraftApplied: () => { replaced++; },
+      onEvidenceApplied: (ids: string[]) => { acknowledged.push(...ids); } };
+    const evidence = [{ id: "synthetic-mount-operation", threadId: llm.id, text: "MOUNT_EVIDENCE" }];
+    const ui = <ConfirmProvider><ChatPanel {...props} initialDraft="MOUNT_TEMPLATE" evidenceAppends={evidence} /></ConfirmProvider>;
+    await render(strict ? <React.StrictMode>{ui}</React.StrictMode> : ui);
+    assert.equal(composer().value, "MOUNT_TEMPLATE\n\nMOUNT_EVIDENCE");
+    assert.equal(replaced, 1); assert.deepEqual(acknowledged, [evidence[0].id]);
+    await input(composer(), composer().value + "\nLIVE_TYPING");
+    const rerender = <ConfirmProvider><ChatPanel {...props} initialDraft="MOUNT_TEMPLATE" evidenceAppends={[...evidence]} /></ConfirmProvider>;
+    await render(strict ? <React.StrictMode>{rerender}</React.StrictMode> : rerender);
+    assert.equal(composer().value, "MOUNT_TEMPLATE\n\nMOUNT_EVIDENCE\nLIVE_TYPING");
+    assert.equal(replaced, 1); assert.deepEqual(acknowledged, [evidence[0].id]); assert.equal(sent, 0);
+  });
+}
+
+test("actual ChatPanel appends a batch and a later operation to live typing without replay", async () => {
+  Object.assign(browser, { mmllm: { discardAttachments: async () => {} } });
+  const acknowledged: string[] = [];
+  const props = { thread: llm, modelId: llm.modelId, models: [{ id: llm.modelId, type: "llm" as const }],
+    onModelChange: () => {}, onThreadUpdated: () => {}, onRefreshThreads: () => {}, onUsageChanged: () => {},
+    onTemplateStart: async () => {}, onDraftApplied: () => {},
+    onEvidenceApplied: (ids: string[]) => { acknowledged.push(...ids); } };
+  await render(<ConfirmProvider><ChatPanel {...props} /></ConfirmProvider>);
+  await input(composer(), "LIVE_QUESTION");
+  const first = { id: "batch-one", threadId: llm.id, text: "EVIDENCE_ONE" };
+  const second = { id: "batch-two", threadId: llm.id, text: "EVIDENCE_TWO" };
+  await render(<ConfirmProvider><ChatPanel {...props} evidenceAppends={[first, first, second]} /></ConfirmProvider>);
+  assert.equal(composer().value, "LIVE_QUESTION\n\nEVIDENCE_ONE\n\nEVIDENCE_TWO");
+  await input(composer(), composer().value + "\nLATER_TYPING");
+  const third = { id: "batch-three", threadId: llm.id, text: "EVIDENCE_THREE" };
+  await render(<ConfirmProvider><ChatPanel {...props} evidenceAppends={[first, second, third]} /></ConfirmProvider>);
+  const expected = "LIVE_QUESTION\n\nEVIDENCE_ONE\n\nEVIDENCE_TWO\nLATER_TYPING\n\nEVIDENCE_THREE";
+  assert.equal(composer().value, expected);
+  await render(<ConfirmProvider><ChatPanel {...props} evidenceAppends={[first, second, third]} /></ConfirmProvider>);
+  assert.equal(composer().value, expected); assert.deepEqual(acknowledged, [first.id, second.id, third.id]);
+});
+
+test("actual ChatPanel accepts the same template again after acknowledging its earlier replacement", async () => {
+  Object.assign(browser, { mmllm: { discardAttachments: async () => {} } });
+  let replaced = 0; const acknowledged: string[] = [];
+  const props = { thread: llm, modelId: llm.modelId, models: [{ id: llm.modelId, type: "llm" as const }],
+    onModelChange: () => {}, onThreadUpdated: () => {}, onRefreshThreads: () => {}, onUsageChanged: () => {},
+    onTemplateStart: async () => {}, onDraftApplied: () => { replaced++; },
+    onEvidenceApplied: (ids: string[]) => { acknowledged.push(...ids); } };
+  await render(<ConfirmProvider><ChatPanel {...props} initialDraft="REPEAT_TEMPLATE" /></ConfirmProvider>);
+  await render(<ConfirmProvider><ChatPanel {...props} /></ConfirmProvider>);
+  await input(composer(), "NEW_UNSENT_QUESTION");
+  const evidence = [{ id: "repeat-template-evidence", threadId: llm.id, text: "NEW_EVIDENCE" }];
+  await render(<ConfirmProvider><ChatPanel {...props} initialDraft="REPEAT_TEMPLATE" evidenceAppends={evidence} /></ConfirmProvider>);
+  assert.equal(composer().value, "REPEAT_TEMPLATE\n\nNEW_EVIDENCE");
+  assert.equal(replaced, 2); assert.deepEqual(acknowledged, [evidence[0].id]);
 });
