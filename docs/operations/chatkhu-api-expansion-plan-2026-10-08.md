@@ -3,7 +3,7 @@
 ## 상태·범위·소유권
 
 - 계획 기준: `418cb41e5651cc6bfb2ac17737d6c651732913fa`, 1단계 구현 기준: `609c05e9aa4d7aeb154f480521bd5edac4a76f14`, 앱 `v0.5.1`, Orca worktree `chatkhu-api-expansion-20261008`.
-- 사용자가 승인한 순서: **① 네이티브 웹 검색·모델 분류 → ② 논문·법령 검색·문서 검색 → ③ 제공사 코드 실행·공식 미디어 견적 → ④ 실시간 음성**. 1단계 구현·세 지적 보정·로컬 mock gate와 별도 Sol 독립 재검토(PASS)를 완료했고 실행 책임자가 코드를 수락했다. 실계정 확인·main 통합·push·배포는 미실시다. 2단계는 최초 독립 검토의 네 지적을 단일 구현자가 보정하고 Linux mock gate를 완료해 별도 독립 재검토를 기다리고 있으며([구현 기록](chatkhu-phase2-implementation-2026-10-08.md)), 3~4단계는 미착수다.
+- 사용자가 승인한 순서: **① 네이티브 웹 검색·모델 분류 → ② 논문·법령 검색·문서 검색 → ③ 제공사 코드 실행·공식 미디어 견적 → ④ 실시간 음성**. 1단계 구현·세 지적 보정·로컬 mock gate와 별도 Sol 독립 재검토(PASS)를 완료했고 실행 책임자가 코드를 수락했다. 실계정 확인·main 통합·push·배포는 미실시다. 2단계의 네 보정은 독립 acceptance에서 PASS였으나 새 composer 경합 P2로 `CHANGES_REQUIRED`가 유지됐다. 단일 구현자가 이 경합을 보정하고 Linux mock gate를 완료해 좁은 별도 독립 acceptance/수락을 기다리며([구현 기록](chatkhu-phase2-implementation-2026-10-08.md)), 3~4단계는 미착수다.
 - 설계 자문은 Astra, 단계별 구현·보정은 Sol 1명, 독립 검토는 별도 Sol 1명, 계획 보정·통합·사용자 보고는 실행 책임자가 소유한다. [Orca 실행 규칙](orca-execution-policy.md)에 따라 실제 Task/Dispatch를 사용하며 이전 단계 수락 후 다음 단계를 배정한다.
 - 계획 Task의 수정 범위는 이 문서였으며, 수락된 후속 Task에서는 Sol 1명이 1단계 제품 소스·관련 테스트·진행 기록을 소유했다. 기존 구현 worker의 settle/release 뒤 단일 보정 Sol `ctx_e50790142144`가 같은 범위를 직렬 인계받았고 통합은 실행 책임자가 소유한다. 의존성·버전 변경, 유료 호출, push·릴리즈는 포함하지 않는다.
 - Guard, Decisions 실행, usage/revoke 신규 화면, Super Agent, 제공사 fileSearchStores 연동은 범위 밖이다. `decisions` 모델 분류만 보존한다. [모델 문서](https://docs.mindlogic.ai/docs/khu/api-gateway/getting-started/models/)는 Super Agent를 API 미지원으로 명시한다.
@@ -67,6 +67,8 @@
 
 **2026-10-08 2단계 검토 보정 인계:** 기준 HEAD `46eea830edfa844756e131c0c61c089f5eeb172a`의 별도 Sol `CHANGES_REQUIRED` 네 지적만 단일 구현자 `task_412fec97e470` / `ctx_a57c6619f1e5`가 보정했다. 근거 append는 기존 질문·첨부·최신 타이핑과 템플릿 교체 의미를 보존하며 챗봇의 새 LLM target을 선택하고 이전 초안을 메모리에서 보존한다. 늦은 계정·패널·창·선택 변경 응답을 버리고 자동 전송하지 않는다. transport-bounded 큰 MCP JSON을 먼저 파싱해 출처를 보존하고 실제 생략을 안내하며 optional enum 생략은 키를 삭제한다. 제품 commit `ce929d8757ee97cfeb4c2ab84d226b3aa6fc109a`에서 Node 256개·DOM 66개, typecheck·UI audit·Linux build·diff gate가 통과했다. [보정 결과·원본 receipt·제약](chatkhu-phase2-implementation-2026-10-08.md#독립-검토-네-지적-보정-결과--독립-재검토-대기)을 인계한다. **보정 완료·별도 독립 재검토/수락 대기**이며 coordinator가 다음 리뷰를 배정한다. Phase 3/4·main merge/push/릴리즈·실계정 유료 호출은 미실시다.
 
+**2026-10-08 2단계 composer 경합 보정 인계:** HEAD `c41dc1c296a068b45b7aa0199bda1ec32c9a38ac`의 독립 acceptance는 기존 네 보정을 PASS로 확인하고 실제 App/ChatPanel에서 같은 commit의 template 교체+evidence append가 template을 소실하는 P2를 추가 재현했다. 단일 구현자 `task_8e2d8c02deb3` / `ctx_18cf3779068c`가 composer 적용 효과를 하나로 합쳤다. 제품 commit `22a2446c43b8c32d5c53760fbaf2f4caac48c3ea`에서 원본 재현 2/2, 집중 DOM 14/14와 동의 1/1, 최종 Node 256개·DOM 72개 및 네 gate·diff가 통과했다. 원본 fixture는 보존하고 [결과·원본 receipt·소유권](chatkhu-phase2-implementation-2026-10-08.md#composer-교체근거-추가-경합-보정--좁은-독립-acceptance-대기)을 인계한다. **경합 보정 완료·좁은 별도 독립 acceptance/수락 대기**이며 coordinator가 reviewer를 배정한다. desktop→compact dialog focus 관찰은 보정 전부터 있던 별도 후속 항목이고 이번에 해결하지 않았다. Phase 3/4·실계정·통합/push/릴리즈·의존성/버전 변경은 미실시다.
+
 ## 3단계 — 제공사 코드 실행과 공식 미디어 견적
 
 **의존성:** 1단계 provider 이벤트·capability·중복 과금 방지를 재사용하고 2단계 수락 후 진행한다. 코드 실행과 견적을 한 구현자가 순차로 완성한다.
@@ -121,7 +123,7 @@
 | --- | --- | --- |
 | 계획 | 문서 작성·공개 문서/소스 대조 완료, 제품 검사 미실행 | 실행 책임자: 계획 수락·필요 보정, 1단계 배정 |
 | 1단계 | 구현·보정·로컬 gate 완료 / 독립 재검토 PASS·코드 수락 / 미실시 | 실행 책임자: 작업 브랜치 보존, 2단계 순차 배정 |
-| 2단계 | 구현·네 지적 보정·로컬 gate 완료 / 최초 CHANGES_REQUIRED·보정 독립 재검토 대기 / 미실시 | 실행 책임자: 별도 읽기 전용 Sol 재검토 배정·수락 판단 |
+| 2단계 | 네 보정 독립 PASS·추가 composer P2 보정·로컬 gate 완료 / CHANGES_REQUIRED 유지·좁은 독립 acceptance 대기 / 미실시 | 실행 책임자: 별도 읽기 전용 Sol acceptance 배정·수락 판단 |
 | 3단계 | 미착수 / 미실시 / 미실시 | 2단계 수락 후 배정 |
 | 4단계 | 미착수 / 미실시 / 미실시 | 3단계 수락 후 배정 |
 
