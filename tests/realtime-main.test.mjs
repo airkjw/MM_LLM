@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { registerHooks } from 'node:module';
 import { existsSync } from 'node:fs';
 import { mkdtemp,rm,readdir,readFile } from 'node:fs/promises';
+import * as fs from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +21,8 @@ const hooks=registerHooks({resolve(s,c,next){if(s==='electron')return{url:'voice
  if(url==='voice:electron')return{format:'module',shortCircuit:true,source:'export const {app,ipcMain,protocol,safeStorage,BrowserWindow,dialog,nativeTheme,screen,shell}=globalThis.__voiceElectron;'};
  if(url==='voice:updates')return{format:'module',shortCircuit:true,source:'export const checkForUpdates=()=>{},currentUpdateState=()=>({}),installUpdate=()=>{},startUpdates=()=>{};'};
  if(url==='voice:documents')return{format:'module',shortCircuit:true,source:"export const configureOcrDataRoot=()=>{},extractPdf=async()=>'',extractDocx=extractPdf,extractXlsx=extractPdf;"};
- const loaded=next(url,c);if(url.endsWith('/src/main/index.ts'))return{...loaded,source:loaded.source.toString().replace('new RealtimeSessionManager({','new RealtimeSessionManager({ socket: globalThis.__voiceSocket,')+'\nexport function voiceFixture(w){mainWindow=w;registerHandlers();return voiceManager;}'};return loaded;}});
+ const loaded=next(url,c);if(url.endsWith('/src/main/atomic-file.ts'))return{...loaded,source:loaded.source.toString().replace('io = { open, rename, unlink }','io = globalThis.__voiceAtomicIO ?? { open, rename, unlink }')};
+ if(url.endsWith('/src/main/index.ts'))return{...loaded,source:loaded.source.toString().replace('new RealtimeSessionManager({','new RealtimeSessionManager({ socket: globalThis.__voiceSocket,')+'\nexport function voiceFixture(w){mainWindow=w;registerHandlers();return voiceManager;}'};return loaded;}});
 const main=await import('../src/main/index.ts'),storage=await import('../src/main/storage.ts'),gateway=await import('../src/main/gateway.ts');
 const {installVoicePermissions}=await import('../src/main/voice-permissions.ts');const manager=main.voiceFixture(win);const originalFetch=globalThis.fetch;
 const trusted={sender:contents,senderFrame:contents.mainFrame};const ID='11111111-1111-4111-8111-111111111111';
@@ -74,4 +76,101 @@ test('actual realtime mint POST inherits mandatory native Fetch no-redirect tran
   try{globalThis.fetch=(_url,init)=>{posts++;return originalFetch(server.origin+'/initial',init)};call('voice:prepare',{id:ID,modelId:models[1].id,consent:true});await call('voice:connect',ID);assert.equal(manager.size,0);assert.equal(posts,1);assert.equal(server.first.length,1);assert.equal(server.target.length,0);assert.equal(JSON.parse(server.first[0].body).model,models[1].id);assert.equal(events.at(-1).state,'error');}
   finally{globalThis.fetch=originalFetch;await server.close()}
  }
+});
+
+test('voice text save can retry after invalid target without losing its completed transcript',async()=>{
+ await session();globalThis.fetch=async()=>Response.json(mint());
+ const thread=await storage.createThread({modelId:'gpt-6-astra'});
+ await start();socket.message({type:'response.output_audio_transcript.done',transcript:'SYNTHETIC_RETRY_TEXT'});call('voice:stop',ID,false);
+ await assert.rejects(async()=>call('voice:save-text',ID,'missing-synthetic-target',true));
+ const saved=await call('voice:save-text',ID,thread.id,true);
+ assert.equal(saved.messages.length,1);assert.equal(saved.messages[0].text,'AI: SYNTHETIC_RETRY_TEXT\n');
+});
+
+function deferred(){let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve};}
+async function completedText(){await start();socket.message({type:'response.output_audio_transcript.done',transcript:'SYNTHETIC_TRANSACTION_TEXT'});call('voice:stop',ID,false);}
+test('actual save target deleted, chatbot, capacity or encrypted disk replacement failure allows one explicit valid retry',async()=>{
+ for(const failure of ['deleted','chatbot','capacity','disk']){
+  await session();globalThis.fetch=async()=>Response.json(mint());
+  const valid=await storage.createThread({modelId:'gpt-6-astra'});
+  const target=await storage.createThread({modelId:'gpt-6-astra',...(failure==='chatbot'?{target:{kind:'chatbot',id:'synthetic-chatbot'}}:{})});
+  if(failure==='deleted')await storage.removeThread(target.id);
+  if(failure==='capacity')await storage.updateThread(target.id,t=>{t.messages=Array.from({length:10000},(_,n)=>({id:`synthetic-${n}`,role:'user',text:'synthetic',apiContent:'synthetic',createdAt:target.createdAt}));});
+  const before=await fs.readFile(join(root,'private',`threads-profile-${storage.getActiveProfileId()}.enc`));
+  await completedText();
+  if(failure==='disk')globalThis.__voiceAtomicIO={...fs,rename:async()=>{throw Object.assign(new Error('synthetic disk replacement failure'),{code:'ENOSPC'})}};
+  try{await assert.rejects(()=>call('voice:save-text',ID,target.id,true),failure==='disk'?/disk replacement/:failure==='capacity'?/메시지/:failure==='chatbot'?/일반 대화/:/찾을 수/);}
+  finally{delete globalThis.__voiceAtomicIO;}
+  assert.deepEqual(await fs.readFile(join(root,'private',`threads-profile-${storage.getActiveProfileId()}.enc`)),before);
+  const saved=await call('voice:save-text',ID,valid.id,true);
+  assert.equal(saved.modelId,'gpt-6-astra');assert.equal(saved.messages.length,1);assert.equal(saved.messages[0].modelId,models[1].id);
+  assert.equal(saved.messages[0].text,'AI: SYNTHETIC_TRANSACTION_TEXT\n');
+  await assert.rejects(()=>call('voice:save-text',ID,valid.id,true));
+ }
+});
+test('actual save uses the last single message capacity slot while keeping the current LLM model',async()=>{
+ await session();globalThis.fetch=async()=>Response.json(mint());const thread=await storage.createThread({modelId:'gpt-6-astra'});
+ await storage.updateThread(thread.id,t=>{t.messages=Array.from({length:9999},(_,n)=>({id:`synthetic-${n}`,role:'user',text:'synthetic',apiContent:'synthetic',createdAt:thread.createdAt}));});
+ await completedText();const saved=await call('voice:save-text',ID,thread.id,true);assert.equal(saved.messages.length,10000);assert.equal(saved.modelId,'gpt-6-astra');
+});
+test('actual same-session concurrent save reserves synchronously and commits exactly one encrypted replacement',async()=>{
+ await session();globalThis.fetch=async()=>Response.json(mint());const thread=await storage.createThread({modelId:'gpt-6-astra'});await completedText();
+ const entered=deferred(),release=deferred();const encrypt=globalThis.__voiceElectron.safeStorage.encryptStringAsync;let writes=0;
+ globalThis.__voiceElectron.safeStorage.encryptStringAsync=async text=>{entered.resolve();await release.promise;return encrypt(text)};
+ globalThis.__voiceAtomicIO={...fs,rename:async(...args)=>{writes++;return fs.rename(...args)}};
+ try{
+  const first=call('voice:save-text',ID,thread.id,true);await entered.promise;
+  await assert.rejects(()=>call('voice:save-text',ID,thread.id,true));assert.equal(writes,0);
+  release.resolve();const saved=await first;assert.equal(saved.messages.length,1);assert.equal(writes,1);
+  await assert.rejects(()=>call('voice:save-text',ID,thread.id,true));assert.equal((await storage.getThread(thread.id)).messages.length,1);
+ }finally{release.resolve();globalThis.__voiceElectron.safeStorage.encryptStringAsync=encrypt;delete globalThis.__voiceAtomicIO;}
+});
+test('actual queued save captures profile and rejects account transition before it can read or write the replacement vault',async()=>{
+ await session();globalThis.fetch=async()=>Response.json(mint());const thread=await storage.createThread({modelId:'gpt-6-astra'});await completedText();
+ const entered=deferred(),release=deferred();const blocker=storage.serializeMutation(async()=>{entered.resolve();await release.promise});await entered.promise;
+ const save=call('voice:save-text',ID,thread.id,true);const rejected=assert.rejects(save,/계정|세션/);
+ const logout=call('session:logout');release.resolve();await blocker;await rejected;await logout;
+ await storage.activateProfileForKey('synthetic-replacement-save-profile');
+ assert.equal((await storage.loadThreads()).threads.length,0);
+ await storage.activateProfileForKey('synthetic-voice-profile');assert.equal((await storage.getThread(thread.id)).messages.length,0);
+});
+test('actual save invalidated during encryption or temporary sync never commits after logout, key, restore, new session, view or window teardown',async()=>{
+ for(const boundary of ['encryption','temporary-sync'])for(const change of ['logout','key','restore','new-session','view','window']){
+  await session();globalThis.fetch=async()=>Response.json(mint());const thread=await storage.createThread({modelId:'gpt-6-astra'});await completedText();
+  const profileId=storage.getActiveProfileId(),path=join(root,'private',`threads-profile-${profileId}.enc`),before=await fs.readFile(path);
+  const entered=deferred(),release=deferred();const encrypt=globalThis.__voiceElectron.safeStorage.encryptStringAsync;
+  if(boundary==='encryption')globalThis.__voiceElectron.safeStorage.encryptStringAsync=async text=>{entered.resolve();await release.promise;return encrypt(text)};
+  else globalThis.__voiceAtomicIO={...fs,open:async(path,...args)=>{const handle=await fs.open(path,...args);if(args[0]!=='wx')return handle;return{writeFile:bytes=>handle.writeFile(bytes),close:()=>handle.close(),sync:async()=>{await handle.sync();entered.resolve();await release.promise}}}};
+  try{
+   const save=call('voice:save-text',ID,thread.id,true);const rejected=assert.rejects(save,/계정|세션/);await entered.promise;
+   let transition=Promise.resolve();
+   if(change==='logout')transition=call('session:logout');
+   if(change==='key'){globalThis.fetch=async()=>Response.json({data:models});transition=call('session:replace-key',`synthetic-save-key-${boundary}`);}
+   if(change==='restore'){globalThis.__voiceElectron.dialog.showOpenDialog=async()=>({canceled:true,filePaths:[]});transition=call('backup:restore','synthetic-backup-password');}
+   if(change==='new-session')call('voice:prepare',{id:'22222222-2222-4222-8222-222222222222',modelId:models[1].id,consent:true});
+   if(change==='view')call('voice:stop',ID,true);
+   if(change==='window')appEvents.get('window-all-closed')();
+   release.resolve();await rejected;await transition;
+   assert.deepEqual(await fs.readFile(path),before);
+   if(change==='new-session')assert.equal(manager.size,1);
+  }finally{release.resolve();globalThis.__voiceElectron.safeStorage.encryptStringAsync=encrypt;delete globalThis.__voiceAtomicIO;manager.abort();}
+ }
+});
+test('actual save drops response after commit if a new session starts, and later old rollback cannot release its completed text',async()=>{
+ await session();globalThis.fetch=async()=>Response.json(mint());const thread=await storage.createThread({modelId:'gpt-6-astra'});await completedText();
+ const entered=deferred(),release=deferred();
+ globalThis.__voiceAtomicIO={...fs,open:async(path,...args)=>{const handle=await fs.open(path,...args);if(args[0]!=='r')return handle;return{close:()=>handle.close(),sync:async()=>{entered.resolve();await release.promise;await handle.sync()}}}};
+ try{
+  const save=call('voice:save-text',ID,thread.id,true);const rejected=assert.rejects(save,/세션|계정/);await entered.promise;
+  // Reuse the UUID to ensure completed-object identity, rather than an ID comparison, owns the old operation.
+  await start();socket.message({type:'response.output_audio_transcript.done',transcript:'SYNTHETIC_NEW_SESSION'});call('voice:stop',ID,false);
+  release.resolve();await rejected;delete globalThis.__voiceAtomicIO;
+  const saved=await call('voice:save-text',ID,thread.id,true);assert.equal(saved.messages.length,2);assert.equal(saved.messages.at(-1).text,'AI: SYNTHETIC_NEW_SESSION\n');
+ }finally{release.resolve();delete globalThis.__voiceAtomicIO;}
+});
+test('actual encrypted replacement already committed is never duplicated after a later directory sync failure',async()=>{
+ await session();globalThis.fetch=async()=>Response.json(mint());const thread=await storage.createThread({modelId:'gpt-6-astra'});await completedText();
+ globalThis.__voiceAtomicIO={...fs,open:async(path,...args)=>{const handle=await fs.open(path,...args);if(args[0]!=='r')return handle;return{close:()=>handle.close(),sync:async()=>{throw Object.assign(new Error('synthetic directory sync failure'),{code:'EIO'})}}}};
+ try{await assert.rejects(()=>call('voice:save-text',ID,thread.id,true),/directory sync/);}finally{delete globalThis.__voiceAtomicIO;}
+ await assert.rejects(()=>call('voice:save-text',ID,thread.id,true));assert.equal((await storage.getThread(thread.id)).messages.length,1);
 });

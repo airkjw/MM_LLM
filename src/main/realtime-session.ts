@@ -24,6 +24,8 @@ export function sessionSocketUrl(raw: unknown, model: string, now: number): { ur
     digest: createHash('sha256').update(raw.token).digest('hex'), expires };
 }
 export type VoiceIdentity = { epoch: number; profileId: string; owner: number };
+export type VoiceTextClaim = { modelId: string; text: string; identity: VoiceIdentity;
+  assertCurrent: () => void; commit: () => void; rollback: () => void };
 export type VoiceSocket = Pick<WebSocket, 'on' | 'removeAllListeners' | 'send' | 'close' | 'terminate' | 'readyState' | 'bufferedAmount'>;
 type Session = VoiceIdentity & { id: string; modelId: string; provider: VoiceProvider; state: VoiceState; controller: AbortController;
   socket?: VoiceSocket; keepalive?: ReturnType<typeof setInterval>; sonioxFinals: Set<string>; sonioxFinished: boolean; timer?: ReturnType<typeof setTimeout>; deliveries: Set<number>; delivery: number; inputSequence: number; muted: boolean; windowAt: number; windowBytes: number;
@@ -36,7 +38,8 @@ type Dependencies = { identity: () => VoiceIdentity; emit: (event: VoiceEvent) =
 export class RealtimeSessionManager {
   private current?: Session;
   private usedTokens = new Map<string,number>();
-  private completed?: { identity: VoiceIdentity; id: string; modelId: string; text: string; claimed: boolean };
+  private completed?: { identity: VoiceIdentity; id: string; modelId: string; text: string;
+    claimed: boolean; reservation?: object };
   private deps: Dependencies;
   constructor(deps: Dependencies) { this.deps = deps; }
   get size(): number { return this.current ? 1 : 0; }
@@ -182,10 +185,17 @@ export class RealtimeSessionManager {
       if(socket.readyState===WebSocket.OPEN)socket.close(1000);else socket.terminate();
     }
   }
-  claimText(id:unknown): { modelId:string; text:string } {
+  claimText(id:unknown): VoiceTextClaim {
     voiceId(id);const c=this.completed;const i=this.deps.identity();
-    if(!c||c.id!==id||c.claimed||c.identity.epoch!==i.epoch||c.identity.profileId!==i.profileId||c.identity.owner!==i.owner) throw new Error('저장 가능한 현재 계정의 확정 음성 문장이 없습니다.');
-    c.claimed=true;return {modelId:c.modelId,text:c.text};
+    if(!c||c.id!==id||c.claimed||c.reservation||c.identity.epoch!==i.epoch||c.identity.profileId!==i.profileId||c.identity.owner!==i.owner) throw new Error('저장 가능한 현재 계정의 확정 음성 문장이 없습니다.');
+    const reservation={};c.reservation=reservation;
+    const owned=()=>{const current=this.deps.identity();return this.completed===c &&
+      c.identity.epoch===current.epoch && c.identity.profileId===current.profileId && c.identity.owner===current.owner;};
+    return {modelId:c.modelId,text:c.text,identity:{...c.identity},
+      assertCurrent:()=>{if(!owned()||c.reservation!==reservation)throw new Error('음성 세션 또는 계정이 변경되어 저장 결과를 적용하지 않았습니다.');},
+      // A stale completion may neither consume nor release a replacement session's claim.
+      commit:()=>{if(owned()&&c.reservation===reservation)c.claimed=true;},
+      rollback:()=>{if(owned()&&c.reservation===reservation&&!c.claimed)c.reservation=undefined;}};
   }
   private text(s:Session,final:string,provisional='') { if(final.length+provisional.length>VOICE_TEXT_LIMIT) throw new Error();s.final=final;s.provisional=provisional;this.event(s,{type:'text',final,provisional} as EventBody); }
   private audio(s:Session,base64:unknown,itemId?:string) {

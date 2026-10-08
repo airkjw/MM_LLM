@@ -65,10 +65,13 @@ async function ensureVault(): Promise<void> {
   if (!(await safeStorage.isAsyncEncryptionAvailable())) throw new Error("운영체제 보안 저장소를 사용할 수 없습니다.");
   await mkdir(root(), { recursive: true, mode: 0o700 });
 }
-async function encryptToFile(name: string, plain: string): Promise<void> {
+type ThreadMutationScope = { profileId: string; assertCurrent: () => void; committed: () => void };
+async function encryptToFile(name: string, plain: string, transaction?: ThreadMutationScope): Promise<void> {
   await ensureVault();
+  transaction?.assertCurrent();
   const encrypted = await safeStorage.encryptStringAsync(plain);
-  await writeAtomic(file(name), encrypted);
+  transaction?.assertCurrent();
+  await writeAtomic(file(name), encrypted, undefined, transaction);
 }
 async function decryptFromFile(name: string, maxEncryptedBytes?: number): Promise<string | null> {
   await ensureVault();
@@ -396,12 +399,12 @@ function parseThreads(plain: string): StoredThreads {
   return { version: 2, threads: value.threads.map(normalizeThread) };
 }
 export const loadThreads = () => loadThreadsFile(threadFilename(requireProfile()));
-export const saveThreads = (value: StoredThreads, previous: StoredThreads["threads"] = []) => {
+export const saveThreads = (value: StoredThreads, previous: StoredThreads["threads"] = [], scope?: ThreadMutationScope) => {
   assertStoreGrowth(value.threads, previous);
   const serialized = JSON.stringify({ ...value, version: 2 });
   try { assertThreadStoreByteLength(Buffer.byteLength(serialized, "utf8")); }
   catch { throw new Error("대화 기록이 96MB 로컬 저장 한도를 넘었습니다. 오래된 대화나 큰 첨부 대화를 정리해 주세요."); }
-  return encryptToFile(threadFilename(requireProfile()), serialized);
+  return encryptToFile(threadFilename(scope?.profileId ?? requireProfile()), serialized, scope);
 };
 export function summary(thread: InternalThread): ThreadSummary {
   return { id: thread.id, title: thread.title, modelId: thread.modelId, createdAt: thread.createdAt,
@@ -450,12 +453,15 @@ export async function getThread(id: string): Promise<InternalThread> {
   const thread = (await loadThreads()).threads.find((item) => item.id === id);
   if (!thread) throw new Error("대화를 찾을 수 없습니다."); return thread;
 }
-export async function updateThread(id: string, update: (thread: InternalThread) => void): Promise<ThreadSnapshot> {
+export async function updateThread(id: string, update: (thread: InternalThread) => void, scope?: ThreadMutationScope): Promise<ThreadSnapshot> {
   return serializeMutation(async () => {
-    const db = await loadThreads(); const thread = db.threads.find((item) => item.id === id);
+    scope?.assertCurrent();
+    const db = await loadThreadsFile(threadFilename(scope?.profileId ?? requireProfile()));
+    scope?.assertCurrent();
+    const thread = db.threads.find((item) => item.id === id);
     if (!thread) throw new Error("대화를 찾을 수 없습니다.");
     const previous = db.threads.map((item) => ({ ...item, messages: [...item.messages] }));
-    update(thread); thread.updatedAt = new Date().toISOString(); await saveThreads(db, previous); return snapshot(thread);
+    update(thread); thread.updatedAt = new Date().toISOString(); await saveThreads(db, previous, scope); return snapshot(thread);
   });
 }
 export async function removeThread(id: string): Promise<void> {

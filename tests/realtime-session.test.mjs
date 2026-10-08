@@ -73,3 +73,20 @@ test('renderer delivery backlog is bounded; typed acknowledgements release slots
  for(let n=0;n<33;n++)f.socket().message({tokens:[{text:'temporary',is_final:false}],final_audio_proc_ms:0,total_audio_proc_ms:0});assert.equal(f.manager.size,0);assert.match(f.events.at(-1).message,/수신.*지연/);
  const g=fixture();g.manager.begin({id:ID,modelId:g.response.model,consent:true});await g.manager.connect(ID,'synthetic');g.socket().open();g.socket().message({type:'session.updated'});g.identity({epoch:1,profileId:'other',owner:1});assert.throws(()=>g.manager.frame(frame()));assert.equal(g.manager.size,0);assert.equal(g.socket().sent.length,1);
 });
+async function completed(f,id=ID){f.manager.begin({id,modelId:f.response.model,consent:true});await f.manager.connect(id,'synthetic');f.socket().open();f.socket().message({type:'session.updated'});f.socket().message({type:'response.output_audio_transcript.done',transcript:'synthetic completed'});f.manager.stop(id);}
+test('actual completed-text reservation excludes duplicates, rollback enables retry, and commit alone consumes it',async()=>{
+ const f=fixture();await completed(f);const first=f.manager.claimText(ID);assert.deepEqual(first.identity,{epoch:0,profileId:'synthetic',owner:1});assert.throws(()=>f.manager.claimText(ID));
+ first.assertCurrent();first.rollback();const second=f.manager.claimText(ID);first.rollback();first.commit();assert.throws(()=>first.assertCurrent());assert.throws(()=>f.manager.claimText(ID));
+ second.assertCurrent();second.commit();second.rollback();assert.throws(()=>f.manager.claimText(ID));
+});
+test('actual rollback/commit cannot affect a replacement completed object even when it reuses the session UUID',async()=>{
+ const f=fixture();await completed(f);const old=f.manager.claimText(ID);f.response.token='synthetic_fresh_one_use_token_654321';await completed(f);
+ const current=f.manager.claimText(ID);old.rollback();old.commit();assert.throws(()=>old.assertCurrent());current.assertCurrent();assert.throws(()=>f.manager.claimText(ID));current.rollback();const retry=f.manager.claimText(ID);retry.commit();assert.throws(()=>f.manager.claimText(ID));
+});
+test('actual completed reservations lose ownership on epoch, profile, window owner or immediate teardown',async()=>{
+ for(const change of [{epoch:1,profileId:'synthetic',owner:1},{epoch:0,profileId:'other',owner:1},{epoch:0,profileId:'synthetic',owner:2},'teardown']){
+  const f=fixture();await completed(f);const claim=f.manager.claimText(ID);
+  if(change==='teardown')f.manager.stop(ID,true);else f.identity(change);
+  assert.throws(()=>claim.assertCurrent());claim.rollback();claim.commit();assert.throws(()=>f.manager.claimText(ID));
+ }
+});

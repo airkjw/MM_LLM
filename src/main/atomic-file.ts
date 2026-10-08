@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 
 /** Same-directory replacement keeps the previous committed file intact on write/rename failure. */
-export async function writeAtomic(path: string, bytes: Uint8Array, io = { open, rename, unlink }): Promise<void> {
+export async function writeAtomic(path: string, bytes: Uint8Array, io = { open, rename, unlink },
+  transaction?: { assertCurrent: () => void; committed: () => void }): Promise<void> {
   const temporary = `${path}.${randomUUID()}.tmp`;
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
@@ -11,7 +12,10 @@ export async function writeAtomic(path: string, bytes: Uint8Array, io = { open, 
     await handle.writeFile(bytes);
     await handle.sync();
     await handle.close(); handle = undefined;
+    transaction?.assertCurrent();
     await io.rename(temporary, path);
+    // The encrypted replacement is committed even if a later directory sync fails.
+    transaction?.committed();
     // Directory syncing is unsupported on Windows and some mounted filesystems.
     let directory: Awaited<ReturnType<typeof open>> | undefined;
     try { directory = await io.open(dirname(path), "r"); await directory.sync(); }

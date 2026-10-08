@@ -53,3 +53,71 @@ test('actual App applies dictation final after existing composer draft without a
 test('actual panel keyboard focus, narrow portrait and both themes retain native controls and session cleanup on unmount',async()=>{
  for(const theme of ['light','dark']){const f=fixture();document.documentElement.dataset.theme=theme;browser.innerWidth=680;browser.innerHeight=820;await panel(f);const summary=document.querySelector('summary')!;(summary as HTMLElement).focus();assert.equal(document.activeElement,summary);await start();button('음소거').focus();assert.equal(document.activeElement,button('음소거'));assert.equal(document.querySelectorAll('.voice-panel select').length,2);assert.equal(document.querySelector('[aria-label="음성 외부 전송과 과금 동의"]')!.tagName,'INPUT');await render(<></>);assert.equal(f.track.stops,1);assert.equal(Context.all[0].closed,1);assert.equal(f.counts.sub,0);}
 });
+
+test('actual voice save double click issues one save request',async()=>{
+ const f=fixture();await panel(f);await start();await act(async()=>f.emit({type:'text',final:'synthetic text',provisional:''}));await click(button('종료'));
+ await click(document.querySelector('[aria-label="음성 텍스트 암호화 저장 동의"]')!);
+ let resolveSave:any;const pending=new Promise<any>(r=>resolveSave=r);f.api.saveVoiceText=async()=>{f.counts.save++;return pending};
+ try{await act(async()=>{button('텍스트 저장').click();button('텍스트 저장').click()});assert.equal(f.counts.save,1)}
+ finally{await act(async()=>resolveSave({...thread}));await flush()}
+});
+test('actual voice deferred saved state never belongs to a new session',async()=>{
+ const f=fixture();await panel(f);await start();await act(async()=>f.emit({type:'text',final:'synthetic first text',provisional:''}));await click(button('종료'));
+ await click(document.querySelector('[aria-label="음성 텍스트 암호화 저장 동의"]')!);
+ let resolveSave:any;const pending=new Promise<any>(r=>resolveSave=r);f.api.saveVoiceText=async()=>{f.counts.save++;return pending};
+ await click(button('텍스트 저장'));const prevented=button('시작').disabled;
+ if(!prevented)await click(button('시작'));
+ await act(async()=>resolveSave({...thread}));await flush();
+ if(prevented)await click(button('시작'));
+ assert.equal(f.counts.connect,2);assert.doesNotMatch(document.body.textContent!,/텍스트 저장됨/);
+});
+function deferredSave(){let resolve!:(value:typeof thread)=>void, reject!:(error:Error)=>void;const promise=new Promise<typeof thread>((yes,no)=>{resolve=yes;reject=no});return{promise,resolve,reject};}
+async function readyToSave(f:ReturnType<typeof fixture>){const consent=document.querySelector<HTMLInputElement>('[aria-label="음성 외부 전송과 과금 동의"]')!;if(!consent.checked)await click(consent);await click(button('시작'));await act(async()=>f.emit({type:'text',final:'synthetic save text',provisional:''}));await click(button('종료'));await click(document.querySelector('[aria-label="음성 텍스트 암호화 저장 동의"]')!);}
+test('actual failed voice save restores explicit retry and successful save remains single use',async()=>{
+ const f=fixture();await panel(f);await readyToSave(f);let applied=0;
+ await render(<VoicePanel models={models} threadId={thread.id} canApply onApply={f.onApply} onSaved={()=>applied++} onUsageChanged={()=>{}}/>);
+ f.api.saveVoiceText=async()=>{f.counts.save++;if(f.counts.save===1)throw new Error('synthetic target failure');return{...thread}};
+ await click(button('텍스트 저장'));assert.equal(f.counts.save,1);assert.equal(applied,0);assert.equal(button('텍스트 저장').disabled,false);assert.match(document.body.textContent!,/저장하지 못했습니다/);
+ await act(async()=>{button('텍스트 저장').click();button('텍스트 저장').click()});await flush();assert.equal(f.counts.save,2);assert.equal(applied,1);assert.equal(button('텍스트 저장됨').disabled,true);
+});
+test('actual pending save synchronously blocks same-batch Start, model and mode changes and exposes disabled controls in both themes',async()=>{
+ for(const theme of ['light','dark']){
+  document.documentElement.dataset.theme=theme;browser.innerWidth=680;browser.innerHeight=820;
+  const f=fixture();await panel(f);await readyToSave(f);const pending=deferredSave();f.api.saveVoiceText=async()=>{f.counts.save++;return pending.promise};
+  const mode=document.querySelector<HTMLSelectElement>('[aria-label="음성 용도"]')!,model=document.querySelector<HTMLSelectElement>('[aria-label="실시간 음성 모델"]')!;
+  await act(async()=>{button('텍스트 저장').focus();button('텍스트 저장').click();button('시작').click();mode.value='dictation';mode.dispatchEvent(new browser.Event('change',{bubbles:true}));model.value='gemini-3.8-live';model.dispatchEvent(new browser.Event('change',{bubbles:true}));});
+  assert.equal(f.counts.save,1);assert.equal(f.counts.prepare,1);assert.equal(f.counts.connect,1);assert.equal(f.counts.mic,1);
+  assert.equal(mode.value,'conversation');assert.equal(model.value,'gpt-realtime-2.1-mini');assert.equal(mode.disabled,true);assert.equal(model.disabled,true);assert.equal(button('시작').disabled,true);
+  assert.equal(document.activeElement,button('텍스트 저장'));
+  await act(async()=>pending.resolve({...thread}));await flush();assert.equal(button('시작').disabled,false);await click(button('시작'));assert.equal(f.counts.connect,2);assert.doesNotMatch(document.body.textContent!,/텍스트 저장됨/);await render(<></>);
+ }
+});
+test('actual collapsed session drops old save success or failure without clearing a replacement pending save',async()=>{
+ for(const outcome of ['success','failure']){
+  const f=fixture();let applied=0;await panel(f);await readyToSave(f);
+  await render(<VoicePanel models={models} threadId={thread.id} canApply onApply={f.onApply} onSaved={()=>applied++} onUsageChanged={()=>{}}/>);
+  const old=deferredSave(),current=deferredSave();f.api.saveVoiceText=async()=>{f.counts.save++;return f.counts.save===1?old.promise:current.promise};
+  await click(button('텍스트 저장'));await act(async()=>{document.querySelector('details')!.open=false});await flush();await act(async()=>{document.querySelector('details')!.open=true});await flush();
+  await readyToSave(f);await click(button('텍스트 저장'));assert.equal(f.counts.save,2);
+  await act(async()=>{if(outcome==='success')old.resolve({...thread});else old.reject(new Error('synthetic stale failure'))});await flush();
+  assert.equal(applied,0);assert.doesNotMatch(document.body.textContent!,/텍스트 저장됨|저장하지 못했습니다/);assert.equal(button('시작').disabled,true);assert.equal(button('텍스트 저장').disabled,true);
+  await act(async()=>current.resolve({...thread}));await flush();assert.equal(applied,1);assert.equal(button('텍스트 저장됨').disabled,true);await render(<></>);
+ }
+});
+test('actual target replacement or unmount rejects stale save callbacks and saved state',async()=>{
+ for(const change of ['target','unmount'])for(const outcome of ['success','failure']){
+  const f=fixture();let applied=0;await panel(f);await readyToSave(f);
+  const ui=(target:string)=><VoicePanel models={models} threadId={target} canApply onApply={f.onApply} onSaved={()=>applied++} onUsageChanged={()=>{}}/>;
+  await render(ui(thread.id));const pending=deferredSave();f.api.saveVoiceText=async()=>{f.counts.save++;return pending.promise};await click(button('텍스트 저장'));
+  if(change==='target')await render(ui('synthetic-new-target'));else{await render(<></>);await render(ui(thread.id));}
+  await act(async()=>{if(outcome==='success')pending.resolve({...thread});else pending.reject(new Error('synthetic stale failure'))});await flush();
+  assert.equal(applied,0);assert.doesNotMatch(document.body.textContent!,/텍스트 저장됨|저장하지 못했습니다/);await readyToSave(f);assert.equal(f.counts.connect,2);assert.equal(button('텍스트 저장').disabled,false);await render(<></>);
+ }
+});
+test('actual App logout during deferred voice save unmounts the owner before its response returns',async()=>{
+ browser.innerWidth=1024;browser.innerHeight=900;
+ const f=fixture();await render(<ConfirmProvider><App/></ConfirmProvider>);await act(async()=>{document.querySelector<HTMLDetailsElement>('.voice-panel')!.open=true});await flush();await readyToSave(f);
+ const pending=deferredSave();f.api.saveVoiceText=async()=>{f.counts.save++;return pending.promise};await click(button('텍스트 저장'));
+ await click(document.querySelector('.account-trigger')!);await click(document.querySelector('.logout-action')!);assert.equal(f.counts.logout,1);assert.equal(document.querySelector('.voice-panel'),null);
+ await act(async()=>pending.resolve({...thread}));await flush();assert.equal(document.querySelector('.voice-panel'),null);assert.doesNotMatch(document.body.textContent!,/텍스트 저장됨/);
+});

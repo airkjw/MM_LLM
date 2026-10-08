@@ -335,17 +335,27 @@ function registerHandlers(): void {
   ipcMain.handle('voice:frame', (event, raw: unknown) => { trustedInvoke(event); assertSessionStable(); voiceManager.frame(raw); });
   ipcMain.handle('voice:control', (event, raw: unknown) => { trustedInvoke(event); assertSessionStable(); voiceManager.control(raw); });
   ipcMain.handle('voice:stop', (event, id: unknown, immediate: unknown) => { trustedInvoke(event); if (typeof immediate !== 'boolean') throw new Error('종료 형식을 확인해 주세요.'); voiceManager.stop(id, immediate); });
-  ipcMain.handle('voice:save-text', (event, id: unknown, threadId: unknown, consent: unknown) => {
+  ipcMain.handle('voice:save-text', async (event, id: unknown, threadId: unknown, consent: unknown) => {
     trustedInvoke(event); assertSessionStable(); if (consent !== true) throw new Error('암호화 텍스트 저장에 동의해 주세요.');
     const target = shortString(threadId, 100, '대화 ID'); const generation = sessionTransitions.currentGeneration();
+    const profileId = getActiveProfileId();
     const text = voiceManager.claimText(id);
-    return updateThread(target, (thread) => {
+    const assertCurrent = () => {
       sessionTransitions.assertGeneration(generation);
-      if (thread.target?.kind === 'chatbot') throw new Error('일반 대화에 음성 텍스트를 저장해 주세요.');
-      assertMessageCapacity(thread.messages.length);
-      thread.messages.push({ id: randomUUID(), modelId: text.modelId, role: 'assistant', text: text.text,
-        apiContent: text.text, createdAt: new Date().toISOString() });
-    });
+      text.assertCurrent();
+      if (getActiveProfileId() !== profileId) throw new Error('계정이 변경되어 저장 결과를 적용하지 않았습니다.');
+    };
+    try {
+      const result = await updateThread(target, (thread) => {
+        assertCurrent();
+        if (thread.target?.kind === 'chatbot') throw new Error('일반 대화에 음성 텍스트를 저장해 주세요.');
+        assertMessageCapacity(thread.messages.length, 1);
+        thread.messages.push({ id: randomUUID(), modelId: text.modelId, role: 'assistant', text: text.text,
+          apiContent: text.text, createdAt: new Date().toISOString() });
+      }, { profileId, assertCurrent, committed: text.commit });
+      assertCurrent();
+      return result;
+    } catch (error) { text.rollback(); throw error; }
   });
   ipcMain.handle("projects:retrieval-status", (event, rawId: unknown) => {
     trustedInvoke(event); return runSessionBound((_controller, identity) => documentRetrieval.status(identity.profileId, shortString(rawId, 100, "프로젝트")));
