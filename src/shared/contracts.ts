@@ -382,6 +382,10 @@ export type UpdateState = {
 };
 
 export type DesktopApi = {
+  discoverResearch(requestId: string): Promise<import("./research").ResearchSuite[]>;
+  listResearchTools(requestId: string, suite: string): Promise<import("./research").ResearchTool[]>;
+  searchResearch(requestId: string, token: string, args: Record<string, unknown>): Promise<import("./research").ResearchResult>;
+  cancelResearch(requestId: string): Promise<void>;
   exportBackup(password: string): Promise<boolean>;
   restoreBackup(password: string): Promise<boolean>;
   updateModelPreference(modelId: string, action: "favorite" | "recent"): Promise<AppSettings>;

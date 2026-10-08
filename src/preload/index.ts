@@ -13,6 +13,10 @@ const initialTheme = initialThemeValue === "light" || initialThemeValue === "dar
 contextBridge.exposeInMainWorld("mmllmBootstrap", Object.freeze({ initialTheme }));
 
 const desktopApi: DesktopApi = {
+  discoverResearch: (id) => ipcRenderer.invoke("research:discover", id),
+  listResearchTools: (id, suite) => ipcRenderer.invoke("research:tools", id, suite),
+  searchResearch: (id, token, args) => ipcRenderer.invoke("research:search", id, token, args),
+  cancelResearch: (id) => ipcRenderer.invoke("research:cancel", id),
   exportBackup: (password) => ipcRenderer.invoke("backup:export", password),
   restoreBackup: (password) => ipcRenderer.invoke("backup:restore", password),
   updateModelPreference: (modelId, action) => ipcRenderer.invoke("models:preference", modelId, action),

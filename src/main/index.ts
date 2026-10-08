@@ -80,6 +80,7 @@ import {
   CompareSynthesisTextBudget
 } from "../shared/compare-synthesis";
 import { completeJournaledProjectDeletion } from "../shared/project-delete-recovery";
+import { McpClient } from "./mcp-client";
 import { isThemePreference, readThemePreference, writeThemePreference, type ThemePreference } from "./theme-state";
 import { applyWindowTheme, backgroundColorForTheme, resolveThemePreference } from "./theme-application";
 
@@ -95,6 +96,28 @@ if (process.env.MM_LLM_MOCK === "1" && !app.isPackaged) {
 let mainWindow: BrowserWindow | null = null;
 let lastThemePreference: ThemePreference | null = null;
 const activeRuns = new Map<string, AbortController>();
+const researchRuns = new Map<string, AbortController>();
+const mcpClient = new McpClient();
+function clearResearchSession(): void {
+  for (const controller of researchRuns.values()) controller.abort(new Error("계정 전환으로 연구 요청을 중단했습니다."));
+  researchRuns.clear(); mcpClient.clear();
+}
+async function runResearch<T>(rawId: unknown, operation: (key: string, profileId: string, signal: AbortSignal) => Promise<T>): Promise<T> {
+  assertSessionStable(); const generation = sessionTransitions.currentGeneration();
+  const id = shortString(rawId, 100, "요청 ID");
+  if (!/^[a-f0-9-]{36}$/.test(id) || researchRuns.has(id) || researchRuns.size >= 2) throw new Error("연구 요청 ID 또는 동시 실행 한도를 확인해 주세요.");
+  const controller = new AbortController(); researchRuns.set(id, controller);
+  try {
+    const profileId = getActiveProfileId(); const key = await loadKey();
+    if (!key) throw new Error("로그인이 필요합니다.");
+    controller.signal.throwIfAborted();
+    const result = await operation(key, profileId, controller.signal);
+    controller.signal.throwIfAborted(); sessionTransitions.assertGeneration(generation);
+    assertAccountSessionIdentity({ generation, profileId, apiKey: key }, {
+      generation: sessionTransitions.currentGeneration(), profileId: getActiveProfileId(), apiKey: await loadKey() ?? "" });
+    return result;
+  } finally { if (researchRuns.get(id) === controller) researchRuns.delete(id); }
+}
 const activeCompareSyntheses = new Set<string>();
 const backgroundQueues = new Map<string, Promise<unknown>>();
 let activeMediaRuns = 0;
@@ -285,6 +308,19 @@ async function releasePendingMeetingSources(profileId: string): Promise<void> {
 
 let loginValidation: AbortController | null = null;
 function registerHandlers(): void {
+  ipcMain.handle("research:discover", (event, id: unknown) => {
+    trustedInvoke(event); return runResearch(id, (key, _profile, signal) => mcpClient.discover(key, signal));
+  });
+  ipcMain.handle("research:tools", (event, id: unknown, suite: unknown) => {
+    trustedInvoke(event); return runResearch(id, (key, _profile, signal) => mcpClient.listTools(key, shortString(suite, 80, "묶음"), signal));
+  });
+  ipcMain.handle("research:search", (event, id: unknown, token: unknown, args: unknown) => {
+    trustedInvoke(event); return runResearch(id, (key, _profile, signal) => mcpClient.search(key, shortString(token, 100, "도구"), args, signal));
+  });
+  ipcMain.handle("research:cancel", (event, rawId: unknown) => {
+    trustedInvoke(event); const id = shortString(rawId, 100, "요청 ID");
+    researchRuns.get(id)?.abort(new Error("사용자가 연구 요청을 취소했습니다. 서버에서 처리된 실행은 사용량에 포함될 수 있습니다."));
+  });
   ipcMain.handle("session:cancel-login", (event) => {
     trustedInvoke(event);
     if (!loginValidation) return false;
@@ -364,6 +400,7 @@ function registerHandlers(): void {
   });
   ipcMain.handle("session:login", async (event, rawKey: unknown) => {
     trustedInvoke(event);
+    clearResearchSession();
     if (activeRuns.size || activeMediaRuns || activeModelRefreshes) {
       throw new Error("진행 중인 요청이 끝난 뒤 계정을 변경해 주세요.");
     }
@@ -396,6 +433,7 @@ function registerHandlers(): void {
   });
   ipcMain.handle("session:logout", async (event) => {
     trustedInvoke(event);
+    clearResearchSession();
     if (activeRuns.size || activeMediaRuns || activeModelRefreshes) {
       throw new Error("진행 중인 요청이 끝난 뒤 로그아웃해 주세요.");
     }
@@ -413,6 +451,7 @@ function registerHandlers(): void {
   });
   ipcMain.handle("session:replace-key", async (event, rawKey: unknown) => {
     trustedInvoke(event);
+    clearResearchSession();
     if (activeRuns.size || activeMediaRuns || activeModelRefreshes) {
       throw new Error("진행 중인 요청이 끝난 뒤 API 키를 교체해 주세요.");
     }

@@ -909,3 +909,9 @@ a:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
 @media (max-width: 900px) {
   .compare-results { grid-template-columns: 1fr; }
 }
+
+.research-panel { display: grid; gap: 10px; min-width: 0; }
+.research-panel pre, .retrieval-settings pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; max-height: 200px; overflow: auto; }
+.research-results { display: grid; gap: 10px; min-width: 0; }
+.research-results article { display: grid; gap: 5px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
+.research-results .link-button { text-align: left; overflow-wrap: anywhere; color: var(--accent-text); }
