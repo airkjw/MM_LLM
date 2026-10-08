@@ -1,6 +1,6 @@
 import type {
   ChatAdvancedSettings, GatewayModel, JsonSchemaOutput, ManualToolCall, ManualToolDefinition,
-  ReasoningMode, TokenUsage
+  ReasoningMode, TokenUsage, UnsupportedContinuationReason
 } from "./contracts";
 
 export const MAX_JSON_SCHEMA_BYTES = 64 * 1024;
@@ -25,7 +25,7 @@ export type NormalizedRunEvent =
   | { type: "files"; files: Array<Record<string, unknown>> }
   | { type: "tool_call"; call: ManualToolCall }
   | { type: "provider_state"; claudeContinuation: Array<Record<string, unknown>> }
-  | { type: "status"; status: string; responseId?: string }
+  | { type: "status"; status: string; responseId?: string; continuationUnsupportedReason?: UnsupportedContinuationReason }
   | { type: "error"; message: string };
 
 function record(value: unknown): Record<string, unknown> | undefined {

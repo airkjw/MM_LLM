@@ -103,6 +103,8 @@ export type CreditBalance = {
   purchased?: { quota?: number; used?: number; remaining?: number };
 };
 
+export type UnsupportedContinuationReason = "claude_pause_turn";
+
 export type PublicMessage = {
   id: string;
   /** Absent on historical messages where the original model cannot be established. */
@@ -112,6 +114,8 @@ export type PublicMessage = {
   createdAt: string;
   attachments?: string[];
   status?: "complete" | "incomplete" | "resolved";
+  /** Safe public reason only; paused server-tool content is not retained for replay. */
+  continuationUnsupportedReason?: UnsupportedContinuationReason;
   usage?: TokenUsage;
   /** Provider-generated, user-visible reasoning summary. Raw hidden reasoning is never stored here. */
   reasoningSummary?: string;
@@ -194,7 +198,7 @@ export type ChatEvent =
   | { type: "reasoning_summary"; text: string }
   | { type: "progress"; message: string }
   | { type: "tool_call"; call: ManualToolCall }
-  | { type: "status"; status: string; responseId?: string }
+  | { type: "status"; status: string; responseId?: string; continuationUnsupportedReason?: UnsupportedContinuationReason }
   | { type: "credits"; credits: number }
   | { type: "files"; files: Array<{ id: string; name: string; mediaUrl: string; expiresAt: string }> }
   | { type: "done"; snapshot: ThreadSnapshot; usage?: TokenUsage }

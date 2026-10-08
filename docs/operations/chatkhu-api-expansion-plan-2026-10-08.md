@@ -3,9 +3,9 @@
 ## 상태·범위·소유권
 
 - 계획 기준: `418cb41e5651cc6bfb2ac17737d6c651732913fa`, 1단계 구현 기준: `609c05e9aa4d7aeb154f480521bd5edac4a76f14`, 앱 `v0.5.1`, Orca worktree `chatkhu-api-expansion-20261008`.
-- 사용자가 승인한 순서: **① 네이티브 웹 검색·모델 분류 → ② 논문·법령 검색·문서 검색 → ③ 제공사 코드 실행·공식 미디어 견적 → ④ 실시간 음성**. 1단계 구현과 로컬 mock gate는 완료했으며 독립 검토·수락과 실계정 확인은 남아 있다. 2~4단계는 미착수다.
+- 사용자가 승인한 순서: **① 네이티브 웹 검색·모델 분류 → ② 논문·법령 검색·문서 검색 → ③ 제공사 코드 실행·공식 미디어 견적 → ④ 실시간 음성**. 1단계 구현·수락된 독립 검토 세 지적 보정과 로컬 mock gate는 완료했으며 독립 재검토·수락과 실계정 확인은 남아 있다. 2~4단계는 미착수다.
 - 설계 자문은 Astra, 단계별 구현·보정은 Sol 1명, 독립 검토는 별도 Sol 1명, 계획 보정·통합·사용자 보고는 실행 책임자가 소유한다. [Orca 실행 규칙](orca-execution-policy.md)에 따라 실제 Task/Dispatch를 사용하며 이전 단계 수락 후 다음 단계를 배정한다.
-- 계획 Task의 수정 범위는 이 문서였으며, 수락된 후속 Task에서는 Sol 1명이 1단계 제품 소스·관련 테스트·진행 기록을 소유했다. 구현 후 검토 보정도 같은 구현자가 맡고 통합은 실행 책임자가 소유한다. 의존성·버전 변경, 유료 호출, push·릴리즈는 포함하지 않는다.
+- 계획 Task의 수정 범위는 이 문서였으며, 수락된 후속 Task에서는 Sol 1명이 1단계 제품 소스·관련 테스트·진행 기록을 소유했다. 기존 구현 worker의 settle/release 뒤 단일 보정 Sol `ctx_e50790142144`가 같은 범위를 직렬 인계받았고 통합은 실행 책임자가 소유한다. 의존성·버전 변경, 유료 호출, push·릴리즈는 포함하지 않는다.
 - Guard, Decisions 실행, usage/revoke 신규 화면, Super Agent, 제공사 fileSearchStores 연동은 범위 밖이다. `decisions` 모델 분류만 보존한다. [모델 문서](https://docs.mindlogic.ai/docs/khu/api-gateway/getting-started/models/)는 Super Agent를 API 미지원으로 명시한다.
 
 ## 코드에서 확인한 출발점
@@ -45,6 +45,8 @@
 **완료 gate:** 8종 혼합 catalog·권한 없음·상세 누락/null/0, 실제 3사 요청 body/URL/header, 분할 SSE·최종 인용·중복 인용·도구 오류·취소·usage fixture를 통과한다. `tests/catalog.test.mjs`, `web-search.test.mjs`, `phase4-gateway.test.mjs`, `gateway-transport.test.mjs`, `compare-export.test.mjs`를 보강하고 실제 ChatPanel/ModelPicker DOM에서 검색 설정·출처·비지원 상태를 검증한다. 비교는 검색 묶음 1회 및 동일 evidence, 오류 시 두 번째 유료 POST 0회를 단언한다. 기존 텍스트·이미지·PDF·수동 도구·Responses continuation 회귀가 없어야 한다.
 
 **2026-10-08 구현 인계:** 구현 commit `b10d7dfce738c3773025bc1019ee4ebb4767c9b2` 기준으로 별도 Sol 읽기 전용 독립 검토를 시작했으며 [구현·검증 기록](chatkhu-phase1-implementation-2026-10-08.md)을 함께 인계한다. 단일 구현자는 위 파일 외에 계정별 상세 캐시·검색 capability/근거 정규화 신규 모듈, 비교 UI/암호화 기록(`AppDialogs.tsx`, `workspace-runs.ts`), 대화·비교 내보내기와 백업/실제 DOM 테스트까지 필요한 호환 변경을 소유했다. Node 223개·DOM 45개, typecheck·UI audit·Linux build가 통과했다. 실계정 호출·CI·OS 수동 검증은 미실시다.
+
+**2026-10-08 검토 보정 인계:** 독립 검토 `ctx_eb789a92c9a7`의 `CHANGES_REQUIRED` 세 지적을 기준 HEAD `dec5d371f0d3f4d8fc0f8fa6b745e01ee08e5870`에서 보정했다. 비교의 전체 첨부 문맥·선택 모델 요청 및 일반 대화 원래 payload를 유료 Sonar 검색 전에 검증하고, 비-Claude 원문 PDF 조합을 차단한다. 짧은 추출 문서의 전체 본문·공통 근거와 기존 한도는 보존한다. Gemini의 미검증 횟수는 생략하고 Claude `pause_turn`은 부분 답변·검색 근거와 안전한 미지원 중단 사유를 저장·복원·내보내며 UI/main의 일반 이어 생성을 차단한다. 새 질문은 추가 과금 가능한 별도 요청이다. [보정 결과·명령·제약](chatkhu-phase1-implementation-2026-10-08.md#독립-검토-지적-보정-결과)에 기록한 집중 Node 59개·새 DOM 3개와 최종 Node 233개·DOM 48개, typecheck·UI audit·Linux build가 통과했다. 보정 완료·별도 Sol 독립 재검토 대기이며 실행 책임자가 수락한다. 실계정·OS·CI는 미검증이고 2단계는 미착수다.
 
 **1단계 수락 전 확인할 결정:** Sonar 답변 모델은 검색 끄기·공통 근거 비교·딥리서치에서 전송 전에 막는다. Gateway에 검색 비활성화 계약이 없어 선택 모델을 자동 교체하거나 문서에 없는 필드를 전송하지 않는다. 일반 대화의 자동/항상 모드와 Sonar bridge는 유지하며 자동 모드의 일반 질문에서도 Sonar 자체 검색이 실행될 수 있음을 표시한다. Claude 자체 검색+수동 도구, Responses 자체 검색+sampling, Gemini 자체 검색+수동 도구/JSON Schema/타 제공사 설정처럼 구현 경로가 보존하지 못하는 조합은 첫 유료 호출 전에 이유를 표시하고 막는다.
 
@@ -116,7 +118,7 @@
 | 단계 | 구현 / 독립 검토 / 실계정 | 다음 소유자 |
 | --- | --- | --- |
 | 계획 | 문서 작성·공개 문서/소스 대조 완료, 제품 검사 미실행 | 실행 책임자: 계획 수락·필요 보정, 1단계 배정 |
-| 1단계 | 구현·로컬 mock gate 완료 / 별도 Sol 읽기 전용 검토 진행 / 미실시 | 별도 검토 Sol → 동일 구현 Sol 보정 → 실행 책임자 수락·통합 |
+| 1단계 | 구현·세 지적 보정·로컬 mock gate 완료 / 별도 Sol 독립 재검토 대기 / 미실시 | 별도 검토 Sol → 실행 책임자 수락·필요 보정 배정·통합 |
 | 2단계 | 미착수 / 미실시 / 미실시 | 1단계 수락 후 배정 |
 | 3단계 | 미착수 / 미실시 / 미실시 | 2단계 수락 후 배정 |
 | 4단계 | 미착수 / 미실시 / 미실시 | 3단계 수락 후 배정 |

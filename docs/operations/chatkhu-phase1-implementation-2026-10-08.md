@@ -1,8 +1,23 @@
 # ChatKHU 1단계 구현·검증 기록 — 2026-10-08
 
-수락된 [확장 계획 1단계](chatkhu-api-expansion-plan-2026-10-08.md)의 모델 분류와 실제 네이티브 웹 검색을 구현했다. 제품 commit은 `b10d7dfce738c3773025bc1019ee4ebb4767c9b2`, 기준은 `609c05e9aa4d7aeb154f480521bd5edac4a76f14`다. 구현·후속 보정 소유자는 단일 Sol이며 별도 Sol이 이 제품 commit 기준 읽기 전용 독립 검토를 시작했다. 결과에 따른 보정과 실행 책임자의 수락·통합이 남아 있으며 2~4단계에는 착수하지 않았다.
+수락된 [확장 계획 1단계](chatkhu-api-expansion-plan-2026-10-08.md)의 모델 분류와 실제 네이티브 웹 검색을 구현했다. 초기 제품 commit은 `b10d7dfce738c3773025bc1019ee4ebb4767c9b2`, 기준은 `609c05e9aa4d7aeb154f480521bd5edac4a76f14`다. 별도 Sol의 읽기 전용 독립 검토는 세 지적으로 `CHANGES_REQUIRED`를 반환했고, 아래 단일 보정 Sol이 수락된 지적을 수정하고 로컬 gate를 통과했다. 독립 재검토와 실행 책임자의 수락·통합이 남아 있으며 2~4단계에는 착수하지 않았다.
 
 ## 동작과 범위
+
+### 독립 검토 보정 작업
+
+독립 검토 `ctx_eb789a92c9a7`의 수락된 세 지적만 보정한다. 기준 HEAD는
+`dec5d371f0d3f4d8fc0f8fa6b745e01ee08e5870`이며 시작 시 작업 트리는 깨끗했다.
+이전 구현 worker는 settle/release되었고 보정 Dispatch `ctx_e50790142144`의 단일 Sol이
+shared/main/renderer/관련 테스트와 두 진행 MD를 직렬 소유한다. 실행 책임자가 수락하며
+별도 Sol의 독립 재검토를 거친다.
+
+완료 조건은 비교의 전체 첨부·선택 모델 요청과 일반 대화 원래 payload를 유료 검색 전에
+검증하여 잘못된 요청의 POST가 0회임을 입증하고, Gemini의 미검증 검색 횟수를 제거하며,
+Claude `pause_turn`의 안전한 중단 사유를 저장·복원·내보내고 UI/main의 일반 이어 생성을
+차단하는 것이다. 부분 답변·검색 근거와 기존 max_tokens/수동 도구/Responses 흐름은
+보존한다. 합성 회귀 후 네 가지 제품 검사를 실행하고 명시적 파일만 로컬 commit한다.
+실계정·유료 호출·의존성/버전/workflow·push/merge/릴리즈와 2단계는 범위 밖이다.
 
 - Catalog는 `llm, embedding, rerank, decisions, realtime, audio, image, video`를 보존한다. 대화·비교 선택지는 LLM으로 제한하고 알 수 없는 종류를 LLM으로 승격하지 않는다. 저장된 모델이 삭제되었으면 직접 모델을 선택하도록 안내하고 다른 모델로 자동 전송하지 않는다.
 - 검색 기능 확인은 명시적 버튼 또는 검색을 요청한 전송에 연결했다. 선택한 계정 모델의 상세 ID·종류·`pricing.web_search_per_1k`와 구현된 공식 도구 경로가 일치해야 지원으로 판정한다. `null`은 미지원, 누락·오류·권한 거부·불일치는 미확인, `0`은 유효한 숫자다. 모델 접두어는 adapter 선택에만 사용한다.
@@ -36,7 +51,7 @@ Coordinator와 확인한 1단계 제한이다. 모두 첫 유료 호출 전에 �
 - 자체 검색과 고정 수동 도구 선택, Claude 자체 검색과 수동 도구, Responses 자체 검색과 Temperature/Top P/중단 문자열, Gemini 자체 검색과 수동 도구 이력·JSON Schema·타 제공사 옵션은 막는다. Gemini 사고 강도는 자동 또는 제공사 사고 수준/예산의 명시 설정을 사용한다. 기존 검색 꺼짐/bridge의 수동 도구 경로는 유지한다.
 - 백그라운드 Responses는 실제 검색이 필요한 모드와 함께 시작하지 않는다. 검색 꺼짐과 새 검색이 필요 없는 자동 모드의 기존 배경 응답 경로는 유지한다.
 
-## 검증 결과
+## 초기 제품 검증 결과
 
 모든 결과는 Linux 로컬, 합성 자료, fetch/provider/Electron fixture 또는 DOM 환경이다. 실제 API 키·학생 자료·유료 API는 사용하지 않았다.
 
@@ -54,8 +69,43 @@ Coordinator와 확인한 1단계 제한이다. 모두 첫 유료 호출 전에 �
 
 민감정보 없는 상세 로컬 로그는 Git 제외 `.orca/phase1/`에 보관했다. 최종 제품 근거는 `npm-test-label-final.log`, `typecheck-gate.log`, `ui-audit-final.log`, `build-label-final.log`이며 앞선 실패/targeted 결과도 남겼다. Node의 기존 typeless-package 경고는 의존성/모듈 설정 변경 없이 유지했다.
 
+## 독립 검토 지적 보정 결과
+
+세 지적의 보정은 완료했으며 독립 재검토 대기다. 보정은 위 기준 HEAD에서 이 기록과
+함께 로컬 commit으로 인계한다. 실행 책임자가 commit과 근거를 확인하고 별도 Sol에
+재검토를 배정한다. 이 보정자의 검증은 독립 검토가 아니다.
+
+| 수락된 지적 | 수정·회귀 근거 |
+| --- | --- |
+| P1: 비교 첨부 검증보다 유료 검색이 먼저 실행됨 | `compare:stream`은 prepared attachments로 모든 선택 모델의 문맥을 구성하고 provider body·22 MiB 한도를 검증한 뒤 공통 검색한다. 실제 IPC/첨부/저장소/Gateway fixture에서 7 MiB 이미지 2개, 원문 PDF 3개, 9 MiB 원문 PDF 2개의 always/auto/deep 요청은 POST 0회다. 마지막 선택 모델이 비-Claude인 원문 PDF 조합도 POST 0회다. 원문 `document` 블록은 검증된 Claude 경로에만 허용하며 다른 Chat/Responses 경로는 명확히 거부한다. 정상 추출 PDF 전체 본문과 Sonar 1회+동일 근거 답변을 보존한다. |
+| P1 관련: 일반 대화 원래 payload의 22 MiB guard가 bridge 뒤에 있음 | 공통 `validateChatRequest`로 원래 provider payload를 bridge 전에 검증하며 근거 추가 뒤에도 최종 guard를 유지한다. 실제 Gateway fetch fixture에서 3사 oversized payload, Claude 잘못된 PDF, 비-Claude 원문 PDF의 bridge POST는 0회다. 기존 이미지·PDF·본문 한도를 낮추거나 첨부/모델을 삭제하지 않았다. |
+| P2: Gemini 고정 `google_search` key가 검색 1회로 표시됨 | Gemini `requestCount`는 정규화·기존 기록 복원·UI에서 생략한다. 비어 있지 않은 3개 질의+빈/중복 질의 fixture에서 실행 상태·질의·인용을 보존하고 실제 ChatPanel DOM은 기존 `requestCount: 1` 기록도 횟수로 표시하지 않는다. 질의 수를 API 호출 수나 과금 수로 추정하지 않는다. [Google pricing](https://ai.google.dev/gemini-api/docs/google-search#pricing)의 Gemini 3 고유 비어 있지 않은 질의 과금 계약을 공개 조회했다. |
+| P2: Claude `pause_turn`에 일반 이어 생성이 제시됨 | 안전한 enum `continuationUnsupportedReason: claude_pause_turn`를 정규화 이벤트·공개 메시지·암호화 기록·백업 복원·내보내기에 연결했다. 부분 답변과 검색 근거는 보존하고 server-tool opaque/encrypted 내용은 추가하지 않았다. UI는 이어 생성 버튼을 제거하고 새 질문은 별도 요청으로 추가 과금될 수 있음을 설명한다. 실제 main IPC는 이어 생성 ID가 위 사유를 가리키면 POST 0회·기록 변경 없이 거부한다. 명시적 새 질문은 새 요청 1회다. [Claude pause_turn](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool#pause_turn-stop-reason) 계약상 원래 assistant content 재전송이 필요하므로 이 단계에서는 재개를 지원하지 않는다. 자동 재시도는 없다. |
+
+모든 최종 결과는 Linux 로컬 합성 fixture/DOM이다. 실제 main IPC 테스트는 production
+handler를 그대로 등록하여 첨부 준비·문맥·Gateway·암호화 저장을 실행하며, Electron
+startup/updater와 로컬 문서 추출만 fixture로 대체한다. 학생 자료나 실제 키·유료 호출은 없다.
+
+| 보정 후 명령 | 결과·로컬 로그 (`.orca/phase1-corrections/`, Git 제외) |
+| --- | --- |
+| `node --test tests/phase1-main-preflight.test.mjs tests/gateway-transport.test.mjs tests/phase4-gateway.test.mjs tests/backup-storage.test.mjs` | 59개 통과, 실패/cancel/skip 0; `focused-node-final.log` |
+| `npx tsx --test --test-concurrency=1 --test-name-pattern='multi-query\|paused search\|generic continuation' tests/workspace-ui-dom.test.tsx` | 새 DOM 회귀 3개 통과; `focused-dom-final.log` |
+| `npm run typecheck` | 통과; `typecheck-final.log` |
+| `npm test` | Node 233개 + DOM 48개 통과, 실패/cancel/skip 0; `npm-test-final.log` |
+| `npm run ui:audit` | 통과: 테마 각 39 token, contrast 68, boundary 31, disabled 5, token 밖 고정 색상 0; `ui-audit-final.log` |
+| `npm run build` | typecheck 포함 main/preload/renderer Linux production build 통과; `build-final.log` |
+| 문서·diff | 로컬 링크 및 공식 두 계약 링크 조회, 명시적 파일 stage, `git diff --check` |
+
+기존 max_tokens·수동 도구·Responses continuation 전체 회귀를 유지했고 main/DOM에서
+일반 incomplete의 이어 생성을 추가 확인했다. 새 ChatPanel 회귀는 두 테마·360px wrapper의
+중단 안내·버튼 제거·출처 보존·포커스와 명시적 새 전송을 검증한다. DOM은 OS 화면의 실제
+layout/브라우저 실행 검증이 아니다. 초기 DOM 전송 fixture가 부모 snapshot을 갱신하지
+않아 멈춘 검사는 해당 로컬 프로세스를 종료하고 앱과 같은 부모 갱신으로 수정했으며
+성공한 최종 회귀와 구분해 `focused-dom-initial.log`에 남겼다. PDF route 추가 보정 전의
+집중 검사/typecheck는 초기 로그로 구분했다. 기존 Node typeless-package 경고는 유지한다.
+
 ## 남은 확인과 다음 소유권
 
-별도 Sol은 기준 SHA부터 제품 commit의 diff·공식 도구 계약·계정/IPC·암호화/백업·개인정보·유료 호출 수·테스트 근거를 독립 검토한다. 구현자가 필요한 보정을 맡고 실행 책임자가 수락·통합한다. 이 기록의 본인 검증을 독립 검토로 보고하지 않는다.
+별도 Sol은 보정 commit의 diff·사전 유료 호출 차단·Gemini 횟수·Claude 중단 상태·공식 계약과 위 테스트 근거를 독립 재검토한다. 추가 보정이 필요하면 실행 책임자가 소유자를 배정하며 최종 수락·통합도 실행 책임자가 맡는다. 이 기록의 본인 검증을 독립 검토로 보고하지 않는다.
 
 실제 계정의 모델 상세·각 3사 검색/인용·Gateway 권한/스트림 형태는 미검증이다. CI, macOS/Windows 수동 UI, 서명/공증·설치·배포도 미실시다. 계정 접근과 비용 범위가 허용된 후 합성 입력으로 별도 확인해야 하며 mock 성공을 실서비스 성공으로 해석하지 않는다. 1단계 수락 전에 2단계 작업을 시작하지 않는다.

@@ -8,6 +8,7 @@ import type { AppSettings, BackgroundResponse, CreateThreadRequest, PendingMedia
 import { MAX_BACKGROUND_RESPONSE_BYTES, planBackgroundReconciliation, upsertBackgroundResponseRecord } from "../shared/responses-lifecycle";
 import { assertStoreGrowth, assertThreadCapacity } from "../shared/storage-limits";
 import { sanitizeWebSearch } from "../shared/search-evidence";
+import { sanitizeUnsupportedContinuationReason } from "../shared/chat-continuation";
 import type { WebSearchCacheEntry } from "../shared/web-search";
 import { writeAtomic } from "./atomic-file";
 import { assertPendingJobResultSize } from "./media-jobs";
@@ -368,6 +369,7 @@ function normalizeThread(raw: InternalThread): InternalThread {
       const reconciledBackgroundResponseId = typeof message.reconciledBackgroundResponseId === "string" &&
         message.reconciledBackgroundResponseId.length <= 500 ? message.reconciledBackgroundResponseId : undefined;
       return { ...message, text, apiContent, reasoningSummary, webSearch: sanitizeWebSearch(message.webSearch), reconciledBackgroundResponseId,
+        continuationUnsupportedReason: sanitizeUnsupportedContinuationReason(message.continuationUnsupportedReason),
         ...(attachmentContext.length ? { attachmentContext } : {}) };
     }) : []
   };

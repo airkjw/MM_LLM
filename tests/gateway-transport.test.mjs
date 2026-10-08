@@ -148,6 +148,51 @@ test("optional denied/missing/null detail plans Sonar before the first paid call
   await assert.rejects(collect("gpt-6-astra"), /Sonar/); assert.equal(paid, 0);
 });
 
+test("original oversized provider payload is rejected before any billed Sonar bridge POST", async () => {
+  for (const id of ["gpt-6-astra", "claude-sonnet-5", "gemini-3.8-flash"]) {
+    session([model(id), sonar]); let paid = 0;
+    globalThis.fetch = async (_url, init) => {
+      if (init.method === "POST") paid++;
+      return Response.json({ id, pricing: { web_search_per_1k: null } });
+    };
+    const oversized = [{ role: "user", content: "x".repeat(22 * 1024 * 1024) }];
+    await assert.rejects(async () => {
+      for await (const _item of gateway.streamChat(id, oversized, "synthetic query", new AbortController(), { mode: "always" }, generation)) { /* drain */ }
+    }, /대화와 첨부 자료의 크기/);
+    assert.equal(paid, 0, id);
+  }
+});
+
+test("invalid Claude PDF body blocks before any billed bridge POST", async () => {
+  const id = "claude-sonnet-5"; session([model(id), sonar]); let paid = 0;
+  globalThis.fetch = async (_url, init) => {
+    if (init.method === "POST") paid++;
+    return Response.json({ id, pricing: { web_search_per_1k: null } });
+  };
+  await assert.rejects(async () => {
+    for await (const _item of gateway.streamChat(id, [{ role: "user", content: [
+      { type: "text", text: "synthetic query" }, { type: "document", source: { type: "base64", media_type: "application/pdf", data: "bm90LXBkZg==" } }
+    ] }], "synthetic query", new AbortController(), { mode: "always" }, generation)) { /* drain */ }
+  }, /PDF 실제 형식/);
+  assert.equal(paid, 0);
+});
+
+test("raw PDF on Chat or Responses routes blocks before the billed Sonar bridge", async () => {
+  for (const [id, advanced] of [["gpt-6-astra", {}], ["gpt-6-astra", { responses: { chain: true } }], ["gemini-3.8-flash", {}]]) {
+    session([model(id), sonar]); let paid = 0;
+    globalThis.fetch = async (_url, init) => {
+      if (init.method === "POST") paid++;
+      return Response.json({ id, pricing: { web_search_per_1k: null } });
+    };
+    await assert.rejects(async () => {
+      for await (const _item of gateway.streamChat(id, [{ role: "user", content: [
+        { type: "text", text: "synthetic query" }, { type: "document", source: { type: "base64", media_type: "application/pdf", data: Buffer.from("%PDF-1.7\n").toString("base64") } }
+      ] }], "synthetic query", new AbortController(), { mode: "always" }, { ...generation, advanced })) { /* drain */ }
+    }, /원문 PDF는 Claude 네이티브 분석만 지원/);
+    assert.equal(paid, 0);
+  }
+});
+
 test("native failures never retry or switch to a bridge after a billed call", async () => {
   for (const scenario of ["http", "tool", "stream"]) {
     session([model("claude-sonnet-5"), sonar]); let paid = 0; const items = [];

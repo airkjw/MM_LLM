@@ -275,6 +275,10 @@ export function buildProviderRequest(input: BuildInput): {
   }
   const provider = input.nativeSearch === "responses" ? "responses" : isOpenAiModel(input.model) && input.advanced.tools?.length &&
     reasoningEffortFromMode(input.reasoningMode) ? "responses" : providerForModel(input.model, input.advanced);
+  if (provider !== "claude" && input.messages.some((message) => Array.isArray(message.content) &&
+      message.content.some((block) => block.type === "document"))) {
+    throw new Error("텍스트를 읽을 수 없는 원문 PDF는 Claude 네이티브 분석만 지원합니다. 선택한 모델에서는 전송할 수 없으므로 PDF를 제외하거나 텍스트를 추출한 자료로 다시 첨부해 주세요.");
+  }
   if (provider === "responses") return { provider, path: "/responses/", body: buildResponsesPayload(input) };
   if (provider === "claude") {
     const built = buildClaudePayload(input);
@@ -508,7 +512,8 @@ export class ProviderEventNormalizer {
       }
     }
     if (event.type === "message_delta" && isRecord(event.delta) && ["max_tokens", "pause_turn"].includes(String(event.delta.stop_reason))) {
-      events.push({ type: "status", status: "incomplete" });
+      events.push({ type: "status", status: "incomplete",
+        ...(event.delta.stop_reason === "pause_turn" ? { continuationUnsupportedReason: "claude_pause_turn" as const } : {}) });
     }
     if (event.type === "message_stop" && this.claudeBlocks.some((block) => block.type === "tool_use") &&
       this.claudeBlocks.some((block) => block.type === "thinking" || block.type === "redacted_thinking")) {

@@ -3,6 +3,8 @@ import test, { afterEach, before } from "node:test";
 import { Window } from "happy-dom";
 import { readFileSync } from "node:fs";
 import type { CompareEvent, CompareRequest } from "../src/shared/contracts";
+import { SearchEvidenceNormalizer } from "../src/shared/search-evidence";
+import { geminiMultiQueryEvents } from "./fixtures/native-search.mjs";
 import * as React from "react";
 import type { Root } from "react-dom/client";
 const { act } = React;
@@ -378,6 +380,72 @@ test("real ChatPanel distinguishes unexecuted native search, failure and cached 
     await render(<ConfirmProvider><ChatPanel {...syntheticChatProps} thread={thread} modelId={thread.modelId} models={[{ id: thread.modelId, type: "llm" }]} /></ConfirmProvider>);
     assert.match(document.querySelector('[aria-label="웹 검색 실행 상태"]')!.textContent!, new RegExp(expected));
     assert.equal(document.querySelector('[aria-label="웹 검색 실행 상태"] details'), null);
+  }
+});
+
+test("real ChatPanel multi-query Gemini evidence never displays an unverified search count", async () => {
+  Object.assign(browser, { mmllm: { discardAttachments: async () => {} } });
+  const normalizer = new SearchEvidenceNormalizer("gemini");
+  geminiMultiQueryEvents.forEach((event) => normalizer.accept(event));
+  const search = normalizer.snapshot(true);
+  for (const legacyCount of [undefined, 1]) {
+    const thread = syntheticChatThread({ messages: [{ id: "a", role: "assistant", text: "합성 다중 검색 답변", createdAt: new Date().toISOString(),
+      webSearch: { ...search, ...(legacyCount !== undefined ? { requestCount: legacyCount } : {}) } }] });
+    await render(<ConfirmProvider><ChatPanel {...syntheticChatProps} thread={thread} modelId={thread.modelId} models={[{ id: thread.modelId, type: "llm" }]} /></ConfirmProvider>);
+    const status = document.querySelector('[aria-label="웹 검색 실행 상태"]')!.textContent!;
+    assert.match(status, /실행 확인/); assert.doesNotMatch(status, /검색 \d+회/);
+    assert.match(status, /확인된 웹 출처 1개/);
+    assert.equal(search.queries.length, 3);
+  }
+});
+
+test("real ChatPanel explains unsupported Claude paused search and sends a fresh question without continuation", async () => {
+  for (const theme of ["light", "dark"]) {
+    browser.document.documentElement.dataset.theme = theme;
+    const thread = syntheticChatThread({ id: `paused-${theme}`, modelId: "claude-sonnet-5", messages: [
+      { id: "u", role: "user", text: "합성 질문", createdAt: new Date().toISOString() },
+      { id: "a", role: "assistant", text: "합성 부분 답변", createdAt: new Date().toISOString(), status: "incomplete",
+        continuationUnsupportedReason: "claude_pause_turn", webSearch: { route: "native", provider: "claude", status: "executed",
+          queries: ["synthetic query"], citations: [{ url: "https://example.test/source", title: "합성 출처" }] } }
+    ] });
+    const requests: import("../src/shared/contracts").ChatRequest[] = [];
+    Object.assign(browser, { mmllm: { discardAttachments: async () => {},
+      streamChat: (request: import("../src/shared/contracts").ChatRequest, receive: (event: import("../src/shared/contracts").ChatEvent) => void) => {
+        requests.push(request); queueMicrotask(() => receive({ type: "done", snapshot: { ...thread, messages: [...thread.messages,
+          { id: "u-new", role: "user", text: request.text, createdAt: thread.createdAt },
+          { id: "a-new", role: "assistant", text: "합성 새 답변", createdAt: thread.createdAt, status: "complete" }] } }));
+        return () => {};
+      }
+    } });
+    function Harness() {
+      const [current, setCurrent] = React.useState(thread);
+      return <ConfirmProvider><div style={{ width: 360 }}><ChatPanel {...syntheticChatProps} thread={current} modelId={thread.modelId}
+        onThreadUpdated={setCurrent} models={[{ id: thread.modelId, type: "llm" }]} initialDraft="새 합성 질문" /></div></ConfirmProvider>;
+    }
+    await render(<Harness />);
+    assert.match(document.body.textContent!, /합성 부분 답변/);
+    assert.match(document.body.textContent!, /이 검색 턴의 이어 생성은 지원하지 않습니다.*별도 요청으로 추가 과금/);
+    assert.equal([...document.querySelectorAll("button")].some((button) => button.textContent === "이어서 생성"), false);
+    assert.match(document.querySelector('[aria-label="웹 검색 실행 상태"]')!.textContent!, /실행 확인.*합성 출처/s);
+    assert.equal(requests.length, 0, "render/restore does not retry the paused turn");
+    const send = document.querySelector<HTMLButtonElement>('[aria-label="메시지 전송"]')!;
+    send.focus(); assert.equal(document.activeElement, send);
+    await click(send);
+    assert.equal(requests.length, 1); assert.equal(requests[0].text, "새 합성 질문");
+    assert.equal(requests[0].continueIncompleteId, undefined);
+  }
+});
+
+test("real ChatPanel keeps generic continuation for max_tokens and Responses incomplete answers", async () => {
+  Object.assign(browser, { mmllm: { discardAttachments: async () => {} } });
+  for (const modelId of ["claude-sonnet-5", "gpt-6-astra"]) {
+    const thread = syntheticChatThread({ modelId, messages: [{ id: "a", role: "assistant", text: "합성 부분 답변",
+      createdAt: new Date().toISOString(), status: "incomplete" }] });
+    await render(<ConfirmProvider><ChatPanel {...syntheticChatProps} thread={thread} modelId={thread.modelId}
+      models={[{ id: thread.modelId, type: "llm" }]} /></ConfirmProvider>);
+    const continuation = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "이어서 생성");
+    assert.ok(continuation); assert.equal(continuation.disabled, false);
+    assert.doesNotMatch(document.body.textContent!, /이어 생성은 지원하지 않습니다/);
   }
 });
 

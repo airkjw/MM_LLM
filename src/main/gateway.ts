@@ -4,7 +4,7 @@ import { assertAdvancedOptionsForModel, isOpenAiModel, providerRoute } from "../
 import { MAX_STT_JSON_BYTES, readJsonResponseWithLimit } from "../shared/bounded-json";
 import { chatbotRequestBody, chatbotUsageSummary, MAX_CHATBOT_USAGE_BYTES, normalizeChatbotUsage } from "../shared/chatbot-adapter";
 import { BufferedChatbotTextSanitizer, chatbotFileExpiry, MAX_CHATBOT_FILE_BYTES, validateChatbotFileUrl } from "../shared/chatbot-files";
-import type { AudioRequest, BackgroundResponse, ChatAdvancedSettings, CreditBalance, GatewayModel, ImageRequest, ManualToolCall, MediaResult, ReasoningMode, TokenUsage, VideoRequest, WebSearchMode, SearchCapability, WebSearchExecution } from "../shared/contracts";
+import type { AudioRequest, BackgroundResponse, ChatAdvancedSettings, CreditBalance, GatewayModel, ImageRequest, ManualToolCall, MediaResult, ReasoningMode, TokenUsage, UnsupportedContinuationReason, VideoRequest, WebSearchMode, SearchCapability, WebSearchExecution } from "../shared/contracts";
 import { parseCreditsChargedHeader } from "../shared/credit-usage";
 import { combineResearchResults, parseResearchPlan } from "../shared/deep-research";
 import { audioLaneForModel, imageRequestPayload, musicRequestPayload, ttsRequestPayload, videoRequestPayload } from "../shared/media-capabilities";
@@ -232,7 +232,7 @@ export type ChatStreamItem =
   | { type: "usage"; usage: TokenUsage }
   | { type: "tool_call"; call: ManualToolCall }
   | { type: "provider_state"; claudeContinuation: Array<Record<string, unknown>> }
-  | { type: "status"; status: string; responseId?: string }
+  | { type: "status"; status: string; responseId?: string; continuationUnsupportedReason?: UnsupportedContinuationReason }
   | { type: "credits"; credits: number }
   | { type: "files"; files: Array<Record<string, unknown>> };
 
@@ -529,6 +529,21 @@ export function appendSharedWebEvidence(
   ].join("\n"));
 }
 
+/** Validate the original provider payload before preparing any billed bridge evidence. */
+export function validateChatRequest(
+  modelId: string, messages: ChatMessage[],
+  generation: { reasoningMode: ReasoningMode; advanced: ChatAdvancedSettings; previousResponseId?: string },
+  nativeSearch?: WebSearchExecution["provider"]
+): ReturnType<typeof buildProviderRequest> {
+  const model = assertModel(modelId, "llm");
+  assertAdvancedOptionsForModel(model, generation.advanced);
+  const request = buildProviderRequest({ model, messages, ...generation, stream: true, nativeSearch });
+  if (Buffer.byteLength(JSON.stringify(request.body), "utf8") > 22 * 1024 * 1024) {
+    throw new Error("대화와 첨부 자료의 크기가 API 한도에 가깝습니다. 파일을 줄이거나 새 대화를 시작해 주세요.");
+  }
+  return request;
+}
+
 export async function* streamChat(
   modelId: string,
   messages: ChatMessage[],
@@ -564,8 +579,7 @@ export async function* streamChat(
     }
   }
   // Validate the selected route/body before any billed Sonar request as well.
-  buildProviderRequest({ model, messages, reasoningMode: generation.reasoningMode, advanced: generation.advanced, nativeSearch,
-    previousResponseId: generation.previousResponseId });
+  validateChatRequest(modelId, messages, generation, nativeSearch);
   let search: WebSearchExecution = { route: nativeSearch ? "native" : shouldSearch ? "sonar"
     : web.mode !== "off" && web.cachedContext ? "cache" : "none", provider: nativeSearch ?? (shouldSearch ? "sonar" : undefined),
     status: shouldSearch ? "pending" : web.mode !== "off" && web.cachedContext ? "cached" : "not_requested", queries: [], citations: [] };
@@ -592,12 +606,7 @@ export async function* streamChat(
     if (nativeSearch) yield { type: "web_search", search: { ...search, status: "missing" } };
     return;
   }
-  const request = buildProviderRequest({ model, messages: groundedMessages,
-    reasoningMode: generation.reasoningMode, advanced: generation.advanced, stream: true,
-    previousResponseId: generation.previousResponseId, nativeSearch });
-  if (Buffer.byteLength(JSON.stringify(request.body), "utf8") > 22 * 1024 * 1024) {
-    throw new Error("대화와 첨부 자료의 크기가 API 한도에 가깝습니다. 파일을 줄이거나 새 대화를 시작해 주세요.");
-  }
+  const request = validateChatRequest(modelId, groundedMessages, generation, nativeSearch);
   let release: (() => void) | undefined;
   try {
     release = await gatewayScheduler.acquire("standard", signal);

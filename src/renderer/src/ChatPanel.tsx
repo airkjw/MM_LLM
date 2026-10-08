@@ -6,6 +6,7 @@ import { hasFixedTemperature, reasoningSupport } from "../../shared/chat-options
 import type { ChatAdvancedSettings, ChatEvent, ChatRequest, GatewayModel, PickedAttachment, PublicMessage, ReasoningMode, ThreadSnapshot, WebSearchMode, SearchCapability, WebSearchExecution } from "../../shared/contracts";
 import { nativeSearchSettingsError, nativeSearchProvider } from "../../shared/search-capability";
 import { citationLinkBlockReason, webSearchStatusLabel } from "../../shared/search-evidence";
+import { unsupportedContinuationMessage } from "../../shared/chat-continuation";
 import { useConfirm } from "./components/ConfirmDialog";
 import { DiagnosticButton } from "./components/DiagnosticButton";
 import { modelLabel } from "./model-names";
@@ -72,16 +73,18 @@ function ManualToolCards({ messageId, calls, disabled, onSubmit }: {
 }
 
 function AssistantMessage({ incomplete, onContinue, disabled, usage, credits, backgroundResponseId, onCancelBackground,
-  messageId, toolCalls, files, reasoningSummary, onSubmitTool, modelId, createdAt, webSearch }: {
+  messageId, toolCalls, files, reasoningSummary, onSubmitTool, modelId, createdAt, webSearch, continuationUnsupportedReason }: {
   modelId?: string; createdAt?: string; webSearch?: WebSearchExecution;
   incomplete: boolean; onContinue: () => void; disabled: boolean; usage?: PublicMessage["usage"]; credits?: number;
   backgroundResponseId?: string; onCancelBackground: (id: string) => void;
   messageId: string; toolCalls?: PublicMessage["toolCalls"];
   files?: PublicMessage["files"];
   reasoningSummary?: string;
+  continuationUnsupportedReason?: PublicMessage["continuationUnsupportedReason"];
   onSubmitTool: (messageId: string, results: Array<{ toolCallId: string; result: string }>) => void;
 }) {
   const [sourceError, setSourceError] = useState("");
+  const continuationNotice = unsupportedContinuationMessage(continuationUnsupportedReason);
   return <MessagePrimitive.Root className="message-row assistant">
     <span className="assistant-avatar"><Sparkles size={16} /></span>
     <div className="assistant-message-column">
@@ -90,7 +93,7 @@ function AssistantMessage({ incomplete, onContinue, disabled, usage, credits, ba
       <div className="message-bubble assistant-bubble"><MessagePrimitive.Parts components={{ Text: MarkdownText }} /></div>
       {webSearch && <div className="message-usage" aria-label="웹 검색 실행 상태">
         <span>{webSearchStatusLabel(webSearch)}</span>
-        {webSearch.requestCount !== undefined && <span> · 검색 {webSearch.requestCount}회</span>}
+        {webSearch.provider !== "gemini" && webSearch.requestCount !== undefined && <span> · 검색 {webSearch.requestCount}회</span>}
         {webSearch.citations.length > 0 && <details><summary>확인된 웹 출처 {webSearch.citations.length}개</summary>
           <ul>{webSearch.citations.map((citation) => {
             const blocked = citationLinkBlockReason(citation.url);
@@ -127,7 +130,8 @@ function AssistantMessage({ incomplete, onContinue, disabled, usage, credits, ba
       {backgroundResponseId ? <div className="incomplete-actions" role="status" aria-live="polite">
         <span>백그라운드 응답 처리 중</span>
         <button type="button" onClick={() => onCancelBackground(backgroundResponseId)} disabled={disabled}>취소</button>
-      </div> : incomplete && <div className="incomplete-actions"><span>중단된 답변</span>
+      </div> : continuationNotice ? <div className="incomplete-actions" role="status"><span>{continuationNotice}</span></div>
+        : incomplete && <div className="incomplete-actions"><span>중단된 답변</span>
         <button type="button" onClick={onContinue} disabled={disabled}>이어서 생성</button></div>}
       {usage && <div className="message-usage" title="토큰 사용량은 크레딧과 다른 값입니다.">
         입력 {usage.inputTokens.toLocaleString()} · 출력 {usage.outputTokens.toLocaleString()} · 합계 {usage.totalTokens.toLocaleString()} 토큰
@@ -588,6 +592,7 @@ export function ChatPanel({
               const stored = messages.find((item) => item.id === message.id);
               return message.role === "user" ? <UserMessage /> : <AssistantMessage
                 incomplete={stored?.id === latestIncompleteId}
+                continuationUnsupportedReason={stored?.continuationUnsupportedReason}
                 disabled={isRunning || controlsPending}
                 webSearch={stored?.webSearch}
                 usage={stored?.usage}

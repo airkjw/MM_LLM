@@ -25,7 +25,7 @@ import {
   startBackgroundResponse, pollBackgroundResponse as pollGatewayBackgroundResponse,
   cancelBackgroundResponse as cancelGatewayBackgroundResponse, appendSharedWebEvidence,
   countClaudeInputTokens as countGatewayClaudeInputTokens, getChatbotApiUsage, materializeChatbotFiles,
-  prepareSharedWebEvidence, streamChatbot
+  prepareSharedWebEvidence, streamChatbot, validateChatRequest
 } from "./gateway";
 import {
   addDroppedAttachments, clearAttachments, contentForChat, discardAttachments, getAttachment, imageDataUrls, pickAttachment,
@@ -40,6 +40,7 @@ import { createPendingMediaJob, isPermanentMediaPollFailure, mediaJobIsExpired,
 import { sharedEvidenceModelError } from "../shared/search-capability";
 import { relevantCachedWebContext, webQueryFingerprint } from "../shared/web-search";
 import { applyAssistantOutcome } from "./chat-history";
+import { unsupportedContinuationMessage } from "../shared/chat-continuation";
 import { activateSavedSession, transitionLogin } from "./session-flow";
 import {
   cleanupAllProfileMedia, cleanupProfileMedia, clearProfileMedia, mediaTokenFromUrl, persistMediaBytes, releaseMedia,
@@ -1115,28 +1116,31 @@ function registerHandlers(): void {
         if (attachmentIds.length && request.deidentifiedConfirmed !== true) throw new Error("첨부 자료의 비식별화를 확인해 주세요.");
         const prepared = await contentForChat(prompt, attachmentIds, () => undefined, abort.signal);
         const settings = await loadSettings();
+        const preparedMessage = { id: randomUUID(), role: "user" as const, text: prompt,
+          apiContent: prepared.content, attachmentContext: prepared.attachmentContext,
+          attachments: prepared.names, createdAt: new Date().toISOString() };
+        // Validate every selected answer context before the single billed shared search.
+        const contexts = modelIds.map((id) => {
+          const messages: Parameters<typeof validateChatRequest>[1] = buildChatContext([preparedMessage], prompt);
+          if (settings.defaultInstruction) messages.unshift({ role: "system", content: settings.defaultInstruction });
+          validateChatRequest(id, messages, { reasoningMode: "auto", advanced: {} });
+          return messages;
+        });
         let sharedSearch: PublicMessage["webSearch"];
         const evidence = await prepareSharedWebEvidence(prompt, request.webSearchMode, abort, (search) => {
           sharedSearch = { ...search, route: "shared" };
         }, modelIds);
-        const preparedMessage = { id: randomUUID(), role: "user" as const, text: prompt,
-          apiContent: prepared.content, attachmentContext: prepared.attachmentContext,
-          attachments: prepared.names, createdAt: new Date().toISOString() };
         run = { id: randomUUID(), prompt, modelIds, webSearchMode: request.webSearchMode,
           createdAt: new Date().toISOString(), attachmentNames: prepared.names,
           sharedEvidence: boundedCompareEvidence(evidence), webSearch: sharedSearch,
           results: modelIds.map((modelId) => ({ modelId, status: "running", text: "" })) };
         await upsertCompareRun(getActiveProfileId(), run); send({ type: "snapshot", run });
         const compareBudget = new CompareTextBudget();
-        await Promise.all(modelIds.map(async (id) => {
+        await Promise.all(modelIds.map(async (id, index) => {
           const result = run!.results.find((item) => item.modelId === id)!;
           let lastPersistedBytes = 0;
           try {
-            let modelMessages = buildChatContext([preparedMessage], prompt) as Array<{
-              role: "system" | "developer" | "user" | "assistant" | "tool";
-              content: string | Array<Record<string, unknown>>; tool_call_id?: string; tool_calls?: Array<Record<string, unknown>>;
-            }>;
-            if (settings.defaultInstruction) modelMessages.unshift({ role: "system", content: settings.defaultInstruction });
+            let modelMessages = contexts[index];
             if (evidence) modelMessages = appendSharedWebEvidence(modelMessages, evidence, request.webSearchMode === "deep");
             for await (const item of streamChat(id, modelMessages, prompt, abort, { mode: "off" },
               { reasoningMode: "auto", advanced: {} })) {
@@ -1285,6 +1289,7 @@ function registerHandlers(): void {
       let usage: TokenUsage | undefined;
       const toolCalls: NonNullable<PublicMessage["toolCalls"]> = [];
       let claudeContinuation: Array<Record<string, unknown>> | undefined;
+      let continuationUnsupportedReason: PublicMessage["continuationUnsupportedReason"];
       let terminalStatus = "completed";
       let chargedCredits: number | undefined;
       let webSearch: PublicMessage["webSearch"];
@@ -1364,6 +1369,8 @@ function registerHandlers(): void {
             item.role === "assistant" && item.status === "incomplete");
           const latestIncomplete = existing.messages.findLastIndex((item) => item.role === "assistant" && item.status === "incomplete");
           if (continueIndex < 0 || continueIndex !== latestIncomplete) throw new Error("이어갈 최신 중단 답변을 찾을 수 없습니다.");
+          const unsupported = unsupportedContinuationMessage(existing.messages[continueIndex].continuationUnsupportedReason);
+          if (unsupported) throw new Error(unsupported);
           if ((existing.projectId || hasAttachedContent(existing.messages.slice(0, continueIndex + 1))) && !existing.attachmentConsent) {
             throw new Error("첨부 자료 전송 확인을 먼저 완료해 주세요.");
           }
@@ -1502,7 +1509,12 @@ function registerHandlers(): void {
           }
           if (item.type === "tool_call") { toolCalls.push(item.call); send(item); continue; }
           if (item.type === "provider_state") { claudeContinuation = item.claudeContinuation; continue; }
-          if (item.type === "status") { terminalStatus = item.status; if (item.responseId) completedResponseId = item.responseId; send(item); continue; }
+          if (item.type === "status") {
+            terminalStatus = item.status;
+            if (item.continuationUnsupportedReason) continuationUnsupportedReason = item.continuationUnsupportedReason;
+            if (item.responseId) completedResponseId = item.responseId;
+            send(item); continue;
+          }
           if (item.type === "credits") { chargedCredits = item.credits; send(item); continue; }
           if (item.type === "files") continue; // Signed remote URLs are never exposed or persisted here.
           text += item.text;
@@ -1522,6 +1534,7 @@ function registerHandlers(): void {
           applyAssistantOutcome(item.messages, text, terminalStatus === "incomplete" ? "incomplete" : "complete", regenerateIndex,
             randomUUID(), new Date().toISOString(), usage, answerModelId);
           const stored = item.messages.at(-1);
+          if (stored && continuationUnsupportedReason) stored.continuationUnsupportedReason = continuationUnsupportedReason;
           if (stored && webSearch) stored.webSearch = webSearch;
           if (stored && reasoningSummary) stored.reasoningSummary = reasoningSummary;
           if (stored && toolCalls.length) stored.toolCalls = toolCalls;
@@ -1533,13 +1546,14 @@ function registerHandlers(): void {
         if (
           savedUser &&
           threadId &&
-          (text || reasoningSummary || toolCalls.length || chatbotFiles.length || chargedCredits !== undefined || usage !== undefined || webSearch !== undefined)
+          (text || reasoningSummary || toolCalls.length || chatbotFiles.length || chargedCredits !== undefined || usage !== undefined || webSearch !== undefined || continuationUnsupportedReason)
         ) {
           await updateThread(threadId, (item) => {
             if (continueIndex >= 0 && item.messages[continueIndex]) item.messages[continueIndex].status = "resolved";
             applyAssistantOutcome(item.messages, text, "incomplete", regenerateIndex,
               randomUUID(), new Date().toISOString(), usage, answerModelId);
             const stored = item.messages.at(-1);
+            if (stored && continuationUnsupportedReason) stored.continuationUnsupportedReason = continuationUnsupportedReason;
             if (stored && webSearch) stored.webSearch = webSearch;
             if (stored && reasoningSummary) stored.reasoningSummary = reasoningSummary;
             if (stored && toolCalls.length) stored.toolCalls = toolCalls;

@@ -1,4 +1,5 @@
 import { sanitizeWebSearch, webSearchStatusLabel } from "./search-evidence.ts";
+import { unsupportedContinuationMessage, sanitizeUnsupportedContinuationReason } from "./chat-continuation.ts";
 import type { ThreadSnapshot } from "./contracts";
 
 function clean(value: string): string {
@@ -34,6 +35,8 @@ export function serializeThreadMarkdown(thread: ThreadSnapshot): string {
     if (message.reasoningSummary) lines.push("", "#### 추론 요약", "", clean(message.reasoningSummary));
     if (message.attachments?.length) lines.push("", `첨부: ${message.attachments.map(clean).join(", ")}`);
     if (message.status === "incomplete") lines.push("", "> 이 답변은 생성 도중 중단되었습니다.");
+    const continuationNotice = unsupportedContinuationMessage(sanitizeUnsupportedContinuationReason(message.continuationUnsupportedReason));
+    if (continuationNotice) lines.push("", `> ${continuationNotice}`);
     if (message.usage) lines.push("", `토큰: 입력 ${message.usage.inputTokens.toLocaleString()} · 출력 ${message.usage.outputTokens.toLocaleString()} · 합계 ${message.usage.totalTokens.toLocaleString()}${message.usage.cachedInputTokens !== undefined ? ` · 캐시 입력 ${message.usage.cachedInputTokens.toLocaleString()}` : ""}${message.usage.reasoningTokens !== undefined ? ` · 추론 ${message.usage.reasoningTokens.toLocaleString()}` : ""}`);
     if (message.credits !== undefined) lines.push("", `실제 과금: ${message.credits.toLocaleString()} 크레딧`);
     lines.push("");

@@ -58,6 +58,12 @@ test('actual storage backup restores documents and settings on a different machi
       value.messages.push({ id: 'answer', role: 'assistant', modelId: 'gpt-5.6-sol', text: '연구 답변', apiContent: '연구 답변', createdAt: new Date().toISOString(),
         webSearch: { route: 'native', provider: 'gemini', status: 'executed', queries: ['synthetic public query'],
           citations: [{ url: 'https://example.test/public-statistic', title: 'synthetic' }], requestCount: 1 } });
+      value.messages.push({ id: 'paused', role: 'assistant', modelId: 'claude-sonnet-5', text: '합성 부분 답변', apiContent: '합성 부분 답변',
+        createdAt: new Date().toISOString(), status: 'incomplete', continuationUnsupportedReason: 'claude_pause_turn',
+        webSearch: { route: 'native', provider: 'claude', status: 'executed', queries: ['synthetic query'],
+          citations: [{ url: 'https://example.test/public-statistic', title: 'synthetic' }] } });
+      value.messages.push({ id: 'invalid-reason', role: 'assistant', text: '합성', apiContent: '합성', createdAt: new Date().toISOString(),
+        continuationUnsupportedReason: { encrypted_content: 'synthetic-invalid-state' } });
     });
     await storage.saveSettings({ defaultInstruction: '연구 설정', theme: 'dark', fontSize: 'large' });
     const staleSettings = await storage.loadSettings();
@@ -93,6 +99,18 @@ test('actual storage backup restores documents and settings on a different machi
     assert.equal((await storage.getThread(thread.id)).messages[0].modelId, 'gpt-5.6-sol');
     assert.equal(storage.snapshot(await storage.getThread(thread.id)).messages[0].webSearch.citations[0].url, 'https://example.test/public-statistic');
     assert.equal((await storage.getThread(thread.id)).messages[0].webSearch.status, 'executed');
+    const publicMessages = storage.snapshot(await storage.getThread(thread.id)).messages;
+    assert.equal(publicMessages[0].webSearch.requestCount, undefined, 'legacy unverified Gemini count is stripped');
+    assert.equal(publicMessages[1].status, 'incomplete');
+    assert.equal(publicMessages[1].continuationUnsupportedReason, 'claude_pause_turn');
+    assert.equal(publicMessages[1].text, '합성 부분 답변');
+    assert.equal(publicMessages[1].webSearch.citations.length, 1);
+    assert.equal(publicMessages[2].continuationUnsupportedReason, undefined);
+    assert.doesNotMatch(JSON.stringify(publicMessages), /synthetic-invalid-state/);
+    const { serializeThreadMarkdown } = await import('../src/shared/thread-export.ts');
+    const exported = serializeThreadMarkdown(storage.snapshot(await storage.getThread(thread.id)));
+    assert.match(exported, /이어 생성은 지원하지 않습니다.*별도 요청으로 추가 과금/);
+    assert.match(exported, /합성 부분 답변/);
     await storage.activateProfileForKey('SYNTHETIC-OTHER-PROFILE');
     await assert.rejects(storage.getThread(thread.id), /찾/);
     await storage.activateProfileForKey('DESTINATION-KEY');

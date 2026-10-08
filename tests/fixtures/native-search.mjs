@@ -39,3 +39,14 @@ export const geminiEvents = [
     searchEntryPoint: { renderedContent: '<script>untrusted HTML</script>' } }, finishReason: "STOP" }],
     usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 7, thoughtsTokenCount: 3, totalTokenCount: 20 } }
 ];
+
+export const geminiMultiQueryEvents = geminiEvents.map((event) => {
+  if (!event.candidates?.[0]?.groundingMetadata) return event;
+  return { ...event, candidates: [{ ...event.candidates[0], groundingMetadata: {
+    ...event.candidates[0].groundingMetadata,
+    webSearchQueries: ["synthetic public statistic", "synthetic hospital policy", "synthetic study", "", "synthetic study"]
+  } }] };
+});
+
+export const claudePauseEvents = claudeEvents.map((event) => event.type === "message_delta"
+  ? { ...event, delta: { stop_reason: "pause_turn" } } : event);

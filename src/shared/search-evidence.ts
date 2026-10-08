@@ -43,7 +43,7 @@ export function sanitizeWebSearch(value: unknown): WebSearchExecution | undefine
   return { route: raw.route as WebSearchExecution["route"], status: raw.status as WebSearchExecution["status"], queries,
     citations: [...citations.values()],
     ...(["claude", "responses", "gemini", "sonar"].includes(String(raw.provider)) ? { provider: raw.provider as NativeSearchProvider } : {}),
-    ...(Number.isSafeInteger(raw.requestCount) && Number(raw.requestCount) >= 0 && Number(raw.requestCount) <= 1000
+    ...(raw.provider !== "gemini" && Number.isSafeInteger(raw.requestCount) && Number(raw.requestCount) >= 0 && Number(raw.requestCount) <= 1000
       ? { requestCount: Number(raw.requestCount) } : {}) };
 }
 
@@ -190,7 +190,9 @@ export class SearchEvidenceNormalizer {
     return { ...this.state, status: this.failed ? "failed" : this.completed.size || (this.state.requestCount ?? 0) > 0
       ? this.sawEmpty && !this.citations.size ? "empty" : "executed" : final ? "missing" : "pending",
       queries: [...this.queries], citations: [...this.citations.values()],
-      ...(this.state.requestCount !== undefined ? {} : this.completed.size ? { requestCount: this.completed.size } : {}) };
+      // Gemini grounding queries establish execution, but do not verify a provider call count.
+      ...(this.state.provider === "gemini" || this.state.requestCount !== undefined ? {}
+        : this.completed.size ? { requestCount: this.completed.size } : {}) };
   }
   failure(): WebSearchExecution { this.failed = true; return this.snapshot(true); }
 }

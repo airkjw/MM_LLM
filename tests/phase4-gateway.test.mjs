@@ -525,7 +525,7 @@ test("journaled project deletion resumes idempotently after a crash", async () =
   assert.equal(vaultExists, false); assert.equal(journalExists, false);
 });
 
-import { claudeEvents, openaiEvents, geminiEvents } from "./fixtures/native-search.mjs";
+import { claudeEvents, claudePauseEvents, openaiEvents, geminiEvents, geminiMultiQueryEvents } from "./fixtures/native-search.mjs";
 import { SearchEvidenceNormalizer } from "../src/shared/search-evidence.ts";
 
 test("three native search request bodies follow official contracts and preserve Claude PDF/thinking and Responses chain", () => {
@@ -558,12 +558,37 @@ test("native tool events verify search and usage without becoming manual calls o
     const normalized = fixture.flatMap((event) => { evidence.accept(event); return normalizer.accept(event); });
     assert.equal(normalized.filter((event) => event.type === "text").map((event) => event.text).join(""), "합성 통계 답변");
     assert.equal(normalized.filter((event) => event.type === "tool_call").length, 0);
-    const search = evidence.snapshot(true); assert.equal(search.status, "executed"); assert.equal(search.requestCount, 1);
+    const search = evidence.snapshot(true); assert.equal(search.status, "executed"); assert.equal(search.requestCount, provider === "gemini" ? undefined : 1);
     assert.equal(search.citations.length, 1); assert.deepEqual(search.queries, ["synthetic public statistic"]);
     assert.doesNotMatch(JSON.stringify(search), /encrypted_|hidden reasoning|thoughtSignature|script/);
     const usage = normalized.filter((event) => event.type === "usage").at(-1).usage;
     assert.equal(usage.inputTokens, 10); assert.equal(usage.outputTokens, provider === "gemini" ? 10 : 7);
   }
+});
+
+test("Gemini multi-query grounding preserves evidence without claiming a call or billing count", () => {
+  const evidence = new SearchEvidenceNormalizer("gemini");
+  geminiMultiQueryEvents.forEach((event) => evidence.accept(event));
+  const search = evidence.snapshot(true);
+  assert.equal(search.status, "executed");
+  assert.deepEqual(search.queries, ["synthetic public statistic", "synthetic hospital policy", "synthetic study"]);
+  assert.equal(search.citations.length, 1);
+  assert.equal(Object.hasOwn(search, "requestCount"), false);
+});
+
+test("Claude pause_turn retains partial text and public search evidence with an explicit unsupported continuation reason", () => {
+  const normalizer = new ProviderEventNormalizer("claude");
+  const evidence = new SearchEvidenceNormalizer("claude");
+  const events = claudePauseEvents.flatMap((event) => { evidence.accept(event); return normalizer.accept(event); });
+  assert.deepEqual(events.find((event) => event.type === "status"), {
+    type: "status", status: "incomplete", continuationUnsupportedReason: "claude_pause_turn"
+  });
+  assert.equal(events.filter((event) => event.type === "text").map((event) => event.text).join(""), "합성 통계 답변");
+  assert.equal(evidence.snapshot(true).status, "executed");
+  assert.equal(events.some((event) => event.type === "provider_state" || event.type === "tool_call"), false);
+  assert.doesNotMatch(JSON.stringify([events, evidence.snapshot(true)]), /encrypted_|synthetic-opaque/);
+  assert.deepEqual(new ProviderEventNormalizer("claude").accept({ type: "message_delta", delta: { stop_reason: "max_tokens" } }),
+    [{ type: "status", status: "incomplete" }]);
 });
 
 test("native search missing, empty, failed and Gemini blocked states are truthful", () => {
