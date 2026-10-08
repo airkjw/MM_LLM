@@ -61,4 +61,3 @@ process.on('message',async message=>{try{
  else {value=await call(message.name,...message.args);if(message.name==='voice:connect'){socket.open();socket.message({type:'session.updated'});}if(message.name==='server:text')throw new Error('incorrect fixture route');}
  process.send({kind:'response',seq:message.seq,value});
  }catch(error){process.send({kind:'response',seq:message.seq,error:error.message})}});
-
