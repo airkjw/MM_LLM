@@ -70,3 +70,41 @@
 실계정 catalog·도구별 permission·실제 provider 실행·실제 차감은 검증하지 않았다. 최소 시간 이외 계정별 정확한 요금은 미확인이다. Gateway `include` passthrough와 artifact download 경로는 명시적 지원 계약 확인 후 별도 후속 작업이며 현재 출력/산출물 미확인을 정직하게 표시한다. Gemini 코드·Phase 4·macOS 서명/공증·Windows 설치·CI·main merge/push/release/version 변경은 수행하지 않았다.
 
 구현자는 이 소스·문서·로컬 receipt를 실행 책임자에게 인계하고 별도 Sol independent review를 요청한다. 독립 검토 acceptance를 스스로 선언하지 않는다. 수락된 보정이 있으면 실행 책임자가 새 Dispatch의 소유권을 지정하며, 현재 Task 완료 후 worker는 idle을 유지한다.
+
+## 독립 검토 두 지적 보정 — 좁은 독립 재검토 대기
+
+기준 HEAD `3dd45d9ff7b7f057deb52e2d45e07e11c66de975`의 독립 검토 `ctx_f475f08c8000`는 `CHANGES_REQUIRED`이며, 원본 보고·재현 fixture는 ignored `.orca/phase3-review/`에 보존한다. 단일 보정 소유자 `task_6d79a91f6c63` / `ctx_d2446de2c280`가 공통 `gateway-transport.ts`의 인증·과금 POST redirect 차단(P1), shared `media-estimate.ts`의 총액·항목 bound 호환성(P2), 등록된 실제 main/native Fetch/MediaPanel 회귀와 이 기록·계획만 수정한다.
+
+완료 조건은 원본 재현 3개의 수정 전 실패·수정 후 성공, loopback native Fetch의 redirect 대상 요청/헤더/body 0회와 원래 유료 POST 정확히 1회, 네 유효 bound 및 잘못된 견적의 unavailable 표시, 집중 검증 이후 정확한 제품 commit의 네 전체 gate·diff 통과 및 per-command source manifest·원문 stdout/stderr·exit·비밀값 없는 환경 receipt다. `.orca/phase3-correction/`에 이전 실패를 보존하고 제품 commit 뒤 별도 docs-only commit으로 좁은 독립 재검토에 인계한다. 수락·통합은 coordinator 소유이며 Phase 4·실계정·유료 호출·의존성·버전·push·release는 범위 밖이다.
+
+보정 제품 commit은 `b8361d6bc2dd04073a3413c768f610ecba8a47ba`다. 제품 변경은 공통 transport의 caller 옵션 뒤 `redirect: "error"` 강제와 shared 견적 parser의 총액·모든 항목 bound 호환성 검사다. native Fetch가 Location을 따라가기 전에 실패하며 모델·route 교체나 유료 POST 재전송을 하지 않는다. 기존 GET/HEAD의 429/503 최대 2회 retry, deadline·취소·응답 크기 제한과 wrapper 동작을 유지한다. Phase 2 MCP·embedding·rerank의 별도 research transport에는 이미 `redirect: "error"`가 있으며 그 소스·의미 검색 동의 경계를 수정하지 않았다.
+
+| 총액 bound | 허용하는 항목 bound |
+| --- | --- |
+| exact | exact만 |
+| minimum | exact, minimum |
+| maximum | exact, maximum |
+| approximate | 네 bound 모두 |
+
+더 보수적인 총액은 허용하되 API 견적 금액·항목·bound를 바꾸지 않는다. 유효 0과 미확인 가격을 구분하며 기존 유한·비음수 가격/합계/모델·종류 검증과 별도 `content_filter` 차감은 보존한다. 실제 main IPC는 잘못된 확실성을 거절하고 같은 parser를 쓰는 MediaPanel은 견적 불가를 표시한다. 별도 `견적 없이 생성` 동작·정규화 옵션·이중 클릭 1회·동의·비공개 payload 제외·늦은 견적 폐기 경로도 유지한다.
+
+### 보정 검증과 원본 receipt
+
+Linux x86_64, Node `v24.21.0`, npm `11.19.0`에서 합성 temp userData·합성 키와 loopback fixture만 사용했다. 인증된 실제 Gateway 계정이나 유료 provider를 호출하지 않았다. 원본 reviewer fixture·assertion·보고·manifest의 SHA-256은 수정 전후 같으며 `original-review-hashes.json`과 `verification.json`에 기록했다.
+
+- 원본 그대로 실행한 `node --test --test-name-pattern=307 .orca/phase3-review/main-review.test.mjs`, `node --test --test-name-pattern="total exact" .orca/phase3-review/main-review.test.mjs`, `node_modules/.bin/tsx --test --test-name-pattern="certainty contradicted" .orca/phase3-review/dom-review.test.tsx`는 수정 전 각각 1개 실패(exit 1), 수정 후 각각 1/1 성공(exit 0)이다. 원문은 `.orca/phase3-correction/before-307/`, `before-main-quote/`, `before-dom-quote/`, `after-307/`, `after-main-quote/`, `after-dom-quote/`에 보존했다.
+- 등록 집중 Node: `node --test tests/gateway-transport.test.mjs tests/server-code-main.test.mjs tests/media-estimate.test.mjs tests/media-estimate-main.test.mjs tests/phase3-media.test.mjs`가 **68/68** 성공했다(`focused-node-2/`). 초기 `focused-node-1/`은 65/67로 실패했으며 상세 조회 wrapper의 기존 unknown 반환을 rejection으로 기대한 assertion과 이미지 생성 fixture에 견적 전용 kind를 넣은 harness 불일치였다. 기존 계약에 맞춰 테스트만 수정했고 제품 규칙을 낮추지 않았다. 두 실패 원문을 보존했다.
+- 등록 실제 DOM: `node_modules/.bin/tsx --test --test-concurrency=1 tests/phase3-ui-dom.test.tsx`가 **10/10** 성공했다(`focused-dom-1/`). bound 불일치 8가지의 견적 불가·확정/0 오표시 없음·자동 생성 0회와 별도 사용자 unquoted 생성 1회를 포함한다.
+- 실제 native Fetch의 default 307 replay를 먼저 입증하는 합성 대조 fixture와 차단 fixture를 구분한다. typed transport는 301/302/303/307/308 × same/cross origin × caller default/follow/manual의 POST 30가지와 GET/HEAD 20가지를 검증했다. 실제 Claude·Responses main code 경로는 같은 5개 status·두 origin의 20가지에서 원래 POST 1회, 대상 요청/헤더/body 0회, error·incomplete·done 없음이다. media estimate/image/video/music 307/308, 실제 native search 3사와 모델 list/detail·Sonar 공통 검색도 대상 요청 0회를 검증했다. 상세 조회 실패는 기존 wrapper대로 unknown이다.
+
+| 고정 제품 소스 명령 | 결과 |
+| --- | --- |
+| `npm run typecheck` | exit 0 |
+| `npm test` | exit 0; **Node 298/298 + 실제 DOM 82/82**, fail/cancelled/skipped/todo 모두 0 |
+| `npm run ui:audit` | exit 0; 테마 tokens 각 39, hardcoded color 0, contrast 68, control mappings 31 |
+| `npm run build` | exit 0; Linux production build; script에 포함된 typecheck도 성공 |
+| `git diff --check 3dd45d9ff7b7f057deb52e2d45e07e11c66de975 b8361d6bc2dd04073a3413c768f610ecba8a47ba` | exit 0 |
+
+최종 네 gate는 제품 commit 고정 뒤 각각 한 번 실행했다. `.orca/phase3-correction/gates/b8361d6bc2dd04073a3413c768f610ecba8a47ba/{typecheck,test,ui-audit,build,diff-check}/` 각각에 `stdout.log`, `stderr.log`, `receipt.json`, `source-before.json`, `source-after.json`이 있다. 각 receipt는 정확한 argv·cwd·시각·exit·HEAD·OS/Node/npm·환경 설정 및 log/manifest bytes·SHA-256을 담는다. 전체 환경 변수 이름은 보존하되 credential 가능성이 있는 값은 redacted로 기록한다. 158개 제품 입력 파일의 전후 hash가 같고 제품 Git blob과 모두 일치하며 로그 hash도 확인했다. 최종 인덱스는 `.orca/phase3-correction/receipt.json`, 검증 결과는 `verification.json`, 보정 인계 보고는 `report.txt`다. 앞 단계와 초기 보정 실패 receipt는 덮어쓰지 않았다.
+
+보정 완료이며 독립 acceptance는 아직 없다. 실행 책임자가 별도 좁은 재검토의 소유자이며 원본 P1/P2·인접 회귀와 위 exact commit 증거를 확인해 수락한다. 실계정 permission·실제 과금·OS keychain/시각적 수동 검사·CI·macOS 서명/공증·Windows 설치는 미검증이며 기존 include passthrough·산출물 다운로드·서명된 사고 replay 제한은 그대로다. Phase 4는 미착수다.
