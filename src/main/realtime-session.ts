@@ -31,7 +31,7 @@ type Session = VoiceIdentity & { id: string; modelId: string; provider: VoicePro
   socket?: VoiceSocket; keepalive?: ReturnType<typeof setInterval>; sonioxFinals: Set<string>; sonioxFinished: boolean; timer?: ReturnType<typeof setTimeout>; deliveries: Set<number>; delivery: number; inputSequence: number; muted: boolean; windowAt: number; windowBytes: number;
   receiveAt: number; receiveBytes: number; receiveCount: number; outputSequence: number; outputs: Map<number,{samples:number;itemId?:string}>;
   final: string; provisional: string; itemId?: string; itemSamples: number; playedSamples: number; interruption: number; awaitingInterrupt: boolean;
-  discardedThrough: number; geminiInput: string; geminiOutput: string; interaction: 'IN_PROGRESS' | 'IDLE'; blockedItems: Set<string>; connectStarted: boolean };
+  discardedThrough: number; geminiInterim: string; geminiOutput: string; interaction: 'IN_PROGRESS' | 'IDLE'; blockedItems: Set<string>; connectStarted: boolean };
 type EventBody = VoiceEvent extends infer E ? E extends VoiceEvent ? Omit<E, 'id'> : never : never;
 type Dependencies = { identity: () => VoiceIdentity; emit: (event: VoiceEvent) => void; models: () => GatewayModel[];
   socket?: (url: string) => VoiceSocket; fetch?: typeof fetch; now?: () => number };
@@ -50,7 +50,7 @@ export class RealtimeSessionManager {
   }
   private event(s: Session, e: EventBody): void {
     if(!this.owned(s))return;
-    if(s.deliveries.size>=32 && e.type!=='state'){this.finish(s,'error','음성 화면 수신이 지연돼 세션을 종료했습니다.');return;}
+    if(s.deliveries.size>=32 && e.type!=='state' && e.type!=='discard'){this.finish(s,'error','음성 화면 수신이 지연돼 세션을 종료했습니다.');return;}
     const delivery=++s.delivery;s.deliveries.add(delivery);this.deps.emit({id:s.id,delivery,...e} as VoiceEvent);
   }
   private state(s: Session, state: VoiceState, message?: string) { s.state = state; this.event(s,{type:'state',state,...(message ? {message} : {})}); }
@@ -60,11 +60,11 @@ export class RealtimeSessionManager {
     if (raw.consent !== true || typeof raw.modelId !== 'string') throw new Error('마이크 외부 전송과 과금 안내에 동의해 주세요.');
     const request = raw as VoiceStart; const provider = voiceProvider(request.modelId);
     if (provider !== 'soniox' && !voiceModels(this.deps.models()).some(m=>m.id===request.modelId)) throw new Error('현재 계정 목록에서 사용할 수 있는 실시간 모델을 선택해 주세요.');
-    this.completed = undefined;
+    this.discardCompleted('새 음성을 시작해 이전의 저장하지 않은 확정문을 폐기했습니다.');
     const s: Session = { ...this.deps.identity(), id:request.id, modelId:request.modelId, provider, state:'requesting_permission', controller:new AbortController(),
       sonioxFinals:new Set(),sonioxFinished:false,deliveries:new Set(),delivery:0,inputSequence:0, muted:false, windowAt:this.now(),windowBytes:0,receiveAt:this.now(),receiveBytes:0,receiveCount:0,
       outputSequence:0, outputs:new Map(),final:'',provisional:'',itemSamples:0,playedSamples:0,interruption:0,awaitingInterrupt:false,
-      discardedThrough:0,geminiInput:'',geminiOutput:'',interaction:'IDLE',blockedItems:new Set(),connectStarted:false };
+      discardedThrough:0,geminiInterim:'',geminiOutput:'',interaction:'IDLE',blockedItems:new Set(),connectStarted:false };
     this.current = s; this.state(s,'requesting_permission');
     s.timer = setTimeout(()=>this.finish(s,'error','마이크 준비 시간이 초과됐습니다. 새로 시작해 주세요.'),60000);
   }
@@ -155,7 +155,7 @@ export class RealtimeSessionManager {
     } catch { this.finish(s,'error','음성 제어 형식 또는 큐 한도를 확인해 주세요.'); }
   }
   stop(id:unknown, immediate=false):void {
-    voiceId(id);if(immediate && this.completed?.id===id)this.completed=undefined;
+    voiceId(id);if(immediate && this.completed?.id===id)this.discardCompleted('음성 화면을 닫아 저장하지 않은 확정문을 폐기했습니다.');
     const s=this.current; if(!s||s.id!==id)return;
     if(immediate) return this.abort();
     if(s.state==='stopping')return;
@@ -166,7 +166,16 @@ export class RealtimeSessionManager {
     }
     this.state(s,'stopping');this.finish(s,'closed','음성 세션을 종료했습니다. 사용량은 Gateway에서 정산합니다.');
   }
-  abort():void { const s=this.current; this.completed=undefined; if(s) this.finish(s,'closed','음성 세션을 중단했습니다.',false); }
+  private discardCompleted(message:string):void {
+    const c=this.completed;this.completed=undefined;
+    const i=this.deps.identity();
+    if(c && c.identity.epoch===i.epoch && c.identity.profileId===i.profileId && c.identity.owner===i.owner)
+      this.deps.emit({id:c.id,type:'discard',message});
+  }
+  abort(message='음성 세션을 중단하고 저장하지 않은 확정문을 폐기했습니다.'):void {
+    const s=this.current;this.discardCompleted(message);
+    if(s){this.event(s,{type:'discard',message});this.finish(s,'closed',message,false);}
+  }
   private finish(s:Session,state:'closed'|'error',message:string,retain=true) {
     if(this.current!==s)return;
     if(this.owned(s)) {
@@ -242,7 +251,7 @@ export class RealtimeSessionManager {
       if(s.state!=='active')return;
       if(e.goAway)return this.finish(s,'closed','Gemini 세션 종료가 안내됐습니다. 다시 사용하려면 새로 시작해 주세요.');
       const content=e.serverContent;if(!record(content))return;
-      if(content.interrupted){this.interrupt(s);s.geminiInput='';s.geminiOutput='';this.text(s,s.final);}
+      if(content.interrupted){this.interrupt(s);s.geminiInterim='';s.geminiOutput='';}
       if(content.interactionStatus==='IN_PROGRESS'||content.interactionStatus==='IDLE')s.interaction=content.interactionStatus;
       if(content.modelTurn){
         if(!record(content.modelTurn)||!Array.isArray(content.modelTurn.parts)||content.modelTurn.parts.length>64)throw new Error();
@@ -250,10 +259,18 @@ export class RealtimeSessionManager {
           if(part.inlineData){if(!record(part.inlineData)||part.inlineData.mimeType!=='audio/pcm;rate=24000')throw new Error();this.audio(s,part.inlineData.data);}}
         this.event(s,{type:'activity',activity:'responding'} as EventBody);
       }
-      if(content.inputTranscription){if(typeof content.inputTranscription.text!=='string')throw new Error();s.geminiInput+=content.inputTranscription.text;}
-      if(content.outputTranscription){if(typeof content.outputTranscription.text!=='string')throw new Error();s.geminiOutput+=content.outputTranscription.text;}
-      this.text(s,s.final,(s.geminiInput?'나: '+s.geminiInput+'\n':'')+(s.geminiOutput?'AI: '+s.geminiOutput:''));
-      if(content.turnComplete){this.text(s,s.final+(s.geminiInput?'나: '+s.geminiInput+'\n':'')+(s.geminiOutput?'AI: '+s.geminiOutput+'\n':''));s.geminiInput='';s.geminiOutput='';
+      // Raw WS inputTranscription is confirmed and independently delivered, with no
+      // ordering relative to model turns. Keep it once in arrival order, even after
+      // turnComplete or before Stop/interrupt. Interim input is preview only.
+      if(content.interimInputTranscription){if(typeof content.interimInputTranscription.text!=='string')throw new Error();s.geminiInterim=content.interimInputTranscription.text;}
+      let final=s.final;
+      if(content.inputTranscription){if(typeof content.inputTranscription.text!=='string')throw new Error();if(content.inputTranscription.text)final+='나: '+content.inputTranscription.text+'\n';s.geminiInterim='';}
+      if(content.outputTranscription){if(typeof content.outputTranscription.text!=='string')throw new Error();if(!content.interrupted)s.geminiOutput+=content.outputTranscription.text;}
+      // Output belongs to the generation; unfinished/interrupted output is never
+      // promoted by Stop. generationComplete/turnComplete commits it only once.
+      if((content.generationComplete||content.turnComplete)&&!content.interrupted){if(s.geminiOutput)final+='AI: '+s.geminiOutput+'\n';s.geminiOutput='';}
+      this.text(s,final,(s.geminiInterim?'나: '+s.geminiInterim+'\n':'')+(s.geminiOutput?'AI: '+s.geminiOutput:''));
+      if(content.turnComplete){
         this.event(s,{type:'activity',activity:s.modelId.endsWith('extended-thinking') && s.interaction!=='IDLE'?'thinking':'listening'} as EventBody);}
       else if(content.interactionStatus==='IN_PROGRESS')this.event(s,{type:'activity',activity:'thinking'} as EventBody);
     } else {

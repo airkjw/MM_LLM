@@ -121,3 +121,170 @@ test('actual App logout during deferred voice save unmounts the owner before its
  await click(document.querySelector('.account-trigger')!);await click(document.querySelector('.logout-action')!);assert.equal(f.counts.logout,1);assert.equal(document.querySelector('.voice-panel'),null);
  await act(async()=>pending.resolve({...thread}));await flush();assert.equal(document.querySelector('.voice-panel'),null);assert.doesNotMatch(document.body.textContent!,/텍스트 저장됨/);
 });
+
+function delayed(){let reject!:(error:Error)=>void,resolve!:(value:any)=>void;const promise=new Promise<any>((yes,no)=>{reject=no;resolve=yes});return{promise,reject,resolve};}
+async function startAgain(){await click(button('시작'));}
+for(const type of ['played','interrupted','mute','stop'])test(`registered late old ${type} IPC rejection cannot end explicit replacement session`,async()=>{
+ const f=fixture();await panel(f);await start();const pending=delayed();let sent=false;
+ f.api.controlVoice=async(control:any)=>{f.counts.control++;if(control.type===type&&!sent){sent=true;return pending.promise}};
+ if(type==='played'){
+  await act(async()=>f.emit({type:'audio',sequence:1,sampleRate:24000,bytes:new Uint8Array(4800),itemId:'synthetic-item'}));
+  await act(async()=>{Context.all[0].currentTime=.1;Context.all[0].buffers[0].onended()});
+ }
+ if(type==='interrupted'){
+  await act(async()=>f.emit({type:'audio',sequence:1,sampleRate:24000,bytes:new Uint8Array(4800),itemId:'synthetic-item'}));
+  await act(async()=>f.emit({type:'interrupt',interruption:1,itemId:'synthetic-item'}));
+ }
+ if(type==='mute')await click(button('음소거'));
+ if(type==='stop'){
+  f.api.stopVoice=async(_id:string,immediate:boolean)=>{f.counts.stop++;if(!immediate&&!sent){sent=true;f.emit({type:'state',state:'closed'});return pending.promise}};
+  await click(button('종료'));
+ }else await act(async()=>f.emit({type:'state',state:'closed'}));
+ assert.equal(sent,true);await startAgain();assert.equal(f.counts.connect,2);assert.equal(Context.all[1].closed,0);
+ await act(async()=>pending.reject(new Error('synthetic delayed old IPC rejection')));await flush();
+ console.log('OLD_IPC_REJECTION',JSON.stringify({type,secondContextClosed:Context.all[1].closed,secondTrackStops:f.track.stops,state:document.querySelector('.voice-actions [role="status"]')?.textContent,error:document.querySelector('[role="alert"]')?.textContent}));
+ assert.equal(Context.all[1].closed,0,'late previous-session rejection disposed the current session');assert.match(document.querySelector('.voice-actions [role="status"]')!.textContent!,/마이크 사용 중/);assert.equal(f.counts.sub,1);
+});
+test('registered actual voice status visibly distinguishes listening, thinking, responding alongside microphone state',async()=>{
+ const f=fixture();await panel(f);await start();const observed:Record<string,string>={};for(const activity of ['listening','thinking','responding']){await act(async()=>f.emit({type:'activity',activity}));observed[activity]=document.querySelector('.voice-actions [role="status"]')!.textContent!;}
+ console.log('VOICE_ACTIVITY_RENDERING',JSON.stringify(observed));assert.match(observed.thinking,/생각 중/);assert.match(observed.responding,/응답 중/);assert.match(observed.listening,/듣는 중/);
+});
+
+
+test('registered collapsed completed conversation must not offer Save after actual main IPC discarded its claim',{timeout:10000},async()=>{
+ const {fork}=await import('node:child_process');const {once}=await import('node:events');const f=fixture();const child=fork('tests/fixtures/realtime-main-child.mjs',[],{execArgv:[],stdio:['ignore','pipe','pipe','ipc']});child.stdout?.on('data',b=>process.stdout.write(b));child.stderr?.on('data',b=>process.stderr.write(b));
+ let seq=0;const pending=new Map<number,{resolve:(v:any)=>void;reject:(e:Error)=>void}>();let readyResolve!:(value:any)=>void,readyReject!:(e:Error)=>void;const ready=new Promise<any>((yes,no)=>{readyResolve=yes;readyReject=no});
+ child.on('error',readyReject);child.on('message',(r:any)=>{if(r.kind==='ready')readyResolve(r.target);if(r.kind==='event')f.emit(r.event);if(r.kind==='response'){const p=pending.get(r.seq);pending.delete(r.seq);if(r.error)p?.reject(new Error(r.error));else p?.resolve(r.value)}});
+ const invoke=(name:string,...args:any[])=>new Promise<any>((resolve,reject)=>{const n=++seq;pending.set(n,{resolve,reject});child.send({kind:'invoke',name,args,seq:n})});
+ let target:any;
+ try{target=await ready;
+  f.api.prepareVoice=async(r:any)=>{f.counts.prepare++;return invoke('voice:prepare',r)};
+  f.api.connectVoice=async(id:string)=>{f.counts.connect++;return invoke('voice:connect',id)};
+  f.api.controlVoice=async(r:any)=>invoke('voice:control',r);f.api.sendVoiceFrame=async(r:any)=>invoke('voice:frame',r);
+  f.api.stopVoice=async(id:string,immediate:boolean)=>{f.counts.stop++;return invoke('voice:stop',id,immediate)};
+  f.api.saveVoiceText=async(id:string,threadId:string,consent:boolean)=>{f.counts.save++;return invoke('voice:save-text',id,threadId,consent)};
+  await render(<VoicePanel models={models} threadId={target.id} canApply onApply={f.onApply} onSaved={()=>{}} onUsageChanged={()=>{}}/>);await act(async()=>{document.querySelector('details')!.open=true});await flush();await start();
+  await act(async()=>invoke('fixture:transcript'));await flush();await click(button('종료'));await click(document.querySelector('[aria-label="음성 텍스트 암호화 저장 동의"]')!);assert.equal(button('텍스트 저장').disabled,false);assert.equal((await invoke('inspect')).hasCompleted,true);
+  await act(async()=>{document.querySelector('details')!.open=false});await flush();await act(async()=>{document.querySelector('details')!.open=true});await flush();const discarded=await invoke('inspect');assert.equal(discarded.hasCompleted,false);const enabled=!button('텍스트 저장').disabled;
+  if(enabled)await click(button('텍스트 저장'));const observed=await invoke('inspect');console.log('COLLAPSED_COMPLETED_SAVE_ACTUAL_MAIN',JSON.stringify({enabledAfterDiscard:enabled,hasCompleted:observed.hasCompleted,saveCalls:f.counts.save,storedMessages:observed.thread.messages.length,error:document.body.textContent?.includes('저장하지 못했습니다')}));
+  assert.equal(enabled,false,'reopened conversation offers Save for a claim already discarded by actual main');
+ }finally{await render(<></>);const exited=once(child,'exit');child.send({kind:'quit',seq:++seq});await exited;}
+});
+
+
+test('registered still-owned control/stop/audio failures close resources, show an error and allow explicit restart',async()=>{
+ for(const type of ['played','interrupted','mute','stop','frame']){
+  const f=fixture();await panel(f);await start();
+  f.api.controlVoice=async(control:any)=>{if(control.type===type)throw new Error('synthetic owned control rejection')};
+  if(type==='played'||type==='interrupted')await act(async()=>f.emit({type:'audio',sequence:1,sampleRate:24000,bytes:new Uint8Array(4800),itemId:'owned'}));
+  if(type==='played')await act(async()=>{Context.all[0].currentTime=.1;Context.all[0].buffers[0].onended()});
+  if(type==='interrupted')await act(async()=>f.emit({type:'interrupt',interruption:1,itemId:'owned'}));
+  if(type==='mute')await click(button('음소거'));
+  if(type==='stop'){f.api.stopVoice=async(_id:string,immediate:boolean)=>{if(!immediate)throw new Error('synthetic owned stop rejection')};await click(button('종료'))}
+  if(type==='frame'){f.api.sendVoiceFrame=async()=>{throw new Error('synthetic owned frame rejection')};await act(async()=>Worklet.all[0].port.onmessage({data:{samples:new Float32Array(4801)}}))}
+  await flush();assert.equal(Context.all[0].closed,1);assert.equal(f.track.stops,1);assert.equal(f.counts.sub,0);assert.ok(document.querySelector('[role="alert"]'));assert.equal(button('시작').disabled,false);
+  f.api.controlVoice=async()=>{};await click(button('시작'));assert.equal(f.counts.connect,2);assert.equal(Context.all[1].closed,0);await render(<></>);
+ }
+});
+test('registered retired control results after target change, unmount or close do not change a replacement owner',async()=>{
+ for(const boundary of ['target','unmount','collapse'])for(const outcome of ['resolve','reject']){
+  const f=fixture();await panel(f);await start();const pending=delayed();
+  f.api.controlVoice=async(control:any)=>control.type==='mute'?pending.promise:undefined;await click(button('음소거'));
+  if(boundary==='target')await render(<VoicePanel models={models} threadId="replacement-target" canApply onApply={f.onApply} onSaved={()=>{}} onUsageChanged={()=>{}}/>);
+  if(boundary==='unmount'){await render(<></>);await panel(f)}
+  if(boundary==='collapse'){await act(async()=>{document.querySelector('details')!.open=false});await flush();await act(async()=>{document.querySelector('details')!.open=true});await flush()}
+  const consent=document.querySelector<HTMLInputElement>('[aria-label="음성 외부 전송과 과금 동의"]')!;if(!consent.checked)await click(consent);await click(button('시작'));assert.equal(f.counts.connect,2);
+  await act(async()=>{if(outcome==='resolve')pending.resolve(undefined);else pending.reject(new Error('synthetic retired rejection'))});await flush();
+  assert.equal(Context.all[1].closed,0);assert.equal(f.counts.sub,1);assert.equal(document.querySelector('[role="alert"]'),null);assert.match(document.querySelector('.voice-actions [role="status"]')!.textContent!,/마이크 사용 중/);await render(<></>);
+ }
+});
+test('registered activity remains accessible beside mic/time through queued extended-thinking filler, mute, dictation and terminal states',async()=>{
+ for(const theme of ['light','dark']){
+  document.documentElement.dataset.theme=theme;browser.innerWidth=420;browser.innerHeight=820;
+  const f=fixture();await panel(f);const status=()=>document.querySelector('.voice-actions [role="status"]')!;
+  assert.match(status().textContent!,/시작 전/);assert.doesNotMatch(status().textContent!,/응답 중|생각 중/);
+  await start();button('음소거').focus();assert.equal(document.activeElement,button('음소거'));assert.equal(status().getAttribute('aria-live'),'polite');
+  await act(async()=>f.emit({type:'audio',sequence:1,sampleRate:24000,bytes:new Uint8Array(4800)}));await act(async()=>f.emit({type:'activity',activity:'thinking'}));
+  assert.match(status().textContent!,/마이크 켜짐.*응답 중.*0초/);
+  await click(button('음소거'));assert.match(status().textContent!,/마이크 음소거.*응답 중/);
+  await act(async()=>{Context.all[0].currentTime=.1;Context.all[0].buffers[0].onended()});assert.match(status().textContent!,/마이크 음소거.*생각 중/);
+  await act(async()=>f.emit({type:'activity',activity:'listening'}));assert.match(status().textContent!,/마이크 음소거.*듣는 중/);
+  await click(button('종료'));assert.match(status().textContent!,/종료/);assert.doesNotMatch(status().textContent!,/응답 중|생각 중|마이크 켜짐/);
+  await select(document.querySelector('[aria-label="음성 용도"]')! as HTMLSelectElement,'dictation');await start();assert.match(status().textContent!,/듣는 중/);
+  await act(async()=>f.emit({type:'text',final:'retained dictation',provisional:'partial'}));await act(async()=>{document.querySelector('details')!.open=false});await flush();await act(async()=>{document.querySelector('details')!.open=true});await flush();
+  assert.equal(button('확정문을 초안에 추가').disabled,false);await click(button('확정문을 초안에 추가'));assert.equal(f.applied(),'retained dictation');assert.equal(f.counts.streams,0);assert.equal(f.counts.save,0);await render(<></>);
+ }
+ browser.innerWidth=1024;browser.innerHeight=900;
+});
+
+// Synthetic process/device wiring only; every invoke below uses registered main,
+// the actual manager, encrypted vault and atomic replacement.
+async function withMainPanel(run:(f:ReturnType<typeof fixture>,invoke:(name:string,...args:any[])=>Promise<any>)=>Promise<void>){
+ const {fork}=await import('node:child_process');const {once}=await import('node:events');const f=fixture();
+ const child=fork('tests/fixtures/realtime-main-child.mjs',[],{execArgv:[],stdio:['ignore','pipe','pipe','ipc']});
+ child.stdout?.on('data',b=>process.stdout.write(b));child.stderr?.on('data',b=>process.stderr.write(b));let seq=0;
+ const pending=new Map<number,{resolve:(v:any)=>void;reject:(e:Error)=>void}>();let readyResolve!:(v:any)=>void,readyReject!:(e:Error)=>void;
+ const ready=new Promise<any>((yes,no)=>{readyResolve=yes;readyReject=no});child.on('error',readyReject);
+ child.on('message',(r:any)=>{if(r.kind==='ready')readyResolve(r.target);if(r.kind==='event')f.emit(r.event);if(r.kind==='response'){const p=pending.get(r.seq);pending.delete(r.seq);if(r.error)p?.reject(new Error(r.error));else p?.resolve(r.value)}});
+ const invoke=(name:string,...args:any[])=>new Promise<any>((resolve,reject)=>{const n=++seq;pending.set(n,{resolve,reject});child.send({kind:'invoke',name,args,seq:n})});
+ try{
+  const target=await ready;
+  f.api.prepareVoice=async(r:any)=>{f.counts.prepare++;return invoke('voice:prepare',r)};f.api.connectVoice=async(id:string)=>{f.counts.connect++;return invoke('voice:connect',id)};
+  f.api.controlVoice=async(r:any)=>invoke('voice:control',r);f.api.sendVoiceFrame=async(r:any)=>invoke('voice:frame',r);f.api.stopVoice=async(id:string,immediate:boolean)=>{f.counts.stop++;return invoke('voice:stop',id,immediate)};
+  f.api.saveVoiceText=async(id:string,threadId:string,consent:boolean)=>{f.counts.save++;return invoke('voice:save-text',id,threadId,consent)};
+  await render(<VoicePanel models={models} threadId={target.id} canApply onApply={f.onApply} onSaved={()=>{}} onUsageChanged={()=>{}}/>);
+  await act(async()=>{document.querySelector('details')!.open=true});await flush();await run(f,invoke);
+ }finally{await render(<></>);const exited=once(child,'exit');child.send({kind:'quit',seq:++seq});await exited}
+}
+async function mainReadyToSave(invoke:(name:string,...args:any[])=>Promise<any>){
+ const consent=document.querySelector<HTMLInputElement>('[aria-label="음성 외부 전송과 과금 동의"]')!;if(!consent.checked)await click(consent);await click(button('시작'));
+ await act(async()=>invoke('fixture:transcript'));await flush();await click(button('종료'));await click(document.querySelector('[aria-label="음성 텍스트 암호화 저장 동의"]')!);
+}
+test('registered actual main/component completed claims are discarded on cancelled backups or failed refresh with no invalid save action',{timeout:20000},async()=>{
+ for(const operation of ['backup:export','backup:restore','session:get'])await withMainPanel(async(f,invoke)=>{
+  await mainReadyToSave(invoke);assert.equal(button('텍스트 저장').disabled,false);assert.equal(f.counts.sub,1);
+  await act(async()=>invoke('fixture:transition',operation));await flush();assert.equal((await invoke('inspect')).hasCompleted,false);
+  assert.equal(button('텍스트 저장').disabled,true);assert.equal(document.querySelector('[aria-label="음성 텍스트 미리보기"]'),null);
+  assert.match(document.body.textContent!,/확정문.*폐기/);assert.equal(f.counts.sub,0);assert.equal(f.counts.save,0);
+  await mainReadyToSave(invoke);await click(button('텍스트 저장'));assert.equal((await invoke('inspect')).thread.messages.length,1);assert.equal(button('텍스트 저장됨').disabled,true);
+ });
+});
+test('registered actual main/component active transition releases microphone, playback, timers and listener before explicit restart',{timeout:20000},async()=>{
+ for(const operation of ['backup:export','backup:restore','session:get'])await withMainPanel(async(f,invoke)=>{
+  await start();await click(button('음소거'));await act(async()=>invoke('fixture:transition',operation));await flush();
+  assert.equal((await invoke('inspect')).size,0);assert.equal(Context.all[0].closed,1);assert.equal(f.track.stops,1);assert.equal(f.counts.sub,0);
+  assert.match(document.querySelector('.voice-actions [role="status"]')!.textContent!,/종료/);assert.match(document.body.textContent!,/폐기/);
+  const status=document.querySelector('.voice-actions [role="status"]')!.textContent;await flush();assert.equal(document.querySelector('.voice-actions [role="status"]')!.textContent,status);assert.equal(f.counts.connect,1);
+  await click(button('시작'));assert.equal(f.counts.connect,2);assert.equal(Context.all[1].closed,0);
+ });
+});
+test('registered actual main/component failed save retries, collapse invalidates pending result, and a new pending claim survives it',{timeout:20000},async()=>{
+ await withMainPanel(async(f,invoke)=>{
+  await mainReadyToSave(invoke);await invoke('fixture:fail-save');await click(button('텍스트 저장'));assert.equal(button('텍스트 저장').disabled,false);assert.equal((await invoke('inspect')).thread.messages.length,0);
+  await invoke('fixture:repair-save');await invoke('fixture:hold-save');await click(button('텍스트 저장'));await invoke('fixture:wait-save');
+  await act(async()=>{document.querySelector('details')!.open=false});await flush();await act(async()=>{document.querySelector('details')!.open=true});await flush();
+  assert.equal(button('텍스트 저장').disabled,true);assert.match(document.body.textContent!,/폐기/);assert.equal((await invoke('inspect')).hasCompleted,false);
+  await mainReadyToSave(invoke);await click(button('텍스트 저장'));assert.equal(f.counts.save,3);assert.equal(button('시작').disabled,true);
+  await act(async()=>invoke('fixture:release-save'));await flush();assert.equal((await invoke('inspect')).thread.messages.length,1);assert.equal(button('텍스트 저장됨').disabled,true);assert.equal(f.counts.sub,0);
+ });
+});
+test('registered actual main/component pending encrypted save invalidated by transition cannot silently re-enable discarded text',{timeout:20000},async()=>{
+ await withMainPanel(async(f,invoke)=>{
+  await mainReadyToSave(invoke);await invoke('fixture:hold-save');await click(button('텍스트 저장'));await invoke('fixture:wait-save');
+  await act(async()=>invoke('fixture:transition','backup:export'));await act(async()=>invoke('fixture:release-save'));await flush();
+  assert.equal((await invoke('inspect')).thread.messages.length,0);assert.equal(button('텍스트 저장').disabled,true);assert.match(document.body.textContent!,/폐기/);assert.doesNotMatch(document.body.textContent!,/저장하지 못했습니다/);
+  await mainReadyToSave(invoke);await click(button('텍스트 저장'));assert.equal((await invoke('inspect')).thread.messages.length,1);assert.equal(f.counts.save,2);
+ });
+});
+
+test('registered Stop retires pending controls during Soniox final drain while the owned stop failure still reports truthfully',async()=>{
+ const f=fixture();await panel(f);await select(document.querySelector('[aria-label="음성 용도"]')! as HTMLSelectElement,'dictation');await start();
+ const mutePending=delayed(),stopPending=delayed();f.api.controlVoice=async(control:any)=>control.type==='mute'?mutePending.promise:undefined;
+ f.api.stopVoice=async(_id:string,immediate:boolean)=>{f.counts.stop++;if(!immediate)return stopPending.promise};
+ await click(button('음소거'));await click(button('종료'));await act(async()=>mutePending.reject(new Error('synthetic retired mute during drain')));await flush();
+ assert.equal(f.counts.sub,1);assert.equal(document.querySelector('[role="alert"]'),null);assert.match(document.querySelector('.voice-actions [role="status"]')!.textContent!,/확정문 수신 중/);
+ await act(async()=>f.emit({type:'text',final:'SYNTHETIC_DRAIN_FINAL',provisional:''}));
+ await act(async()=>stopPending.reject(new Error('synthetic owned stop failure')));await flush();
+ assert.match(document.querySelector('[role="alert"]')!.textContent!,/종료.*확인/);assert.equal(f.counts.sub,0);assert.equal(button('확정문을 초안에 추가').disabled,false);
+ await click(button('확정문을 초안에 추가'));assert.equal(f.applied(),'SYNTHETIC_DRAIN_FINAL');assert.equal(f.counts.save,0);assert.equal(f.counts.streams,0);
+});

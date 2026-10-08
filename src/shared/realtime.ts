@@ -8,6 +8,7 @@ export type VoiceControl = { id: string; type: 'received'; sequence: number } | 
   { id: string; type: 'played'; sequence: number; playedSamples: number } |
   { id: string; type: 'interrupted'; interruption: number; playedMs: number };
 export type VoiceEvent = { id: string; delivery?: number } & (
+  { type: 'discard'; message: string } |
   { type: 'state'; state: VoiceState; message?: string } |
   { type: 'audio'; sequence: number; bytes: Uint8Array; sampleRate: 24000; itemId?: string } |
   { type: 'interrupt'; interruption: number; itemId?: string } |

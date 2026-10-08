@@ -145,6 +145,13 @@ const voiceManager = new RealtimeSessionManager({
 const documentRoot = () => resolve(__dirname, "../renderer");
 
 function assertSessionStable(): void { sessionTransitions.assertIdle(); }
+function runVoiceSessionTransition<T>(operation: (generation: number) => Promise<T>): Promise<T> {
+  // Notify while the old identity still owns the socket and completed text claim.
+  // Even a cancelled backup or failed refresh invalidates the epoch below.
+  assertSessionStable();
+  voiceManager.abort('계정 확인·백업 작업으로 음성을 종료하고 저장하지 않은 확정문을 폐기했습니다. 다시 사용하려면 시작해 주세요.');
+  return sessionTransitions.run(operation);
+}
 async function runSessionBound<T>(operation: (
   controller: AbortController, identity: AccountSessionIdentity
 ) => Promise<T>): Promise<T> {
@@ -397,7 +404,7 @@ function registerHandlers(): void {
     const password = rawPassword;
     if (password.length < 12) throw new Error("백업 암호는 12자 이상 입력해 주세요.");
     if (activeRuns.size) throw new Error("진행 중인 요청이 끝난 뒤 백업해 주세요.");
-    return sessionTransitions.run(async () => {
+    return runVoiceSessionTransition(async () => {
       const selected = await dialog.showSaveDialog(owner, { title: "암호화 백업 저장",
         defaultPath: `MM_LLM-${new Date().toISOString().slice(0, 10)}.mmbackup`, filters: [{ name: "MM_LLM 암호화 백업", extensions: ["mmbackup"] }] });
       if (selected.canceled || !selected.filePath) return false;
@@ -412,7 +419,7 @@ function registerHandlers(): void {
     const password = rawPassword;
     if (password.length < 12) throw new Error("백업 암호는 12자 이상 입력해 주세요.");
     if (activeRuns.size) throw new Error("진행 중인 요청이 끝난 뒤 복원해 주세요.");
-    return sessionTransitions.run(async () => {
+    return runVoiceSessionTransition(async () => {
       const selected = await dialog.showOpenDialog(owner, { title: "암호화 백업 복원", properties: ["openFile"],
         filters: [{ name: "MM_LLM 암호화 백업", extensions: ["mmbackup"] }] });
       if (selected.canceled || !selected.filePaths[0]) return false;
@@ -458,7 +465,7 @@ function registerHandlers(): void {
   ipcMain.handle("session:get", async (event) => {
     trustedInvoke(event);
     if (sessionStateRequest) return sessionStateRequest;
-    const request = sessionTransitions.run(() => sessionState());
+    const request = runVoiceSessionTransition(() => sessionState());
     sessionStateRequest = request;
     try { return await request; }
     finally { if (sessionStateRequest === request) sessionStateRequest = null; }
@@ -469,7 +476,7 @@ function registerHandlers(): void {
     if (activeRuns.size || activeMediaRuns || activeModelRefreshes) {
       throw new Error("진행 중인 요청이 끝난 뒤 계정을 변경해 주세요.");
     }
-    return sessionTransitions.run(async () => {
+    return runVoiceSessionTransition(async () => {
       if (activeRuns.size || activeMediaRuns || activeModelRefreshes) {
         throw new Error("진행 중인 요청이 끝난 뒤 계정을 변경해 주세요.");
       }
@@ -503,7 +510,7 @@ function registerHandlers(): void {
     if (activeRuns.size || activeMediaRuns || activeModelRefreshes) {
       throw new Error("진행 중인 요청이 끝난 뒤 로그아웃해 주세요.");
     }
-    return sessionTransitions.run(async () => {
+    return runVoiceSessionTransition(async () => {
       if (activeRuns.size || activeMediaRuns || activeModelRefreshes) {
         throw new Error("진행 중인 요청이 끝난 뒤 로그아웃해 주세요.");
       }
@@ -522,7 +529,7 @@ function registerHandlers(): void {
     if (activeRuns.size || activeMediaRuns || activeModelRefreshes) {
       throw new Error("진행 중인 요청이 끝난 뒤 API 키를 교체해 주세요.");
     }
-    return sessionTransitions.run(async () => {
+    return runVoiceSessionTransition(async () => {
       if (activeRuns.size || activeMediaRuns || activeModelRefreshes) {
         throw new Error("진행 중인 요청이 끝난 뒤 API 키를 교체해 주세요.");
       }

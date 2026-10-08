@@ -29,6 +29,7 @@ export class VoiceAudio {
   private itemPlayed=new Map<string,number>();
   private id:string;private rate:16000|24000;private hooks:VoiceAudioHooks;
   constructor(id:string,rate:16000|24000,hooks:VoiceAudioHooks) {this.id=id;this.rate=rate;this.hooks=hooks;}
+  get isPlaying():boolean {return this.outputs.size>0;}
   async prepare():Promise<void> {
     const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true},video:false});
     if(this.closed){stream.getTracks().forEach(t=>t.stop());return;}

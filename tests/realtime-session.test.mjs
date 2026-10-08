@@ -90,3 +90,26 @@ test('actual completed reservations lose ownership on epoch, profile, window own
   assert.throws(()=>claim.assertCurrent());claim.rollback();claim.commit();assert.throws(()=>f.manager.claimText(ID));
  }
 });
+
+test('registered saturated delivery budget cannot suppress terminal discard or recreate a completed claim during abort',async()=>{
+ const f=fixture();await completed(f);f.response.token='synthetic_fresh_saturation_token';
+ f.manager.begin({id:ID2,modelId:f.response.model,consent:true});await f.manager.connect(ID2,'synthetic');f.socket().open();f.socket().message({type:'session.updated'});
+ f.socket().message({type:'response.output_audio_transcript.done',transcript:'SYNTHETIC_SATURATED_FINAL'});
+ while(f.manager.current.deliveries.size<32)f.socket().message({type:'response.done',response:{status:'completed'}});
+ assert.equal(f.manager.size,1);const before=f.events.length;f.manager.abort();
+ assert.equal(f.manager.size,0);assert.equal(f.socket().readyState,3);assert.equal(f.socket().eventNames().length,0);assert.throws(()=>f.manager.claimText(ID2));
+ assert.ok(f.events.slice(before).some(e=>e.type==='discard'));assert.equal(f.events.at(-1).state,'closed');assert.match(f.events.at(-1).message,/폐기/);
+});
+test('registered Gemini confirmed streams stay bounded and interim or interrupted output never becomes final at Stop',async()=>{
+ for(const model of ['gemini-3.8-live','gemini-3.8-live-extended-thinking']){
+  const f=fixture(model);f.manager.begin({id:ID,modelId:model,consent:true});await f.manager.connect(ID,'synthetic');f.socket().open();f.socket().message({setupComplete:{}});
+  f.socket().message({serverContent:{inputTranscription:{text:'confirmed'},interimInputTranscription:{text:'draft'}}});
+  f.socket().message({serverContent:{outputTranscription:{text:'unfinished'}}});f.socket().message({serverContent:{interrupted:true,turnComplete:true,interactionStatus:'IDLE'}});
+  f.socket().message({serverContent:{interimInputTranscription:{text:'only partial'}}});f.manager.stop(ID);
+  assert.equal(f.manager.claimText(ID).text,'나: confirmed\n');assert.equal(f.manager.size,0);
+  const g=fixture(model);g.manager.begin({id:ID,modelId:model,consent:true});await g.manager.connect(ID,'synthetic');g.socket().open();g.socket().message({setupComplete:{}});
+  g.socket().message({serverContent:{inputTranscription:{text:'x'.repeat(11995)}}});assert.equal(g.manager.size,1);
+  g.socket().message({serverContent:{interimInputTranscription:{text:'y'.repeat(10)}}});assert.equal(g.manager.size,0);assert.equal(g.events.at(-1).state,'error');
+  const claim=g.manager.claimText(ID);assert.equal(claim.text.length,11999);assert.doesNotMatch(claim.text,/y/);
+ }
+});

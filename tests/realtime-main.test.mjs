@@ -174,3 +174,124 @@ test('actual encrypted replacement already committed is never duplicated after a
  try{await assert.rejects(()=>call('voice:save-text',ID,thread.id,true),/directory sync/);}finally{delete globalThis.__voiceAtomicIO;}
  await assert.rejects(()=>call('voice:save-text',ID,thread.id,true));assert.equal((await storage.getThread(thread.id)).messages.length,1);
 });
+
+test('registered backup export cancellation must leave an owned session or immediately clean socket and notify renderer',async()=>{
+ await session();globalThis.fetch=async()=>Response.json(mint());await start();call('voice:control',{id:ID,type:'mute',muted:true});
+ globalThis.__voiceElectron.dialog.showSaveDialog=async()=>({canceled:true});const before=events.length;await call('backup:export','synthetic-backup-password');
+ // A cancelled file dialog is a normal existing user action. Its generation must not strand an active socket.
+ const observed={managerSize:manager.size,socketState:socket.readyState,listeners:socket.eventNames(),eventsAfter:events.slice(before)};console.log('BACKUP_EXPORT_BOUNDARY',JSON.stringify(observed));
+ try{assert.equal(manager.size,0,'backup transition invalidated session ownership but retained the active socket');assert.ok(events.slice(before).some(e=>e.type==='state'&&['closed','error'].includes(e.state)),'renderer must be notified of cleanup')}finally{manager.abort()}
+});
+test('registered backup restore cancellation must leave an owned session or immediately clean socket and notify renderer',async()=>{
+ await session();globalThis.fetch=async()=>Response.json(mint());await start();call('voice:control',{id:ID,type:'mute',muted:true});
+ globalThis.__voiceElectron.dialog.showOpenDialog=async()=>({canceled:true,filePaths:[]});const before=events.length;await call('backup:restore','synthetic-backup-password');
+ console.log('BACKUP_RESTORE_BOUNDARY',JSON.stringify({managerSize:manager.size,socketState:socket.readyState,listeners:socket.eventNames(),eventsAfter:events.slice(before)}));
+ try{assert.equal(manager.size,0,'restore transition invalidated session ownership but retained the active socket');assert.ok(events.slice(before).some(e=>e.type==='state'&&['closed','error'].includes(e.state)))}finally{manager.abort()}
+});
+
+
+test('registered session:get read refresh preserves same-account voice ownership or explicitly cleans and notifies',async()=>{
+ await session();globalThis.fetch=async()=>Response.json(mint());await start();call('voice:control',{id:ID,type:'mute',muted:true});
+ globalThis.fetch=async(url)=>url.includes('/models/')?Response.json({data:models}):Response.json({total:{remaining:1000}});const before=events.length;const state=await call('session:get');assert.equal(state.authenticated,true);
+ socket.message({type:'response.output_audio_transcript.done',item_id:'refresh-synthetic-item',transcript:'SYNTHETIC_AFTER_READ_REFRESH'});
+ const preserved=events.slice(before).some(e=>e.type==='text'&&e.final.includes('SYNTHETIC_AFTER_READ_REFRESH'));const cleaned=manager.size===0&&socket.readyState===3&&events.slice(before).some(e=>e.type==='state'&&['closed','error'].includes(e.state));
+ console.log('READ_REFRESH_BOUNDARY',JSON.stringify({preserved,cleaned,managerSize:manager.size,socketState:socket.readyState,listeners:socket.eventNames(),eventsAfter:events.slice(before)}));assert.ok(preserved||cleaned,'session read incremented generation and stranded a silent active socket without renderer notification');
+});
+
+
+for(const model of ['gemini-3.8-live','gemini-3.8-live-extended-thinking'])test(`registered ${model} inputTranscription after turnComplete must survive opt-in actual encrypted save`,async()=>{
+ await session();gateway.commitGatewaySession('synthetic-voice-profile',[...models,{id:model,type:'realtime'}]);globalThis.fetch=async()=>Response.json(mint(model));const thread=await storage.createThread({modelId:'gpt-6-astra'});await start(model);
+ socket.message({serverContent:{outputTranscription:{text:'SYNTHETIC_REPLY'},turnComplete:true,interactionStatus:'IDLE'}});
+ // Raw API says inputTranscription is independently delivered, with no guaranteed order. It is distinct from interimInputTranscription.
+ socket.message({serverContent:{inputTranscription:{text:'SYNTHETIC_CONFIRMED_INPUT_AFTER_TURN'}}});const last=events.filter(e=>e.type==='text').at(-1);call('voice:stop',ID,false);const saved=await call('voice:save-text',ID,thread.id,true);
+ console.log('INDEPENDENT_GEMINI_FINAL_ORDER',JSON.stringify({model,finalPreview:last.final,provisional:last.provisional,persisted:saved.messages[0].text}));assert.match(saved.messages[0].text,/SYNTHETIC_CONFIRMED_INPUT_AFTER_TURN/);assert.equal(saved.modelId,'gpt-6-astra');
+});
+
+
+test('registered transition teardown precedes epoch for preparing, minting, handshake, active, muted and Soniox stopping owners',async()=>{
+ for(const stage of ['preparing','minting','handshake','active','muted','stopping'])for(const operation of ['backup:export','backup:restore','session:get']){
+  await session();const model=stage==='stopping'?'stt-rt-v5':models[1].id;
+  let releaseMint;globalThis.fetch=async()=>Response.json(mint(model));
+  const previousSocket=socket;call('voice:prepare',{id:ID,modelId:model,consent:true});
+  let connecting=Promise.resolve();
+  if(stage==='minting'){
+   globalThis.fetch=()=>new Promise(resolve=>releaseMint=resolve);connecting=call('voice:connect',ID);
+   while(!releaseMint)await new Promise(r=>setTimeout(r,1));
+  }else if(stage!=='preparing'){
+   await call('voice:connect',ID);socket.open();if(stage!=='handshake'&&model.startsWith('gpt-'))socket.message({type:'session.updated'});
+   if(stage==='muted')call('voice:control',{id:ID,type:'mute',muted:true});
+   if(stage==='stopping')call('voice:stop',ID,false);
+  }
+  const ownedSocket=socket!==previousSocket?socket:undefined;const oldEpoch=manager.deps.identity().epoch;
+  const deliveries=[];const send=contents.send;contents.send=(name,event)=>{deliveries.push({event,epoch:manager.deps.identity().epoch});send(name,event)};
+  globalThis.__voiceElectron.dialog.showSaveDialog=async()=>({canceled:true});globalThis.__voiceElectron.dialog.showOpenDialog=async()=>({canceled:true,filePaths:[]});
+  globalThis.fetch=async()=>Response.json({detail:'synthetic failed refresh'},{status:401});
+  try{
+   await call(operation,...(operation==='session:get'?[]:['synthetic-backup-password']));
+   if(releaseMint)releaseMint(Response.json(mint(model)));await connecting;
+   assert.equal(manager.size,0);assert.equal(manager.permissionPending,false);
+   if(ownedSocket){assert.equal(ownedSocket.readyState,3);assert.equal(ownedSocket.eventNames().length,0)}
+   assert.ok(deliveries.some(d=>d.event.type==='discard'&&d.epoch===oldEpoch));
+   assert.ok(deliveries.some(d=>d.event.type==='state'&&d.event.state==='closed'&&d.epoch===oldEpoch));
+   assert.equal(manager.deps.identity().epoch,oldEpoch+1);assert.throws(()=>manager.claimText(ID));
+  }finally{contents.send=send;if(releaseMint)releaseMint(Response.json(mint(model)));await connecting;manager.abort()}
+ }
+});
+test('registered cancelled backup or failed read explicitly invalidates completed preview and permits only a fresh explicit save',async()=>{
+ for(const operation of ['backup:export','backup:restore','session:get']){
+  await session();globalThis.fetch=async()=>Response.json(mint());const thread=await storage.createThread({modelId:'gpt-6-astra'});await completedText();
+  const before=events.length;const oldEpoch=manager.deps.identity().epoch;
+  globalThis.__voiceElectron.dialog.showSaveDialog=async()=>({canceled:true});globalThis.__voiceElectron.dialog.showOpenDialog=async()=>({canceled:true,filePaths:[]});
+  globalThis.fetch=async()=>{throw new Error('synthetic failed account read')};
+  await call(operation,...(operation==='session:get'?[]:['synthetic-backup-password']));
+  assert.equal(manager.deps.identity().epoch,oldEpoch+1);assert.ok(events.slice(before).some(e=>e.type==='discard'));assert.throws(()=>manager.claimText(ID));
+  assert.equal((await storage.getThread(thread.id)).messages.length,0);
+  gateway.commitGatewaySession('synthetic-voice-profile',models);globalThis.fetch=async()=>Response.json(mint());await completedText();
+  const saved=await call('voice:save-text',ID,thread.id,true);assert.equal(saved.messages.length,1);await assert.rejects(()=>call('voice:save-text',ID,thread.id,true));
+ }
+});
+test('registered transition cancels an uncommitted pending save without consuming text already committed before transition',async()=>{
+ for(const boundary of ['encryption','directory-sync'])for(const operation of ['backup:export','backup:restore','session:get']){
+  await session();globalThis.fetch=async()=>Response.json(mint());const thread=await storage.createThread({modelId:'gpt-6-astra'});await completedText();
+  const entered=deferred(),release=deferred(),encrypt=globalThis.__voiceElectron.safeStorage.encryptStringAsync;
+  if(boundary==='encryption')globalThis.__voiceElectron.safeStorage.encryptStringAsync=async text=>{entered.resolve();await release.promise;return encrypt(text)};
+  else globalThis.__voiceAtomicIO={...fs,open:async(path,...args)=>{const h=await fs.open(path,...args);if(args[0]!=='r')return h;return{close:()=>h.close(),sync:async()=>{entered.resolve();await release.promise;await h.sync()}}}};
+  try{
+   const save=call('voice:save-text',ID,thread.id,true);const rejected=assert.rejects(save,/계정|세션/);await entered.promise;
+   globalThis.__voiceElectron.dialog.showSaveDialog=async()=>({canceled:true});globalThis.__voiceElectron.dialog.showOpenDialog=async()=>({canceled:true,filePaths:[]});
+   globalThis.fetch=async(url)=>url.includes('/models/')?Response.json({data:models}):Response.json({total:{remaining:1000}});
+   const transition=call(operation,...(operation==='session:get'?[]:['synthetic-backup-password']));release.resolve();await rejected;await transition;
+   assert.equal((await storage.getThread(thread.id)).messages.length,boundary==='encryption'?0:1);
+   await assert.rejects(()=>call('voice:save-text',ID,thread.id,true));
+  }finally{release.resolve();globalThis.__voiceElectron.safeStorage.encryptStringAsync=encrypt;delete globalThis.__voiceAtomicIO;manager.abort()}
+ }
+});
+test('registered both Gemini models persist only confirmed input and completed output across ordering, Stop and interruption',async()=>{
+ const variants=[
+  [{inputTranscription:{text:'INPUT_BEFORE'}},{outputTranscription:{text:'REPLY'},turnComplete:true,interactionStatus:'IDLE'}],
+  [{outputTranscription:{text:'REPLY'},generationComplete:true},{inputTranscription:{text:'INPUT_LATE'}},{turnComplete:true,interactionStatus:'IDLE'}],
+  [{inputTranscription:{text:'INPUT_STOP'}},{outputTranscription:{text:'UNFINISHED_OUTPUT'}},{interimInputTranscription:{text:'INTERIM_ONLY'}}],
+  [{inputTranscription:{text:'INPUT_INTERRUPT'}},{outputTranscription:{text:'UNFINISHED_OUTPUT'}},{interrupted:true,outputTranscription:{text:'UNFINISHED_OUTPUT'}},{interimInputTranscription:{text:'INTERIM_ONLY'}},{turnComplete:true,interactionStatus:'IDLE'}],
+  [{outputTranscription:{text:'REPLY'},turnComplete:true,interactionStatus:'IN_PROGRESS'},{interimInputTranscription:{text:'INTERIM_ONLY'}},{inputTranscription:{text:'INPUT_AFTER_FILLER'}}],
+  [{inputTranscription:{text:'REPEATED_INPUT'}},{inputTranscription:{text:'REPEATED_INPUT'}},{turnComplete:true,interactionStatus:'IDLE'}]
+ ];
+ for(const model of ['gemini-3.8-live','gemini-3.8-live-extended-thinking'])for(const messages of variants){
+  await session();gateway.commitGatewaySession('synthetic-voice-profile',[...models,{id:model,type:'realtime'}]);globalThis.fetch=async()=>Response.json(mint(model));const thread=await storage.createThread({modelId:'gpt-6-astra'});await start(model);
+  for(const content of messages)socket.message({serverContent:content});
+  call('voice:stop',ID,false);const saved=await call('voice:save-text',ID,thread.id,true);const text=saved.messages[0].text;
+  const inputs=messages.flatMap(m=>m.inputTranscription?[m.inputTranscription.text]:[]);
+  for(const input of new Set(inputs))assert.equal(text.split(input).length-1,inputs.filter(t=>t===input).length);
+  assert.doesNotMatch(text,/INTERIM_ONLY|UNFINISHED_OUTPUT/);assert.equal(saved.modelId,'gpt-6-astra');assert.equal(saved.messages[0].modelId,model);
+  if(messages.some(m=>m.outputTranscription?.text==='REPLY'))assert.equal(text.split('REPLY').length-1,1);
+  assert.equal((await storage.getThread(thread.id)).messages[0].text,text);
+  const backup=JSON.stringify(await storage.exportPortableBackup());assert.ok(backup.includes(inputs[0]));assert.doesNotMatch(backup,/INTERIM_ONLY|UNFINISHED_OUTPUT|synthetic_ipc_one_use_token/);
+ }
+});
+
+test('registered actual backup transition with saturated deliveries drops all text ownership and socket listeners',async()=>{
+ await session();globalThis.fetch=async()=>Response.json(mint());await start();socket.message({type:'response.output_audio_transcript.done',transcript:'SYNTHETIC_SATURATED_TEXT'});
+ while(manager.current.deliveries.size<32)socket.message({type:'response.done',response:{status:'completed'}});
+ const before=events.length;globalThis.__voiceElectron.dialog.showSaveDialog=async()=>({canceled:true});await call('backup:export','synthetic-backup-password');
+ assert.equal(manager.size,0);assert.equal(socket.readyState,3);assert.equal(socket.eventNames().length,0);assert.throws(()=>manager.claimText(ID));
+ assert.ok(events.slice(before).some(e=>e.type==='discard'));assert.equal(events.at(-1).state,'closed');assert.match(events.at(-1).message,/폐기/);
+});
