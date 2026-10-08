@@ -3,7 +3,7 @@
 ## 상태·범위·소유권
 
 - 계획 기준: `418cb41e5651cc6bfb2ac17737d6c651732913fa`, 1단계 구현 기준: `609c05e9aa4d7aeb154f480521bd5edac4a76f14`, 앱 `v0.5.1`, Orca worktree `chatkhu-api-expansion-20261008`.
-- 사용자가 승인한 순서: **① 네이티브 웹 검색·모델 분류 → ② 논문·법령 검색·문서 검색 → ③ 제공사 코드 실행·공식 미디어 견적 → ④ 실시간 음성**. 1단계 구현·세 지적 보정·로컬 mock gate와 별도 Sol 독립 재검토(PASS)를 완료했고 실행 책임자가 코드를 수락했다. 실계정 확인·main 통합·push·배포는 미실시다. 2단계의 네 보정과 추가 composer 경합 보정은 별도 독립 검토에서 모두 PASS로 확인됐고 실행 책임자가 코드를 수락했다([구현 기록](chatkhu-phase2-implementation-2026-10-08.md)). 수락된 2단계 gate는 Node 256개·DOM 72개, 독립 집중 재검토는 13개가 통과했다. 3단계 최초 구현 gate(Node 277개·DOM 80개) 뒤 독립 검토의 P1 redirect·P2 견적 확실성 지적을 보정했다. 제품 `b8361d6bc2dd04073a3413c768f610ecba8a47ba`의 네 gate와 Node 298개·DOM 82개가 통과했고, 별도 좁은 독립 acceptance 85/85 PASS를 확인해 실행 책임자가 3단계 코드를 수락했다([구현 기록](chatkhu-phase3-implementation-2026-10-08.md)). 4단계는 수락된 3단계 기준에서 순차 구현·별도 독립 검토한다.
+- 사용자가 승인한 순서: **① 네이티브 웹 검색·모델 분류 → ② 논문·법령 검색·문서 검색 → ③ 제공사 코드 실행·공식 미디어 견적 → ④ 실시간 음성**. 1단계 구현·세 지적 보정·로컬 mock gate와 별도 Sol 독립 재검토(PASS)를 완료했고 실행 책임자가 코드를 수락했다. 실계정 확인·main 통합·push·배포는 미실시다. 2단계의 네 보정과 추가 composer 경합 보정은 별도 독립 검토에서 모두 PASS로 확인됐고 실행 책임자가 코드를 수락했다([구현 기록](chatkhu-phase2-implementation-2026-10-08.md)). 수락된 2단계 gate는 Node 256개·DOM 72개, 독립 집중 재검토는 13개가 통과했다. 3단계 최초 구현 gate(Node 277개·DOM 80개) 뒤 독립 검토의 P1 redirect·P2 견적 확실성 지적을 보정했다. 제품 `b8361d6bc2dd04073a3413c768f610ecba8a47ba`의 네 gate와 Node 298개·DOM 82개가 통과했고, 별도 좁은 독립 acceptance 85/85 PASS를 확인해 실행 책임자가 3단계 코드를 수락했다([구현 기록](chatkhu-phase3-implementation-2026-10-08.md)). 4단계는 수락된 3단계 HEAD `2d98a50`에서 단일 소유자가 OpenAI → Gemini → Soniox 순으로 구현했다. 제품 `2963ea9`의 로컬 gate Node 327개·DOM 88개와 typecheck·UI audit·Linux build가 통과했으며 별도 독립 검토·수락은 대기 중이다([구현 기록](chatkhu-phase4-implementation-2026-10-08.md)).
 - 설계 자문은 Astra, 단계별 구현·보정은 Sol 1명, 독립 검토는 별도 Sol 1명, 계획 보정·통합·사용자 보고는 실행 책임자가 소유한다. [Orca 실행 규칙](orca-execution-policy.md)에 따라 실제 Task/Dispatch를 사용하며 이전 단계 수락 후 다음 단계를 배정한다.
 - 계획 Task의 수정 범위는 이 문서였으며, 수락된 후속 Task에서는 Sol 1명이 1단계 제품 소스·관련 테스트·진행 기록을 소유했다. 기존 구현 worker의 settle/release 뒤 단일 보정 Sol `ctx_e50790142144`가 같은 범위를 직렬 인계받았고 통합은 실행 책임자가 소유한다. 의존성·버전 변경, 유료 호출, push·릴리즈는 포함하지 않는다.
 - Guard, Decisions 실행, usage/revoke 신규 화면, Super Agent, 제공사 fileSearchStores 연동은 범위 밖이다. `decisions` 모델 분류만 보존한다. [모델 문서](https://docs.mindlogic.ai/docs/khu/api-gateway/getting-started/models/)는 Super Agent를 API 미지원으로 명시한다.
@@ -101,6 +101,8 @@
 
 **완료 gate:** mock WebSocket/가상 마이크·timer로 3사 handshake·오디오·종료, 만료/재사용 토큰, 1000/1008/1011/1013/4402 종료, Gemini setup timeout, Soniox 종료 프레임, bounded queue를 검증한다. 실제 음성 컴포넌트와 main IPC lifecycle을 연결해 로그아웃/취소 직후 마이크 track 종료·세션 0개·이전 프로필 이벤트 무시를 단언한다. OS별 실제 마이크 권한·입출력·장치 변경은 별도 수동 검증이며 Linux mock으로 macOS/Windows 성공을 주장하지 않는다.
 
+**2026-10-08 4단계 구현 인계:** 수락된 Phase 3 기준 `2d98a502eea512124016e89333ec5acdc1920be6`에서 단일 Sol `task_6f1a1328f5c8` / `ctx_e882a4b52487`가 공통 계약·main/preload/storage 경로·renderer/CSS·packaging까지 직렬 소유했다. 직접 `ws`/types 의존성은 bounded payload·handshake/close·no-redirect 근거를 먼저 기록하고 기존 전이 버전과 같은 버전으로 선언했으며 기존 버전 상승은 없다. 상세 계약·테스트·명령별 source manifest/raw receipt·실계정/OS/CI 한계는 [4단계 구현 기록](chatkhu-phase4-implementation-2026-10-08.md)에 있다. 원음 저장과 자동 연결/재시도는 없고 음성 전송·비용 동의, 명시적 확정문 append·암호화 텍스트 save를 추가했다. 구현자는 self-acceptance를 선언하지 않으며 coordinator가 다음 독립 검토를 소유한다.
+
 ## 문서 불일치와 착수 시 확인할 항목
 
 2026-10-08에 아래 공식 문서를 공개 조회했다. 문서가 말하는 지원과 이 계정에서 검증한 지원은 다르며 이번 작업은 계정 키·유료 요청을 사용하지 않았다.
@@ -129,7 +131,7 @@
 | 1단계 | 구현·보정·로컬 gate 완료 / 독립 재검토 PASS·코드 수락 / 미실시 | 실행 책임자: 작업 브랜치 보존, 2단계 순차 배정 |
 | 2단계 | 네 보정·composer 경합 보정·로컬 gate 완료 / 독립 acceptance 13/13 PASS·코드 수락 (`06140d7`) / 미실시 | 실행 책임자: 수락된 기준 보존 |
 | 3단계 | 구현·P1/P2 보정·로컬 gate 380/380 완료 / 독립 acceptance 85/85 PASS·코드 수락 / 미실시 | 실행 책임자: 수락된 기준 보존, 4단계 순차 배정 |
-| 4단계 | 미착수 / 미실시 / 미실시 | 3단계 수락 후 배정 |
+| 4단계 | 구현·로컬 gate 415/415 완료 (`2963ea9`) / 별도 독립 검토·수락 대기 / 미실시 | 실행 책임자: 별도 Sol 읽기 전용 검토·필요 보정 배정·수락·통합 |
 
 **1단계 최종 수락:** 보정 commit `7ab363caeea25ed6a0273afa46105720388b4ca3`을 별도 Sol이 독립 재검토해 PASS로 판정했다. 실행 책임자는 세 지적 해소, 최종 Node 233개·DOM 48개 및 typecheck·UI audit·Linux build 통과 근거를 확인해 작업 브랜치의 코드를 수락했다. 상세 내용과 실계정·OS·CI 미검증 범위는 [구현 기록](chatkhu-phase1-implementation-2026-10-08.md)에 남긴다.
 
