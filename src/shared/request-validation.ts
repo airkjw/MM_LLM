@@ -145,11 +145,15 @@ export function validatedAdvancedSettings(value: unknown): ChatAdvancedSettings 
   if (value === undefined) return {};
   if (!isRecord(value)) throw new Error("고급 생성 설정이 올바르지 않습니다.");
   const allowed = new Set(["temperature", "maxOutputTokens", "topP", "topK", "stop", "structuredOutput",
-    "thinkingLevel", "thinkingBudget", "tools", "toolChoice", "responses", "claudeThinking"]);
+    "thinkingLevel", "thinkingBudget", "tools", "toolChoice", "responses", "claudeThinking", "serverCode"]);
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw new Error("지원하지 않는 고급 생성 설정입니다.");
   }
   const result: ChatAdvancedSettings = {};
+  if (value.serverCode !== undefined) {
+    if (typeof value.serverCode !== "boolean") throw new Error("서버 코드 실행 설정이 올바르지 않습니다.");
+    result.serverCode = value.serverCode;
+  }
   if (value.temperature !== undefined) {
     if (typeof value.temperature !== "number" || !Number.isFinite(value.temperature) ||
       value.temperature < 0 || value.temperature > 2) {

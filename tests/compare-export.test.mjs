@@ -9,3 +9,12 @@ test("synthesis export includes evidence limitations and preserves the analysis"
   assert.doesNotMatch(exported, /private hidden context/);
   assert.throws(() => serializeCompareAnalysis({ synthesis: { text: " " } }), /결과가 없습니다/);
 });
+
+test("shared search export retains verified sources/status while omitting opaque and invalid fields", () => {
+  const exported = serializeCompareAnalysis({ prompt: "synthetic", results: [{ modelId: "a" }, { modelId: "b" }],
+    webSearch: { route: "shared", provider: "sonar", status: "executed", queries: ["synthetic"], requestCount: 1,
+      citations: [{ url: "https://example.test/source", title: "synthetic" }, { url: "javascript:bad" }], encrypted_content: "opaque-secret" },
+    synthesis: { modelId: "gpt-5.6-sol", status: "completed", text: "synthetic analysis" } });
+  assert.match(exported, /Sonar 공통 검색 · 실행 확인/); assert.match(exported, /https:\/\/example.test\/source/);
+  assert.doesNotMatch(exported, /opaque-secret|javascript:/);
+});

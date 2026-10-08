@@ -13,6 +13,25 @@ const initialTheme = initialThemeValue === "light" || initialThemeValue === "dar
 contextBridge.exposeInMainWorld("mmllmBootstrap", Object.freeze({ initialTheme }));
 
 const desktopApi: DesktopApi = {
+  prepareVoice: (request) => ipcRenderer.invoke('voice:prepare', request),
+  connectVoice: (id) => ipcRenderer.invoke('voice:connect', id),
+  sendVoiceFrame: (frame) => ipcRenderer.invoke('voice:frame', frame),
+  controlVoice: (control) => ipcRenderer.invoke('voice:control', control),
+  stopVoice: (id, immediate) => ipcRenderer.invoke('voice:stop', id, immediate),
+  saveVoiceText: (id, threadId, consent) => ipcRenderer.invoke('voice:save-text', id, threadId, consent),
+  onVoiceEvent(listener) {
+    const receive = (_event: Electron.IpcRendererEvent, event: import('../shared/realtime').VoiceEvent) => listener(event);
+    ipcRenderer.on('voice:event', receive);
+    return () => ipcRenderer.removeListener('voice:event', receive);
+  },
+  getProjectRetrieval: (id) => ipcRenderer.invoke("projects:retrieval-status", id),
+  configureProjectRetrieval: (id, settings) => ipcRenderer.invoke("projects:retrieval-settings", id, settings),
+  startProjectIndex: (id, projectId, consent, resume) => ipcRenderer.invoke("projects:index", id, projectId, consent, resume),
+  searchProjectDocuments: (id, projectId, query) => ipcRenderer.invoke("projects:retrieve", id, projectId, query),
+  discoverResearch: (id) => ipcRenderer.invoke("research:discover", id),
+  listResearchTools: (id, suite) => ipcRenderer.invoke("research:tools", id, suite),
+  searchResearch: (id, token, args) => ipcRenderer.invoke("research:search", id, token, args),
+  cancelResearch: (id) => ipcRenderer.invoke("research:cancel", id),
   exportBackup: (password) => ipcRenderer.invoke("backup:export", password),
   restoreBackup: (password) => ipcRenderer.invoke("backup:restore", password),
   updateModelPreference: (modelId, action) => ipcRenderer.invoke("models:preference", modelId, action),
@@ -23,6 +42,7 @@ const desktopApi: DesktopApi = {
   logout: () => ipcRenderer.invoke("session:logout"),
   replaceApiKey: (key) => ipcRenderer.invoke("session:replace-key", key),
   refreshModels: () => ipcRenderer.invoke("models:refresh"),
+  checkModelSearch: (modelId) => ipcRenderer.invoke("models:search-capability", modelId),
   getCredits: (force = false) => ipcRenderer.invoke("credits:get", force),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (settings) => ipcRenderer.invoke("settings:update", settings),
@@ -99,6 +119,8 @@ const desktopApi: DesktopApi = {
     const stop = () => { if (!stopped) port1.postMessage({ type: "cancel" }); };
     return stop;
   },
+  estimateMedia: (id, request) => ipcRenderer.invoke("media:estimate", id, request),
+  cancelMediaEstimate: (id) => ipcRenderer.invoke("media:estimate-cancel", id),
   generateImage: (request: ImageRequest) => ipcRenderer.invoke("media:image", request),
   generateVideo: (request: VideoRequest) => ipcRenderer.invoke("media:video", request),
   runAudio: (request: AudioRequest) => ipcRenderer.invoke("media:audio", request),

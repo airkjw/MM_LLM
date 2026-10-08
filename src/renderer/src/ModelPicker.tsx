@@ -24,7 +24,8 @@ export function ModelPicker({
     onClose: () => { setOpen(false); setQuery(""); }
   });
   const priority = (id: string) => preferences.favorites.includes(id) ? 0 : preferences.recent.includes(id) ? 1 : 2;
-  const filtered = [...models].sort((a, b) => priority(a.id) - priority(b.id) ||
+  const chatModels = models.filter((model) => model.type === "llm");
+  const filtered = [...chatModels].sort((a, b) => priority(a.id) - priority(b.id) ||
     (priority(a.id) === 1 ? preferences.recent.indexOf(a.id) - preferences.recent.indexOf(b.id) : 0)).filter((model) =>
     `${modelLabel(model.id)} ${model.id} ${providerLabel(model.owned_by)}`
       .toLowerCase().includes(query.toLowerCase())
@@ -55,7 +56,7 @@ export function ModelPicker({
       >
         <span className="model-dot" />
         <span className="model-trigger-text">{selected ? modelLabel(selected) : "모델 선택"}</span>
-        {selected && hasNativeWebSearch(selected) && <Globe2 className="model-trigger-web" size={14} />}
+        {selected && hasNativeWebSearch(chatModels.find((model) => model.id === selected)) && <Globe2 className="model-trigger-web" size={14} />}
         <ChevronDown size={16} />
       </button>
       {open && <div className="model-popover" id={popoverId} role="dialog" aria-modal="true" aria-label="모델 선택" ref={popover} tabIndex={-1}>
@@ -79,7 +80,7 @@ export function ModelPicker({
           aria-pressed={preferences.favorites.includes(options[activeIndex].id)}
           onClick={() => preferences.update(options[activeIndex].id, "favorite")}>
           <Star size={14} />{modelLabel(options[activeIndex].id)} 즐겨찾기 {preferences.favorites.includes(options[activeIndex].id) ? "해제" : "추가"}</button>}
-        <div className="model-count">현재 API 키로 사용 가능한 모델 {models.length}개</div>
+        <div className="model-count">현재 API 키로 사용 가능한 모델 {chatModels.length}개</div>
         <div className="model-options" id={listId} role="listbox" aria-label="사용 가능한 모델">
           {Object.entries(groups).map(([provider, items]) => (
             <div key={provider} role="group" aria-label={provider}>
@@ -92,7 +93,7 @@ export function ModelPicker({
               >
                 <span title={model.id}><strong>{modelLabel(model.id)}</strong></span>
                 <span className="model-badges">
-                  {hasNativeWebSearch(model.id) && <span className="native-search-badge">
+                  {hasNativeWebSearch(model) && <span className="native-search-badge">
                     <Globe2 size={12} />직접 웹검색
                   </span>}
                   {reasoningSupport(model) === "adjustable" && <span className="reasoning-badge">

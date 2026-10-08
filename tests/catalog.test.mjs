@@ -48,3 +48,16 @@ test("a removed stored chat model falls back only to a currently permitted live 
   assert.deepEqual(resolveLiveThreadModel("removed-llm", [{ id: "only-image", type: "image" }]),
     { modelId: "", removed: true });
 });
+
+test("all eight Gateway types and explicit search pricing survive without promoting future types", () => {
+  const types = ["llm", "embedding", "rerank", "decisions", "realtime", "audio", "image", "video"];
+  const parsed = parseGatewayModels({ data: [...types.map((type) => ({ id: `${type}-model`, type,
+    pricing: { web_search_per_1k: type === "llm" ? 0 : null, private_field: "discard" } })),
+    { id: "future", type: "agent", pricing: { web_search_per_1k: 2 } }] });
+  assert.deepEqual(parsed.map((model) => model.type), types);
+  assert.deepEqual(parsed[0].pricing, { web_search_per_1k: 0 });
+  assert.deepEqual(parsed[1].pricing, { web_search_per_1k: null });
+  for (const price of [undefined, -1, "0", NaN, Infinity, {}, []]) {
+    assert.equal(parseGatewayModels({ data: [{ id: "x", type: "llm", pricing: { web_search_per_1k: price } }] })[0].pricing, undefined);
+  }
+});

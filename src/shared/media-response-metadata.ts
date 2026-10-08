@@ -36,3 +36,12 @@ export function videoResponseMetadata(value: Record<string, unknown>): {
   return { videoModelId: boundedText(value.video_model_id, 200),
     durationSeconds: nonNegativeNumber(value.duration_seconds) };
 }
+
+/** Generation credits exclude separately billed content_filter. Missing or invalid charge is unknown. */
+export function generationBilling(value: Record<string, unknown>): { actualCredits?: number; creditDisplay: string } {
+  const credits = typeof value.credits_charged === "number" && Number.isFinite(value.credits_charged) && value.credits_charged >= 0
+    ? value.credits_charged : undefined;
+  return { ...(credits !== undefined ? { actualCredits: credits } : {}), creditDisplay: credits === undefined
+    ? "실제 생성 차감 미확인 · 잔액에서 확인하세요. content_filter는 별도 차감입니다."
+    : `실제 생성 차감 ${credits} 크레딧 · content_filter는 별도 차감입니다.` };
+}

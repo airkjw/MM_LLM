@@ -1,6 +1,11 @@
+import { sharedEvidenceModelError } from "../../shared/search-capability";
+import { webSearchStatusLabel } from "../../shared/search-evidence";
 import { Bot, CircleHelp, Columns3, Edit3, FileText, FolderOpen, Paperclip, Plus, Search, Settings, ShieldCheck, Sparkles, Square, Trash2, X } from "lucide-react";
 import { serializeCompareAnalysis } from "../../shared/compare-export";
 import type { AppSettings, ChatbotBookmark, ChatbotUsageReport, CompareRun, GatewayModel, PickedAttachment, ProjectSummary, ThreadSearchResult, ThreadSnapshot, ThreadSummary, WebSearchMode } from "../../shared/contracts";
+import { useState } from "react";
+import { ProjectRetrievalSettings } from "./ProjectRetrievalSettings";
+import { ResearchPanel } from "./ResearchPanel";
 import { BackupPanel } from "./components/BackupPanel";
 import { DiagnosticButton } from "./components/DiagnosticButton";
 import { Notice, type NoticeState } from "./components/Notice";
@@ -11,6 +16,8 @@ import { errorText, MarkdownText } from "./ui-shared";
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
 
 type Props = {
+  onResearchEvidence: (text: string, ownsSource?: () => boolean) => void;
+  retrievalModels: GatewayModel[];
   renameDialog: RenameDialogState | null;
   closeRename: () => void;
   renameRef: React.RefObject<HTMLFormElement | null>;
@@ -96,7 +103,8 @@ type Props = {
   saveGlobalSettings: () => Promise<void>;
 };
 
-export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedConversation, renameInputRef, setRenameDialog, toolsOpen, compareBusy, compareSynthesisBusy, bookmarkBusy, closeTools, toolsRef, toolsTab, toolsNotice, clearToolsNotice, comparePrompt, setComparePrompt, llmModels, compareModels, setCompareModels, compareMode, setCompareMode, addCompareAttachment, compareAttachments, setCompareAttachments, compareConfirmed, setCompareConfirmed, compareStopRef, startCompare, compareRun, continueCompare, compareSynthesisReady, compareSynthesisModelAvailable, compareSynthesisStopRef, startCompareSynthesis, bookmarkDraft, setBookmarkDraft, saveBookmark, bookmarks, openChatbot, loadChatbotUsage, setBookmarks, setError, chatbotUsage, projectsOpen, projectBusy, closeProjects, projectsRef, selectedProjectId, setSelectedProjectId, setProjectDraft, projects, projectDraft, saveProject, removeProjectDocument, addDocumentToProject, thread, assignCurrentThreadToProject, createProjectThread, removeProject, keyReplaceOpen, keyReplacing, closeKeyReplace, keyReplaceRef, replacementKey, setReplacementKey, replaceApiKey, searchOpen, closeSearch, searchRef, searchQuery, setSearchQuery, searchResults, setSearchOpen, selectThread, settingsOpen, settingsDraft, settingsSaving, closeSettings, settingsRef, modelId, setSettingsDraft, saveGlobalSettings }: Props) {
+export function AppDialogs({ retrievalModels, onResearchEvidence, renameDialog, closeRename, renameRef, saveRenamedConversation, renameInputRef, setRenameDialog, toolsOpen, compareBusy, compareSynthesisBusy, bookmarkBusy, closeTools, toolsRef, toolsTab, toolsNotice, clearToolsNotice, comparePrompt, setComparePrompt, llmModels, compareModels, setCompareModels, compareMode, setCompareMode, addCompareAttachment, compareAttachments, setCompareAttachments, compareConfirmed, setCompareConfirmed, compareStopRef, startCompare, compareRun, continueCompare, compareSynthesisReady, compareSynthesisModelAvailable, compareSynthesisStopRef, startCompareSynthesis, bookmarkDraft, setBookmarkDraft, saveBookmark, bookmarks, openChatbot, loadChatbotUsage, setBookmarks, setError, chatbotUsage, projectsOpen, projectBusy, closeProjects, projectsRef, selectedProjectId, setSelectedProjectId, setProjectDraft, projects, projectDraft, saveProject, removeProjectDocument, addDocumentToProject, thread, assignCurrentThreadToProject, createProjectThread, removeProject, keyReplaceOpen, keyReplacing, closeKeyReplace, keyReplaceRef, replacementKey, setReplacementKey, replaceApiKey, searchOpen, closeSearch, searchRef, searchQuery, setSearchQuery, searchResults, setSearchOpen, selectThread, settingsOpen, settingsDraft, settingsSaving, closeSettings, settingsRef, modelId, setSettingsDraft, saveGlobalSettings }: Props) {
+  const [researchOpen, setResearchOpen] = useState(false);
   return <>
       {renameDialog && <div className="dialog-backdrop" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !renameDialog.busy) closeRename();
@@ -121,10 +129,13 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
         if (event.target === event.currentTarget && !compareBusy && !compareSynthesisBusy && !bookmarkBusy) closeTools();
       }}><div className={`dialog-card workspace-tools-dialog${compareRun && toolsTab === "compare" ? " has-results" : ""}`} role="dialog" aria-modal="true"
         aria-labelledby="workspace-tools-title" ref={toolsRef} tabIndex={-1}>
-        <div className="dialog-title">{toolsTab === "compare" ? <Columns3 size={21} /> : <Bot size={21} />}<h3 id="workspace-tools-title">{toolsTab === "compare" ? "모델 비교" : "Studio Chatbot"}</h3>
+        <div className="dialog-title">{researchOpen ? <Search size={21} /> : toolsTab === "compare" ? <Columns3 size={21} /> : <Bot size={21} />}<h3 id="workspace-tools-title">{researchOpen ? "논문·법령 검색" : toolsTab === "compare" ? "모델 비교" : "Studio Chatbot"}</h3>
           <button type="button" className="icon-button dialog-close" aria-label="워크스페이스 도구 닫기" onClick={closeTools}
             disabled={compareBusy || compareSynthesisBusy || bookmarkBusy}><X size={18} /></button></div>
-        {toolsTab === "compare" ? <section className="compare-panel" aria-label="모델 답변 비교">
+        <button type="button" className="secondary-button" aria-pressed={researchOpen}
+          onClick={() => setResearchOpen((open) => !open)} disabled={compareBusy || compareSynthesisBusy || bookmarkBusy}>
+          {researchOpen ? "기존 도구로 돌아가기" : "논문·법령 검색"}</button>
+        {researchOpen ? <ResearchPanel onEvidence={onResearchEvidence} /> : toolsTab === "compare" ? <section className="compare-panel" aria-label="모델 답변 비교">
           <p>같은 질문과 준비된 자료를 2~3개 모델에 각각 전송합니다. 웹 근거는 한 번만 조사해 모든 모델에 동일하게 제공합니다.</p>
           <details className="compare-configuration" open><summary>비교 설정 <span>{compareModels.length}/3개 모델 선택</span></summary>
           <label className="settings-field">질문
@@ -133,9 +144,12 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
           </label>
           <fieldset className="compare-models"><legend>모델 2~3개</legend>{llmModels.map((model) => <label key={model.id}>
             <input type="checkbox" checked={compareModels.includes(model.id)} disabled={compareBusy || compareSynthesisBusy ||
+              Boolean(sharedEvidenceModelError(model)) && !compareModels.includes(model.id) ||
               !compareModels.includes(model.id) && compareModels.length >= 3} onChange={(event) => setCompareModels((items) =>
                 event.target.checked ? [...items, model.id] : items.filter((id) => id !== model.id))} />
-            <span>{modelLabel(model.id)}</span></label>)}</fieldset>
+            <span>{modelLabel(model.id)}{sharedEvidenceModelError(model) && " · 공통 근거 전용 비교 미지원"}</span></label>)}</fieldset>
+          {llmModels.some((model) => compareModels.includes(model.id) && sharedEvidenceModelError(model)) &&
+            <p role="status">Sonar는 검색 끄기가 확인되지 않아 비교 답변에 사용할 수 없습니다. Sonar 선택을 해제하고 다른 모델을 직접 선택해 주세요.</p>}
           <div className="compare-controls"><label>웹 근거<select value={compareMode} disabled={compareBusy || compareSynthesisBusy}
             onChange={(event) => setCompareMode(event.target.value as WebSearchMode)}>
             <option value="always">항상 검색 · 공통 1회</option><option value="auto">필요할 때 검색</option>
@@ -154,7 +168,7 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
           <div className="compare-run-actions">{compareBusy
             ? <button type="button" className="secondary-button" onClick={() => compareStopRef.current?.()}><Square size={14} /> 중단</button>
             : <button type="button" className="primary-button" disabled={compareSynthesisBusy || !comparePrompt.trim() || compareModels.length < 2 ||
-                compareModels.length > 3 || compareAttachments.length > 0 && !compareConfirmed}
+                compareModels.length > 3 || llmModels.some((model) => compareModels.includes(model.id) && sharedEvidenceModelError(model)) || compareAttachments.length > 0 && !compareConfirmed}
               onClick={() => void startCompare()}><Columns3 size={15} /> 비교 실행</button>}</div></details>
           {compareBusy && !compareRun && <p className="inline-progress" role="status">첨부 자료와 웹 검색 설정에 따라 비교를 준비하고 있습니다…</p>}
           {compareRun && <><h4 className="compare-step">모델별 답변 <small>관점과 근거를 나란히 검토하세요</small></h4><div className="compare-results" aria-live="polite">{compareRun.results.map((result) => <article key={result.modelId}>
@@ -181,6 +195,7 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
           {compareRun.synthesis && <section className="compare-synthesis" aria-live="polite">
             <p className="compare-synthesis-warning">답변 간 합의만으로 정답이 확정되지는 않습니다.
               아래의 사실 검토와 불확실성을 함께 확인해 주세요.
+              {compareRun.webSearch && <> {webSearchStatusLabel(compareRun.webSearch)}.</>}
               {compareRun.sharedEvidence ? " 공통 웹 근거를 비교 자료에 포함했습니다." : " 공통 웹 근거가 없어 별도 출처 확인이 필요합니다."}</p>
             {compareRun.synthesis.text && <div className="dialog-actions">
               <button type="button" className="secondary-button" onClick={() => {
@@ -272,6 +287,7 @@ export function AppDialogs({ renameDialog, closeRename, renameRef, saveRenamedCo
                       onClick={() => void removeProjectDocument(selected.id, document.id)}><X size={13} /></button></div>)}</div>
                 <button type="button" className="secondary-button project-add-doc" disabled={projectBusy}
                   onClick={() => void addDocumentToProject(selected.id)}><Paperclip size={15} /> 문서 추가</button>
+                <ProjectRetrievalSettings key={`${selected.id}:${selected.documents.map((doc) => doc.id).join()}`} project={selected} models={retrievalModels} onEvidence={onResearchEvidence} />
                 <div className="project-actions">
                   <button type="button" className="secondary-button" disabled={projectBusy || thread?.projectId === selected.id || thread?.target?.kind === "chatbot"}
                     onClick={() => void assignCurrentThreadToProject(selected.id)}>현재 대화 연결</button>

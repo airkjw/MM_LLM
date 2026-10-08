@@ -1,4 +1,5 @@
 import type { AppSettings, ProjectSummary } from "./contracts";
+import { validateRetrievalSettings } from "./document-retrieval";
 
 export type PortableProject = Omit<ProjectSummary, "threadCount" | "documents"> & {
   documents: Array<ProjectSummary["documents"][number] & { content: string; index: string }>;
@@ -38,6 +39,10 @@ export function validateBackup(value: unknown): PortableBackup {
       !text(project.instruction, 12000) || !timestamp(project.createdAt) || !timestamp(project.updatedAt) ||
       !Array.isArray(project.documents) || project.documents.length > 20) throw new Error("백업 프로젝트가 올바르지 않습니다.");
     ids.add(project.id as string); let total = 0; const documentIds = new Set<string>();
+    if (project.retrieval !== undefined) {
+      const settings = validateRetrievalSettings(project.retrieval);
+      if (settings.mode !== "local" || settings.queryConsent || settings.rerankConsent || settings.embeddingModelId || settings.rerankModelId) throw new Error("백업 의미 색인은 생략됩니다. 복원 후 다시 동의하고 재구축해 주세요.");
+    }
     for (const doc of project.documents) {
       if (!record(doc) || !uuid(doc.id) || documentIds.has(doc.id as string) || !text(doc.name, 255) ||
         !text(doc.mime, 150) || !timestamp(doc.createdAt)) throw new Error("백업 문서 정보가 올바르지 않습니다.");

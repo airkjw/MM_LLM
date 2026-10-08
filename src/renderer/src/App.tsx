@@ -18,7 +18,8 @@ import { useResponsiveSidebarState } from "./sidebar-responsive";
 import { ThemePersistence } from "./theme-persistence";
 import { useDialogFocus } from "./use-focus-layer";
 
-import { ChatPanel } from "./ChatPanel";
+import { ChatPanel, type ComposerHandle, type EvidenceAppend } from "./ChatPanel";
+import { VoicePanel } from './VoicePanel';
 import { Login } from "./Login";
 import { MediaPanel } from "./MediaPanel";
 import { errorText, templates } from "./ui-shared";
@@ -26,16 +27,12 @@ type Screen = SidebarScreen;
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
 const AUDIO_LANES = ["tts", "stt", "music"] as const;
 
-async function repairRemovedThreadModel(snapshot: ThreadSnapshot, models: GatewayModel[]): Promise<{
+async function checkStoredThreadModel(snapshot: ThreadSnapshot, models: GatewayModel[]): Promise<{
   snapshot: ThreadSnapshot; removedModelId?: string;
 }> {
   const resolved = resolveLiveThreadModel(snapshot.modelId, models);
-  if (!resolved.removed || !resolved.modelId) return { snapshot };
-  const updated = await window.mmllm.updateThreadSettings(snapshot.id, {
-    modelId: resolved.modelId, instruction: snapshot.instruction,
-    reasoningMode: snapshot.reasoningMode, advanced: snapshot.advanced
-  });
-  return { snapshot: updated, removedModelId: snapshot.modelId };
+  if (!resolved.removed) return { snapshot };
+  return { snapshot, removedModelId: snapshot.modelId };
 }
 
 export default function App() {
@@ -62,6 +59,11 @@ export default function App() {
   const [replacementKey, setReplacementKey] = useState("");
   const [keyReplacing, setKeyReplacing] = useState(false);
   const [templateDraft, setTemplateDraft] = useState<{ threadId: string; text: string } | null>(null);
+  const [evidenceAppends, setEvidenceAppends] = useState<EvidenceAppend[]>([]);
+  const composerRef = useRef<ComposerHandle | null>(null);
+  // Only retain the unsent chatbot draft displaced by evidence's new LLM target, in memory.
+  const displacedChatbotDraftsRef = useRef(new Map<string, string>());
+  const evidenceCreationRef = useRef<{ owner: object; texts: string[]; owned: () => boolean } | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -103,6 +105,14 @@ export default function App() {
   }>({ lastAt: 0, timer: null, inFlight: null });
   const creditQueueRef = useRef(new CreditRefreshQueue());
   visibleThreadIdRef.current = thread?.id ?? null;
+  const evidenceOwner = useMemo(() => ({}), [toolsOpen, projectsOpen, selectedProjectId, toolsTab]);
+  const evidenceOwnerRef = useRef<object | null>(evidenceOwner);
+  evidenceOwnerRef.current = evidenceOwner;
+  const evidenceEpoch = uiEpochRef.current;
+  useEffect(() => () => { evidenceOwnerRef.current = null; }, []);
+  const evidenceApplied = useCallback((ids: string[]) => {
+    setEvidenceAppends((current) => current.filter((item) => !ids.includes(item.id)));
+  }, []);
 
   const rememberDialogReturn = useCallback((returnFocus?: FocusReturnTarget) => {
     dialogReturnFocusRef.current = returnFocus ?? null;
@@ -279,10 +289,10 @@ export default function App() {
         ? await window.mmllm.loadThread(items[0].id)
         : await window.mmllm.createThread({ modelId: defaultModel(state.models) });
       if (next) {
-        const repaired = await repairRemovedThreadModel(next, state.models);
+        const repaired = await checkStoredThreadModel(next, state.models);
         next = repaired.snapshot;
         if (repaired.removedModelId) removedModelNotice =
-          `${repaired.removedModelId} 모델이 현재 목록에서 사라져 ${next.modelId}(으)로 변경했습니다.`;
+          `${repaired.removedModelId} 모델은 현재 사용할 수 없습니다. 전송 전에 사용할 모델을 직접 선택해 주세요.`;
       }
       if (!items.length) nextThreads = [{
         id: next.id, title: next.title, modelId: next.modelId,
@@ -321,7 +331,8 @@ export default function App() {
     setAppSettings(null); setSettingsDraft(null); setSettingsOpen(false); setSettingsSaving(false);
     setSearchOpen(false); setSearchQuery(""); setSearchResults([]); setRenameDialog(null);
     setKeyReplaceOpen(false); setReplacementKey(""); setKeyReplacing(false);
-    setTemplateDraft(null); setError("");
+    setTemplateDraft(null); setEvidenceAppends([]); displacedChatbotDraftsRef.current.clear();
+    evidenceCreationRef.current = null; setError("");
   }, []);
 
   const applyThreadUpdate = useCallback((snapshot: ThreadSnapshot) => {
@@ -613,12 +624,15 @@ export default function App() {
     const epoch = uiEpochRef.current;
     try {
       const loaded = await window.mmllm.loadThread(id);
-      const repaired = await repairRemovedThreadModel(loaded, session?.models ?? []);
+      const repaired = await checkStoredThreadModel(loaded, session?.models ?? []);
       const next = repaired.snapshot;
       if (!selectGateRef.current.isLatest(request) || epoch !== uiEpochRef.current) return;
-      setTemplateDraft(null); setThread(next); setModelId(next.modelId); setScreen("chat");
+      const savedDraft = displacedChatbotDraftsRef.current.get(next.id);
+      displacedChatbotDraftsRef.current.delete(next.id);
+      setTemplateDraft(savedDraft ? { threadId: next.id, text: savedDraft } : null);
+      setThread(next); setModelId(next.modelId); setScreen("chat");
       if (repaired.removedModelId) setInfo(
-        `${repaired.removedModelId} 모델이 현재 목록에서 사라져 ${next.modelId}(으)로 변경했습니다.`
+        `${repaired.removedModelId} 모델은 현재 사용할 수 없습니다. 전송 전에 사용할 모델을 직접 선택해 주세요.`
       );
     } catch (error) {
       if (selectGateRef.current.isLatest(request) && epoch === uiEpochRef.current) setError(errorText(error));
@@ -639,12 +653,12 @@ export default function App() {
         const loaded = remaining.length
           ? await window.mmllm.loadThread(remaining[0].id)
           : await window.mmllm.createThread({ modelId: modelId || defaultModel(session?.models ?? []) });
-        const repaired = await repairRemovedThreadModel(loaded, session?.models ?? []);
+        const repaired = await checkStoredThreadModel(loaded, session?.models ?? []);
         const next = repaired.snapshot;
         if (!selectGateRef.current.isLatest(request) || epoch !== uiEpochRef.current) return;
         setThread(next); setModelId(next.modelId); await refreshThreads();
         if (repaired.removedModelId) setInfo(
-          `${repaired.removedModelId} 모델이 현재 목록에서 사라져 ${next.modelId}(으)로 변경했습니다.`
+          `${repaired.removedModelId} 모델은 현재 사용할 수 없습니다. 전송 전에 사용할 모델을 직접 선택해 주세요.`
         );
       }
     } catch (error) {
@@ -669,12 +683,12 @@ export default function App() {
       if (epoch !== uiEpochRef.current) return;
       setSession((state) => state ? { ...state, models } : state);
       if (thread) {
-        const repaired = await repairRemovedThreadModel(thread, models);
+        const repaired = await checkStoredThreadModel(thread, models);
         if (epoch !== uiEpochRef.current) return;
         setThread(repaired.snapshot); setModelId(repaired.snapshot.modelId);
         if (repaired.removedModelId) {
           await refreshThreads();
-          setInfo(`${repaired.removedModelId} 모델이 현재 목록에서 사라져 ${repaired.snapshot.modelId}(으)로 변경했습니다.`);
+          setInfo(`${repaired.removedModelId} 모델은 현재 사용할 수 없습니다. 전송 전에 사용할 모델을 직접 선택해 주세요.`);
         }
       } else if (!models.some((item) => item.type === "llm" && item.id === modelId)) {
         setModelId(defaultModel(models));
@@ -715,6 +729,43 @@ export default function App() {
     setTemplateDraft({ threadId: next.id, text: item.prompt });
     setThread(next); setModelId(next.modelId); setScreen("chat");
     await refreshThreads();
+  }
+
+  function appendEvidence(text: string, ownsSource: () => boolean = () => true) {
+    const epoch = evidenceEpoch; const owner = evidenceOwner;
+    const originId = thread?.id ?? null;
+    const owned = () => epoch === uiEpochRef.current && evidenceOwnerRef.current === owner &&
+      visibleThreadIdRef.current === originId && ownsSource();
+    if (!owned() || !toolsOpen && !projectsOpen) return;
+    const enqueue = (targetId: string, texts: string[]) => {
+      setEvidenceAppends((current) => [...current, ...texts.map((value) => ({
+        id: crypto.randomUUID(), threadId: targetId, text: value
+      }))]);
+      setToolsOpen(false); setProjectsOpen(false); setScreen("chat");
+    };
+    if (thread && thread.target?.kind !== "chatbot") { enqueue(thread.id, [text]); return; }
+    if (evidenceCreationRef.current?.owner === owner && evidenceCreationRef.current.owned()) {
+      evidenceCreationRef.current.texts.push(text); return;
+    }
+    const batch = { owner, texts: [text], owned }; evidenceCreationRef.current = batch;
+    const request = selectGateRef.current.begin();
+    void (async () => {
+      try {
+        const target = await window.mmllm.createThread({ modelId: defaultModel(session?.models ?? []) });
+        if (!owned() || !selectGateRef.current.isLatest(request)) return;
+        if (originId && thread?.target?.kind === "chatbot") {
+          displacedChatbotDraftsRef.current.set(originId, composerRef.current?.getText() ?? "");
+        }
+        // A snapshot update only refreshes the selected ID; this operation selects a new target.
+        setTemplateDraft(null); setThread(target); setModelId(target.modelId);
+        enqueue(target.id, batch.texts);
+        await refreshThreads();
+      } catch (error) {
+        if (owned() && selectGateRef.current.isLatest(request)) setError(errorText(error));
+      } finally {
+        if (evidenceCreationRef.current === batch) evidenceCreationRef.current = null;
+      }
+    })();
   }
 
   async function summarizeTranscript(result: MediaResult) {
@@ -892,6 +943,8 @@ export default function App() {
       }} />
     <main className="main-area">
       <AppDialogs
+        retrievalModels={session.models}
+        onResearchEvidence={appendEvidence}
         renameDialog={renameDialog}
         closeRename={closeRename}
         renameRef={renameRef}
@@ -982,10 +1035,16 @@ export default function App() {
       {!toolsOpen && <Notice notice={notice} onClose={clearNotice} floating />}
       {screen === "chat" && thread && llmModels.length > 0
         ? <ChatPanel key={thread.id} thread={thread} modelId={modelId}
+          voicePanel={<VoicePanel key={`voice-${uiEpochRef.current}-${thread.id}`} models={session.models}
+            threadId={thread.id} canApply={thread.target?.kind !== 'chatbot'}
+            onApply={(text) => setEvidenceAppends(current => [...current, { id: crypto.randomUUID(), threadId: thread.id, text }])}
+            onSaved={applyThreadUpdate} onUsageChanged={handleUsageChanged} />}
           models={llmModels} onModelChange={setModelId}
           onThreadUpdated={applyThreadUpdate} onRefreshThreads={() => void refreshThreads()}
           onUsageChanged={handleUsageChanged} onTemplateStart={startTemplate}
           initialDraft={templateDraft?.threadId === thread.id ? templateDraft.text : undefined}
+          evidenceAppends={evidenceAppends.filter((item) => item.threadId === thread.id)}
+          onEvidenceApplied={evidenceApplied} composerRef={composerRef}
           onDraftApplied={() => setTemplateDraft(null)} />
         : screen !== "chat" && <MediaPanel screen={screen} models={session.models} workspaceEpochRef={uiEpochRef}
           onUsageChanged={handleUsageChanged}

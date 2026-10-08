@@ -1,6 +1,7 @@
+import { serverCodeProvider } from "./server-code.ts";
 import type {
   ChatAdvancedSettings, GatewayModel, JsonSchemaOutput, ManualToolCall, ManualToolDefinition,
-  ReasoningMode, TokenUsage
+  ReasoningMode, TokenUsage, UnsupportedContinuationReason
 } from "./contracts";
 
 export const MAX_JSON_SCHEMA_BYTES = 64 * 1024;
@@ -11,12 +12,13 @@ export const MAX_TOOL_ARGUMENT_BYTES = 64 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
 export const MAX_TOOL_CALLS_PER_TURN = 8;
 
-export type ProviderKind = "chat" | "responses" | "claude" | "chatbot";
+export type ProviderKind = "chat" | "responses" | "claude" | "chatbot" | "gemini";
 export type ClaudeEffort = NonNullable<NonNullable<ChatAdvancedSettings["claudeThinking"]>["effort"]>;
 export type ClaudeThinkingCapabilities = {
   adaptive: boolean; manual: boolean; canDisable: boolean; efforts: ClaudeEffort[];
 };
 export type NormalizedRunEvent =
+  | { type: "server_code"; result: import("./contracts").ServerCodeResult }
   | { type: "text"; text: string }
   | { type: "reasoning_summary"; text: string }
   | { type: "progress"; message: string }
@@ -25,7 +27,7 @@ export type NormalizedRunEvent =
   | { type: "files"; files: Array<Record<string, unknown>> }
   | { type: "tool_call"; call: ManualToolCall }
   | { type: "provider_state"; claudeContinuation: Array<Record<string, unknown>> }
-  | { type: "status"; status: string; responseId?: string }
+  | { type: "status"; status: string; responseId?: string; continuationUnsupportedReason?: UnsupportedContinuationReason }
   | { type: "error"; message: string };
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -109,7 +111,7 @@ export function providerForModel(
 ): ProviderKind {
   if (isClaudeModel(model)) return "claude";
   if (isOpenAiModel(model) && (isCodexModel(model) || advanced.responses?.background ||
-    advanced.responses?.chain || advanced.responses?.reasoningSummary !== undefined)) return "responses";
+    advanced.serverCode || advanced.responses?.chain || advanced.responses?.reasoningSummary !== undefined)) return "responses";
   return "chat";
 }
 
@@ -119,6 +121,13 @@ export function assertAdvancedOptionsForModel(
   const unsupported = (condition: unknown, label: string) => {
     if (condition) throw new Error(`${model.id} 모델은 ${label} 설정을 지원하지 않습니다.`);
   };
+  if (advanced.serverCode && !serverCodeProvider(model)) throw new Error("이 모델의 서버 코드 실행 지원은 미확인입니다. 코드 실행을 끄거나 검토된 모델을 직접 선택해 주세요.");
+  if (advanced.serverCode && advanced.tools?.some(t => ["code_execution", "code_interpreter", "bash_code_execution", "text_editor_code_execution"].includes(t.name)))
+    throw new Error("수동 도구 이름이 서버 코드 도구와 겹칩니다. 도구 이름을 바꿔 주세요.");
+  if (advanced.serverCode && isClaudeModel(model) && advanced.tools?.length &&
+    (advanced.claudeThinking?.mode ?? claudeDefaultThinkingMode(model.id)) !== "off") {
+    throw new Error("Claude 코드 실행과 수동 도구를 함께 쓰려면 사고 모드를 꺼 주세요. 서명된 사고·서버 도구 연속 재생은 지원하지 않습니다.");
+  }
   if (isClaudeModel(model)) {
     if (advanced.temperature !== undefined && advanced.temperature > 1) {
       throw new Error("Claude 네이티브 Temperature는 0에서 1 사이여야 합니다.");

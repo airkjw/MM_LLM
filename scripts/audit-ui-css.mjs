@@ -76,7 +76,7 @@ const CONTROL_BOUNDARIES = [
   ".advanced-section textarea", ".media-controls input", ".speaker-grid input", ".speaker-grid select",
   ".music-options input", ".music-options textarea", ".compare-controls select", ".bookmark-form input",
   ".project-editor .settings-field input", "input[type=\"checkbox\"]", ".reference-button", ".file-drop",
-  ".manual-tool-card textarea"
+  ".manual-tool-card textarea", ".voice-options select"
 ];
 
 function cssUnescape(value) {

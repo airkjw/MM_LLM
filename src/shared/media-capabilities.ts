@@ -24,35 +24,34 @@ export type ImageCapability = {
   sizes?: readonly string[];
   sizeField?: "size" | "image_size" | "resolution";
   inputImageMax: number;
-  creditsPerImage?: number;
 };
 
 const COMMON_RATIOS = ["1:1", "16:9", "9:16", "4:3"] as const;
 const GPT_IMAGE_SIZES = ["auto", "1024x1024", "1536x1024", "1024x1536"] as const;
 const IMAGE: Record<string, ImageCapability> = {
   "gpt-image-2": { countMax: 1, quality: ["low", "medium", "high"], backgrounds: ["auto", "opaque"],
-    sizes: GPT_IMAGE_SIZES, sizeField: "size", inputImageMax: 10, creditsPerImage: 53 },
+    sizes: GPT_IMAGE_SIZES, sizeField: "size", inputImageMax: 10 },
   "gpt-image-1.5": { countMax: 1, quality: ["low", "medium", "high"], backgrounds: ["auto", "transparent", "opaque"],
-    sizes: GPT_IMAGE_SIZES, sizeField: "size", inputImageMax: 10, creditsPerImage: 39 },
+    sizes: GPT_IMAGE_SIZES, sizeField: "size", inputImageMax: 10 },
   "gpt-image-1": { countMax: 1, quality: ["low", "medium", "high"], backgrounds: ["auto", "transparent", "opaque"],
-    sizes: GPT_IMAGE_SIZES, sizeField: "size", inputImageMax: 10, creditsPerImage: 42 },
+    sizes: GPT_IMAGE_SIZES, sizeField: "size", inputImageMax: 10 },
   "gpt-image-1-mini": { countMax: 1, quality: ["low", "medium", "high"], backgrounds: ["auto", "transparent", "opaque"],
-    sizes: GPT_IMAGE_SIZES, sizeField: "size", inputImageMax: 10, creditsPerImage: 8 },
-  "gemini-3.1-flash-image-preview": { countMax: 4, aspectRatios: COMMON_RATIOS, sizes: ["1K", "2K", "4K"], sizeField: "image_size", inputImageMax: 14, creditsPerImage: 69 },
-  "gemini-3-pro-image-preview": { countMax: 4, aspectRatios: COMMON_RATIOS, sizes: ["1K", "2K", "4K"], sizeField: "image_size", inputImageMax: 10, creditsPerImage: 140 },
-  "gemini-3.1-flash-lite-image": { countMax: 1, aspectRatios: COMMON_RATIOS, sizes: ["1K", "2K", "4K"], sizeField: "image_size", inputImageMax: 14, creditsPerImage: 34 },
-  "gemini-2.5-flash-image": { countMax: 4, aspectRatios: COMMON_RATIOS, inputImageMax: 10, creditsPerImage: 39 },
-  "black-forest-labs/flux-2-pro": { countMax: 1, aspectRatios: COMMON_RATIOS, sizes: ["1MP", "2MP", "4MP"], sizeField: "resolution", inputImageMax: 8, creditsPerImage: 30 },
-  "black-forest-labs/flux-1.1-pro": { countMax: 1, aspectRatios: COMMON_RATIOS, inputImageMax: 1, creditsPerImage: 40 },
-  "bytedance/seedream-4": { countMax: 1, aspectRatios: COMMON_RATIOS, sizes: ["1K", "2K", "4K"], sizeField: "size", inputImageMax: 10, creditsPerImage: 30 },
-  "bytedance/seedream-5-pro": { countMax: 1, aspectRatios: COMMON_RATIOS, sizes: ["1K", "2K", "4K"], sizeField: "image_size", inputImageMax: 10, creditsPerImage: 90 },
-  "runwayml/gen4-image": { countMax: 1, aspectRatios: COMMON_RATIOS, sizes: ["720p", "1080p"], sizeField: "resolution", inputImageMax: 3, creditsPerImage: 80 },
-  "stability-ai/sdxl": { countMax: 1, inputImageMax: 1, creditsPerImage: 5 },
-  "fal-ai/bytedance/seedream/v5/lite": { countMax: 1, aspectRatios: COMMON_RATIOS, sizes: ["1K", "2K", "4K"], sizeField: "image_size", inputImageMax: 10, creditsPerImage: 35 },
-  "fal-ai/bytedance/seedream/v4.5": { countMax: 1, sizes: ["square", "landscape", "portrait", "2K", "4K"], sizeField: "image_size", inputImageMax: 10, creditsPerImage: 40 },
-  "fal-ai/ideogram/v3": { countMax: 1, aspectRatios: COMMON_RATIOS, inputImageMax: 1, creditsPerImage: 60 },
-  "fal-ai/recraft/v4/text-to-image": { countMax: 1, aspectRatios: COMMON_RATIOS, inputImageMax: 0, creditsPerImage: 40 },
-  "xai/grok-imagine-image": { countMax: 1, aspectRatios: COMMON_RATIOS, inputImageMax: 1, creditsPerImage: 20 }
+    sizes: GPT_IMAGE_SIZES, sizeField: "size", inputImageMax: 10 },
+  "gemini-3.1-flash-image-preview": { countMax: 4, aspectRatios: COMMON_RATIOS, sizes: ["1K", "2K", "4K"], sizeField: "image_size", inputImageMax: 14 },
+  "gemini-3-pro-image-preview": { countMax: 4, aspectRatios: COMMON_RATIOS, sizes: ["1K", "2K", "4K"], sizeField: "image_size", inputImageMax: 10 },
+  "gemini-3.1-flash-lite-image": { countMax: 1, aspectRatios: COMMON_RATIOS, sizes: ["1K", "2K", "4K"], sizeField: "image_size", inputImageMax: 14 },
+  "gemini-2.5-flash-image": { countMax: 4, aspectRatios: COMMON_RATIOS, inputImageMax: 10 },
+  "black-forest-labs/flux-2-pro": { countMax: 1, aspectRatios: COMMON_RATIOS, sizes: ["1MP", "2MP", "4MP"], sizeField: "resolution", inputImageMax: 8 },
+  "black-forest-labs/flux-1.1-pro": { countMax: 1, aspectRatios: COMMON_RATIOS, inputImageMax: 1 },
+  "bytedance/seedream-4": { countMax: 1, aspectRatios: COMMON_RATIOS, sizes: ["1K", "2K", "4K"], sizeField: "size", inputImageMax: 10 },
+  "bytedance/seedream-5-pro": { countMax: 1, aspectRatios: COMMON_RATIOS, sizes: ["1K", "2K", "4K"], sizeField: "image_size", inputImageMax: 10 },
+  "runwayml/gen4-image": { countMax: 1, aspectRatios: COMMON_RATIOS, sizes: ["720p", "1080p"], sizeField: "resolution", inputImageMax: 3 },
+  "stability-ai/sdxl": { countMax: 1, inputImageMax: 1 },
+  "fal-ai/bytedance/seedream/v5/lite": { countMax: 1, aspectRatios: COMMON_RATIOS, sizes: ["1K", "2K", "4K"], sizeField: "image_size", inputImageMax: 10 },
+  "fal-ai/bytedance/seedream/v4.5": { countMax: 1, sizes: ["square", "landscape", "portrait", "2K", "4K"], sizeField: "image_size", inputImageMax: 10 },
+  "fal-ai/ideogram/v3": { countMax: 1, aspectRatios: COMMON_RATIOS, inputImageMax: 1 },
+  "fal-ai/recraft/v4/text-to-image": { countMax: 1, aspectRatios: COMMON_RATIOS, inputImageMax: 0 },
+  "xai/grok-imagine-image": { countMax: 1, aspectRatios: COMMON_RATIOS, inputImageMax: 1 }
 };
 
 export type VideoCapability = {
@@ -63,7 +62,6 @@ export type VideoCapability = {
   resolutionField?: "resolution" | "quality";
   resolutions?: readonly string[];
   inputImageMax: number;
-  creditsPerVideo?: number;
   modes?: readonly ("standard" | "pro")[];
   generateAudio?: boolean;
   loop?: boolean;
@@ -71,47 +69,47 @@ export type VideoCapability = {
 };
 
 const VIDEO: Record<string, VideoCapability> = {
-  "veo-3.1-generate-preview": { durationField: "duration_seconds", durations: [4, 6, 8], aspectRatios: ["16:9", "9:16"], inputImageMax: 1, creditsPerVideo: 1600 },
+  "veo-3.1-generate-preview": { durationField: "duration_seconds", durations: [4, 6, 8], aspectRatios: ["16:9", "9:16"], inputImageMax: 1 },
   "bytedance/seedance-2.5": { durationField: "duration", durations: [5, 10, 15, 30], aspectRatios: COMMON_RATIOS,
-    resolutionField: "resolution", resolutions: ["480p", "720p"], inputImageMax: 1, creditsPerVideo: 1165 },
+    resolutionField: "resolution", resolutions: ["480p", "720p"], inputImageMax: 1 },
   "fal-ai/vidu/q3": { durationField: "duration", durationRange: [2, 16], aspectRatios: COMMON_RATIOS,
     resolutionField: "resolution", resolutions: ["360p", "540p", "720p", "1080p"], audio: true,
-    inputImageMax: 1, creditsPerVideo: 770 },
+    inputImageMax: 1 },
   "bytedance/seedance-2.0": { durationField: "duration", durations: [5, 10], aspectRatios: COMMON_RATIOS,
-    resolutionField: "resolution", resolutions: ["720p", "1080p"], inputImageMax: 1, creditsPerVideo: 756 },
+    resolutionField: "resolution", resolutions: ["720p", "1080p"], inputImageMax: 1 },
   "lightricks/ltx-2.5/pro": { durationField: "duration", durations: [6, 8, 10], aspectRatios: COMMON_RATIOS,
     resolutionField: "resolution", resolutions: ["720p", "1080p"], generateAudio: true,
-    inputImageMax: 1, creditsPerVideo: 720 },
+    inputImageMax: 1 },
   "bytedance/seedance-2.0/fast": { durationField: "duration", durations: [5, 10], aspectRatios: COMMON_RATIOS,
-    resolutionField: "resolution", resolutions: ["720p"], inputImageMax: 1, creditsPerVideo: 605 },
+    resolutionField: "resolution", resolutions: ["720p"], inputImageMax: 1 },
   "veo-3.1-fast-generate-preview": { durationField: "duration_seconds", durations: [4, 6, 8],
-    aspectRatios: ["16:9", "9:16"], inputImageMax: 1, creditsPerVideo: 600 },
+    aspectRatios: ["16:9", "9:16"], inputImageMax: 1 },
   "lightricks/ltx-2.5/fast": { durationField: "duration", durations: [6, 8, 10], aspectRatios: COMMON_RATIOS,
     resolutionField: "resolution", resolutions: ["720p", "1080p"], generateAudio: true,
-    inputImageMax: 1, creditsPerVideo: 540 },
+    inputImageMax: 1 },
   "fal-ai/luma-dream-machine/ray-2": { durationField: "duration", durations: [5, 9], aspectRatios: COMMON_RATIOS,
     resolutionField: "resolution", resolutions: ["540p", "720p", "1080p"], loop: true,
-    inputImageMax: 1, creditsPerVideo: 500 },
+    inputImageMax: 1 },
   "fal-ai/kling-video/o3": { durationField: "duration", durationRange: [3, 15], aspectRatios: COMMON_RATIOS,
-    modes: ["standard", "pro"], generateAudio: true, inputImageMax: 1, creditsPerVideo: 420 },
+    modes: ["standard", "pro"], generateAudio: true, inputImageMax: 1 },
   "fal-ai/kling-video/v3": { durationField: "duration", durationRange: [3, 15], aspectRatios: COMMON_RATIOS,
-    modes: ["standard", "pro"], generateAudio: true, inputImageMax: 1, creditsPerVideo: 420 },
+    modes: ["standard", "pro"], generateAudio: true, inputImageMax: 1 },
   "kwaivgi/kling-v2.5-turbo-pro": { durationField: "duration", durations: [5, 10], aspectRatios: COMMON_RATIOS,
-    inputImageMax: 1, creditsPerVideo: 350 },
+    inputImageMax: 1 },
   "pixverse/pixverse-v5": { durationField: "duration", durations: [5, 8], aspectRatios: COMMON_RATIOS,
-    resolutionField: "quality", resolutions: ["360p", "480p", "540p", "720p", "1080p"], inputImageMax: 1, creditsPerVideo: 300 },
+    resolutionField: "quality", resolutions: ["360p", "480p", "540p", "720p", "1080p"], inputImageMax: 1 },
   "xai/grok-imagine-video": { durationField: "duration", durationRange: [1, 15], aspectRatios: COMMON_RATIOS,
-    resolutionField: "resolution", resolutions: ["480p", "720p"], inputImageMax: 1, creditsPerVideo: 300 },
+    resolutionField: "resolution", resolutions: ["480p", "720p"], inputImageMax: 1 },
   "minimax/hailuo-02": { durationField: "duration", durations: [6], resolutionField: "resolution",
-    resolutions: ["768p", "1080p"], inputImageMax: 1, creditsPerVideo: 270 },
+    resolutions: ["768p", "1080p"], inputImageMax: 1 },
   "bytedance/seedance-1-pro": { durationField: "duration", durationRange: [2, 12], aspectRatios: COMMON_RATIOS,
-    resolutionField: "resolution", resolutions: ["480p", "720p", "1080p"], inputImageMax: 1, creditsPerVideo: 256 },
+    resolutionField: "resolution", resolutions: ["480p", "720p", "1080p"], inputImageMax: 1 },
   "veo-3.1-lite-generate-preview": { durationField: "duration_seconds", durations: [4, 6, 8],
-    aspectRatios: ["16:9", "9:16"], inputImageMax: 1, creditsPerVideo: 200 },
+    aspectRatios: ["16:9", "9:16"], inputImageMax: 1 },
   "bytedance/seedance-1.5-pro": { durationField: "duration", durations: [5, 10], aspectRatios: COMMON_RATIOS,
-    resolutionField: "resolution", resolutions: ["480p", "720p", "1080p"], inputImageMax: 1, creditsPerVideo: 130 },
+    resolutionField: "resolution", resolutions: ["480p", "720p", "1080p"], inputImageMax: 1 },
   "bytedance/seedance-1.0-pro/fast": { durationField: "duration", durations: [5, 10], aspectRatios: COMMON_RATIOS,
-    resolutionField: "resolution", resolutions: ["480p", "720p", "1080p"], inputImageMax: 1, creditsPerVideo: 97 }
+    resolutionField: "resolution", resolutions: ["480p", "720p", "1080p"], inputImageMax: 1 }
 };
 export const VIDEO_MODEL_IDS = Object.freeze(Object.keys(VIDEO));
 
@@ -120,16 +118,14 @@ export type MusicCapability = {
   instrumental: boolean;
   duration?: readonly [number, number];
   defaultDuration?: number;
-  creditsFixed?: number;
-  creditsPerSecond?: number;
   exactDurationBilling: boolean;
 };
 
 const MUSIC: Record<string, MusicCapability> = {
-  "lyria-3-pro-preview": { lyrics: true, instrumental: false, creditsFixed: 80, exactDurationBilling: false },
-  "lyria-3-clip-preview": { lyrics: false, instrumental: false, creditsFixed: 40, exactDurationBilling: false },
-  "elevenlabs-music": { lyrics: true, instrumental: true, duration: [1, 180], defaultDuration: 30, creditsPerSecond: 2.5, exactDurationBilling: true },
-  "elevenlabs-sfx": { lyrics: false, instrumental: false, duration: [1, 30], creditsPerSecond: 6, exactDurationBilling: false }
+  "lyria-3-pro-preview": { lyrics: true, instrumental: false, exactDurationBilling: false },
+  "lyria-3-clip-preview": { lyrics: false, instrumental: false, exactDurationBilling: false },
+  "elevenlabs-music": { lyrics: true, instrumental: true, duration: [1, 180], defaultDuration: 30, exactDurationBilling: true },
+  "elevenlabs-sfx": { lyrics: false, instrumental: false, duration: [1, 30], exactDurationBilling: false }
 };
 
 export function imageCapability(modelId: string): ImageCapability | undefined { return IMAGE[modelId]; }
@@ -184,31 +180,6 @@ export function musicRequestPayload(request: Extract<AudioRequest, { lane: "musi
     ...(request.lyrics ? { lyrics: request.lyrics } : {}),
     ...(request.durationSeconds !== undefined ? { duration_seconds: request.durationSeconds } : {}),
     ...(request.instrumental !== undefined ? { instrumental: request.instrumental } : {}) };
-}
-
-export function imageEstimate(modelId: string, count: number): string {
-  const unit = imageCapability(modelId)?.creditsPerImage;
-  return unit === undefined ? "예상 비용: 공식 단가를 확인할 수 없습니다." : `예상 ${unit * count} 크레딧 (${unit} × ${count}장)`;
-}
-
-export function videoEstimate(modelId: string): string {
-  const value = videoCapability(modelId)?.creditsPerVideo;
-  return value === undefined ? "예상 비용: 공식 단가를 확인할 수 없습니다." : `예상 ${value.toLocaleString("ko-KR")} 크레딧/영상`;
-}
-
-export function musicEstimate(modelId: string, duration?: number): string {
-  const capability = musicCapability(modelId);
-  if (!capability) return "예상 비용: 공식 단가를 확인할 수 없습니다.";
-  if (capability.creditsFixed !== undefined) return `예상 ${capability.creditsFixed} 크레딧/호출`;
-  if (capability.creditsPerSecond !== undefined && capability.exactDurationBilling) {
-    const seconds = duration ?? capability.defaultDuration;
-    return seconds === undefined ? "예상 비용: 생성 길이가 정해진 뒤 확정됩니다." :
-      `예상 ${seconds * capability.creditsPerSecond} 크레딧 (${seconds}초)`;
-  }
-  if (capability.creditsPerSecond !== undefined && capability.duration) {
-    return `예상 0–${capability.duration[1] * capability.creditsPerSecond} 크레딧 · 실제 생성 길이 기준`;
-  }
-  return "예상 비용: 생성 결과에 따라 확정됩니다.";
 }
 
 export function sttEstimate(durationSeconds?: number): string {

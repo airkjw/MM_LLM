@@ -48,7 +48,9 @@ export async function gatewayRequest(url: string, init: RequestInit = {}, option
   let response: Response;
   for (let attempt = 0; ; attempt++) {
     signal.throwIfAborted();
-    try { response = await fetcher(url, { ...init, signal }); }
+    // Fetch must never forward credentials or replay a billed body to a redirect target.
+    // Set this after caller options so follow/manual cannot relax the Gateway boundary.
+    try { response = await fetcher(url, { ...init, signal, redirect: "error" }); }
     catch (error) {
       if (init.signal?.aborted) throw init.signal.reason;
       if (timeout.aborted) throw new Error("응답 대기 시간이 초과되었습니다. 연결을 확인한 뒤 다시 시도해 주세요. 생성 요청은 서버에서 처리되었을 수 있습니다.");

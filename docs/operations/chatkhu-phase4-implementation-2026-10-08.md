@@ -1,0 +1,115 @@
+# ChatKHU Phase 4 구현 — 2026-10-08
+
+## 현재 상태·범위·소유권
+
+**구현·다섯 P2 보정·로컬 gate 459/459 완료 / 별도 독립 acceptance 59/59 PASS·네 단계 코드 수락 / 실계정·OS 하드웨어·CI 미검증.** 수락된 Phase 3 HEAD `2d98a502eea512124016e89333ec5acdc1920be6`의 깨끗한 feature worktree에서 시작했다. 최초 제품은 `2963ea9e903807076d950262a9b0d1df4fea2057`, 사전 검토 저장 보정 제품은 `8513d186067876053a405e6e0349cf4ce0eecb90`, 현재 lifecycle 보정 제품은 `839bf75a8e0137209e6ef325daef7adcf8dee53e`이다. 단일 구현 소유자 `task_6f1a1328f5c8` / `ctx_e882a4b52487`가 shared/main/preload/renderer/storage 경로/CSS/packaging 및 테스트를 직렬 편집했다. 내부 순서는 OpenAI Realtime → Gemini Live → Soniox 받아쓰기이며 위임하지 않았다. 전체 독립 검토와 별도 좁은 독립 acceptance는 settle/release/ACK됐으며 실행 책임자가 raw 근거를 확인해 작업 브랜치의 코드를 수락했다. 구현자의 검증을 독립 acceptance로 보고하지 않았으며 main 통합·push·릴리즈는 미실시다.
+
+직접 runtime 의존성 `ws` 8.21.3과 dev `@types/ws` 8.18.1을 편집 전에 이유와 함께 선언했다. 모두 기존 전이 설치 버전과 같으며 기존 package 버전 상승은 0건이다. Node built-in WebSocket은 browser-compatible API이므로 ws 전용 maxPayload/handshakeTimeout/followRedirects 옵션을 제공한다고 가정하지 않았다. [공식 ws API](https://github.com/websockets/ws/blob/master/doc/ws.md)와 설치 소스에서 payload 제한, bufferedAmount, close/terminate, redirect 정책을 확인했고 직접 의존성·lock의 ws production 분류만 반영했다. 앱은 v0.5.1을 유지한다.
+
+## 동작과 보안 경계
+
+| 경로 | 구현한 결과 |
+| --- | --- |
+| `src/main/realtime-session.ts`, shared `realtime.ts` | main 소유의 세션·키·토큰·WS·provider protocol, 단일 pending/active 예약, profile epoch·창·세션 identity, typed 프레임/제어와 오류 정규화 |
+| `src/main/index.ts`, `voice-permissions.ts`, preload/contracts | 기존 trustedInvoke와 같은 sender/mainFrame 검증, 정확한 IPC allowlist, 계정/키/backup restore/창 종료 중단, Electron44 check/request handler의 개별 media shape 검증 |
+| `voice-audio.ts`, public `voice-capture.js` | self resource AudioWorklet, 실제 AudioContext sampleRate 기준의 상태 유지 resampler, signed16LE mono 0.1초 프레임, 유한 전송/재생 큐·실제 재생 길이·중단/track ended/늦은 permission 정리 |
+| 실제 `VoicePanel.tsx`, `App.tsx`, `ChatPanel.tsx`, CSS | 별도 realtime selector와 Soniox 용도, 음성 전송/과금 동의, 시작/음소거/종료·마이크 표시·경과 시간, 초안 append와 암호화 텍스트 저장의 별도 명시적 동작 |
+| package/mac entitlement | 마이크 usage description와 `com.apple.security.device.audio-input`만 추가; 기존 hardened runtime과 창 크기·sandbox·context isolation·CSP 유지 |
+
+Realtime selector는 현재 계정 catalog의 realtime 종류와 검토한 OpenAI 2종·Gemini 2종을 교차한다. Soniox stt-rt-v5는 별도 받아쓰기이며 realtime 목록 부재를 영구 권한 거절로 저장하지 않는다. 렌더링·타이핑·모델/용도 변경·앱 시작에는 신규 음성 API 요청이나 권한 탐색 POST가 없다. 사용자가 전송·과금 동의 후 시작하면 main 준비 예약 → OS 마이크 준비 → 세션 POST 1회 순서다. 중복 click/start guard는 첫 await 전에 걸린다. permission 취소 뒤 늦게 반환된 track도 바로 stop하며 session POST는 0회다.
+
+[Gateway realtime 계약](https://docs.mindlogic.ai/docs/khu/api-gateway/reference/realtime/)과 markdown 예제를 다시 조회했다. session POST는 수정된 공통 Gateway transport의 강제 `redirect: error`를 사용한다. `gateway.live_session`, model echo, ISO expiry와 일회용 토큰을 검증하고 반환값은 정확한 상대 route만 허용한다. 고정 Gateway WSS origin에 token query를 한 번 붙이며 임의 host·자격 증명·추가 query·fragment·대체 route를 거절한다. 토큰은 main 메모리에서만 사용하고 renderer·저장·로그에 전달하지 않는다. 재발급·토큰 재사용·재연결·음성 재전송·유료 POST retry는 없다. 60초 token 유효 시간은 초기 handshake만 제한하며, 승인된 active session을 60초에 끊지 않는다.
+
+WS는 incoming 256KiB, outgoing bufferedAmount 128KiB, handshake/초기 응답 10초, 입력 0.1초와 초당 유한 budget, 입력 메시지 수/bytes, renderer 미수신 delivery 32개, 미재생 출력 5초를 제한한다. `followRedirects:false`, 압축 비활성화는 고정 옵션이며 caller가 덮어쓸 옵션 merge를 제공하지 않는다. 명시적 close와 1초 후 terminate를 사용하고 connecting 종료의 비동기 error를 보호한 뒤 close에서 timer/listener를 없앤다. token URL이나 raw provider reason은 오류 메시지·fixture diagnostics에 나오지 않는다.
+
+OpenAI는 [Realtime conversations](https://developers.openai.com/api/docs/guides/realtime-conversations), [client events](https://developers.openai.com/api/reference/resources/realtime/client-events), [server events](https://developers.openai.com/api/reference/resources/realtime/server-events)의 Realtime protocol을 사용한다. 첫 session.update에 type realtime·audio 출력·PCM24k 입출력·server_vad·빈 tools를 설정하고 session.updated 뒤에만 입력을 보낸다. 음성 delta·전사·done·error를 유한 처리한다. server_vad의 interrupt_response로 제공사가 취소하며 speech_started에서 renderer 재생 큐를 즉시 비운다. 실제로 재생한 길이로 item truncate를 보내고 기존 item의 늦은 음성을 버린다. 도구 요청은 명시적 오류로 닫으며 로컬 실행은 없다.
+
+Gemini는 고정 v1beta BidiGenerateContent route의 setup → setupComplete 후 active, AUDIO·input/output transcription, input PCM16k·output PCM24k를 사용한다. [capabilities](https://ai.google.dev/gemini-api/docs/live-api/capabilities)의 realtimeInput.audio와 음소거 시 audioStreamEnd를 따른다. [thinking lifecycle](https://ai.google.dev/gemini-api/docs/live-api/thinking/)의 extended-thinking IN_PROGRESS/IDLE을 보존해 filler turnComplete를 idle로 오표시하지 않는다. 일반 live에 thinking parameter를 추측해 넣지 않으며 도구 event는 닫는다.
+
+Soniox는 [WebSocket API](https://soniox.com/docs/api-reference/stt/websocket-api)의 JSON 설정 뒤 binary PCM24k mono를 보내며 api_key 필드를 넣지 않는다. 종료는 빈 **텍스트** 프레임이며 마이크를 바로 해제하고 최대 5초 동안 finished=true 최종 응답만 기다린다. timeout/조기 close는 미확정 응답을 정직하게 설명하며 수신한 final만 사용한다. final은 start/end 좌표가 있으면 그 좌표와 token으로 중복을 판정하고, 좌표가 없으면 소유한 메시지당 한 번 소비한다. 같은 단어가 반복돼도 보존하고 provisional 영역만 교체하며 `<end>`/`<fin>`을 제거한다. [문서화된 keepalive](https://soniox.com/docs/stt/rt/connection-keepalive)는 사용자 세션이 muted인 동안만 10초 간격으로 보낸다.
+
+원음 파일·녹음·자동 저장은 없다. capture/playback chunk는 메모리에만 있고 종료/오류/계정 변경/화면 해제에서 버린다. 확정/임시 preview 합계는 12,000자로 제한한다. 받아쓰기는 종료 뒤 사용자가 확정문을 기존 composer 뒤에 append하고 직접 전송한다. 음성 대화 텍스트는 기본 저장하지 않으며 종료 후 별도 저장 동의와 버튼을 눌러야 기존 `updateThread` 암호화 저장·텍스트 백업에 들어간다. 원음·토큰은 백업에 없다. 계정/키/창/화면 teardown은 늦은 예전 전사와 저장 소유권도 폐기한다.
+
+UI는 1분 예약·사용 중 추가 예약·종료 후 실제 정산, 음소거가 과금 종료가 아님, 조직 설정에 따른 OpenAI/Gemini 개인정보 필터와 Soniox 무필터를 표시한다. 첨부 동의를 음성 전송 동의로 재사용하지 않는다. 실제 [Electron session API](https://www.electronjs.org/docs/latest/api/session)와 설치된 44.4.1 types에 따라 nullable contents·top frame·trusted URL·singular mediaType 체크와 mediaTypes 요청을 분리한다. audio만 준비 상태에서 허용하고 camera/mixed/unknown/subframe/read 권한은 거절하며 trusted clipboard-sanitized-write와 기존 main 외부 링크 경로를 보존한다. Apple [media authorization](https://developer.apple.com/documentation/bundleresources/requesting-authorization-for-media-capture-on-macos)·[audio-input entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.device.audio-input)에 따라 microphone만 선언했다.
+
+## 최초 제품의 고정 소스 검증·receipt (역사)
+
+Linux x86_64, Node v24.21.0, npm 11.19.0에서 synthetic temp vault·주입 mock WS·가상 마이크/AudioContext·fake timer·로컬 native WS/Fetch만 사용했다. 실제 학생 키·프로필·음성·유료 API는 사용하지 않았다.
+
+새 등록 검증은 Node 29개·실제 DOM 6개다. provider manager 13개, native ws 3개, 실제 main IPC/permission/암호화 storage/backup 7개, resampler/worklet/AudioContext 6개가 3사 초기화·입출력·종료·동의·토큰 만료/재사용·잘못된 URL/model·오류 코드·Gemini timeout/thinking·Soniox 빈 TEXT/final drain/repeated words·초과 프레임/큐/backpressure·계정 전환·재생 중단·장치 끊김을 검증한다. 실제 VoicePanel/App DOM 6개는 double start·permission 거절/늦은 마이크·mute·cleanup·명시적 save/apply·기존 draft 보존·자동 전송 0회·logout·좁은 portrait/두 테마/native keyboard focus를 검증한다. 새 DOM 파일을 `ui:check`에 등록했다. native ws는 동일/다른 origin 301/302/303/307/308의 대상 요청·token 전달 0회, pending 취소/계정 변경/timeout의 미처리 error 없음·listener 0개, 실제 maxPayload 차단을 검증했다. native token POST도 redirect replay 0회다.
+
+| 정확한 제품 commit의 최종 명령 | 결과 |
+| --- | --- |
+| `npm run typecheck` | exit 0 |
+| `npm test` | exit 0; **Node 327/327 + 실제 DOM 88/88 = 415/415**, fail/cancelled/skipped/todo 0 |
+| `npm run ui:audit` | exit 0; 테마 tokens 각 39, hardcoded color 0, contrast 68, control mappings 32 |
+| `npm run build` | exit 0; Linux production build와 script 내부 typecheck |
+| baseline → product `git diff --check` | exit 0 |
+
+제품 commit 고정 뒤 네 gate와 diff를 각각 한 번 실행했다. 169개 제품 입력 파일의 명령별 전후 SHA-256이 같고 tested product Git blob·현재 소스와 일치한다. build의 `out/renderer/voice-capture.js`는 self-hosted 원본과 bytes/hash가 같다. raw gate diagnostics에 token query URL이 없음을 확인했다.
+
+Ignored 근거의 기준 폴더는 `.orca/phase4/gates/2963ea9e903807076d950262a9b0d1df4fea2057/`이다. 각 `typecheck`, `test`, `ui-audit`, `build`, `diff-check` 아래 `stdout.log`, `stderr.log`, `receipt.json`, `source-before.json`, `source-after.json`이 있다. receipt는 argv·cwd·시각·exit·HEAD·OS/Node/npm·비밀값을 redacted한 환경·log bytes/hash를 담는다. `.orca/phase4/receipt.json`과 `verification.json`이 최종 index/blob 검증이다. 초기 집중 실패와 원문도 같은 `.orca/phase4/`에 덮어쓰지 않고 보존했다. TypeScript fixture 호환/VoiceOwner narrowing, 실제 close listener 등록 순서, canonical CSS token을 보정했다. 나머지 초기 실패는 mock quit·동일 synthetic token 재발급·directory iteration·비현실적 즉시 audio frame timing·DOM EventTarget fixture 차이를 수정했으며 gate assertion을 낮추지 않았다. 성공 이후 제품 소스를 수정하지 않았다.
+
+## 다음 소유권·제한
+
+### 사전 검토 저장 보정 — 전체 독립 검토 대기
+
+기준 docs `431404b7827ac47fbd78f1a4aa1114ceb074dfaa` / 제품 `2963ea9e903807076d950262a9b0d1df4fea2057`에서 단일 보정 소유자 `task_1a3c5c47a6fc` / `ctx_b4b994bae0aa`가 P2-A main 확정문 저장의 예약·commit·rollback과 P2-B VoicePanel 동시 저장·늦은 완료 소유권만 수정했다. 범위는 실제 main/session/storage/atomic-file의 짧은 로컬 트랜잭션, VoicePanel과 관련 등록 회귀 테스트이며 의존성·버전·이전 단계 리팩터는 제외했다.
+
+main은 첫 await 전에 같은 completed object를 예약하고 명시적으로 캡처한 profile/epoch/창 owner로 읽기·변경·암호화·파일 교체 직전과 반환 시 소유권을 확인한다. 기존 vault mutation queue에서 캡처한 프로필 파일만 읽고 쓴다. 누락/삭제/chatbot/용량/교체 전 디스크 실패는 같은 completed object와 identity가 여전히 소유할 때만 예약을 반환해 사용자의 새 저장 동작을 허용한다. atomic rename 성공 시에만 claim을 소비하며, 그 뒤 directory sync가 실패해도 이미 기록된 문장을 중복 저장하지 않는다. 계정/키/복원/새 세션/창/화면 변경 뒤 예전 완료는 새 claim이나 반환 화면을 바꾸지 않는다. 현재 thread LLM 모델은 보존하고 메시지의 안전한 voice 모델 출처와 확정문만 암호화한다. 추가 endpoint·자동 재시도·원음/토큰 저장·vault lock 안의 네트워크는 없다.
+
+VoicePanel은 동기 예약과 session/target/component epoch를 캡처한다. pending save 중 Start/모델/용도는 동기 handler guard와 disabled control로 막고, 종료 화면 collapse/target 변경/unmount에서 예약 소유권을 폐기한다. 성공·실패·finally는 해당 operation만 갱신하며 같은 세션 실패 후 명시적 재시도가 가능하고 새 세션은 저장됨 표시를 상속하지 않는다.
+
+보호된 원본 main 1개·UI 2개는 bytes/hash 변경 없이 모두 통과했다. 누락/삭제/chatbot/10,000개 메시지/마지막 1개 슬롯/ENOSPC, 실제 암호화 저장의 동시 중복·queue 대기·암호화/임시 sync 중 lifecycle 변경·교체 이후 늦은 결과, 같은 UUID의 새 completed object를 등록 테스트로 검증했다. UI는 같은 batch Start/모델/용도·실패 재시도·collapse 후 새 pending save·target/unmount/logout·좁은 창/두 테마/키보드 포커스를 검사했다. 추가 등록 회귀는 Node 11개·DOM 7개이며 집중 결과는 Node 31/31·DOM 13/13이다. 초기 새 UI fixture의 동의 toggle/viewport 오염 실패와 실행 종료 receipt는 보존하고 fixture만 바로잡았으며 원본 assertions는 변경하지 않았다.
+
+| 최신 제품 커밋 고정 뒤 각 1회 실행 | 결과 |
+| --- | --- |
+| `npm run typecheck` | exit 0 |
+| `npm test` | exit 0; **Node 338/338 + DOM 95/95 = 433/433**, fail/cancelled/skipped/todo 0 |
+| `npm run ui:audit` | exit 0; 테마 tokens 각 39, hardcoded color 0, contrast 68, control mappings 32 |
+| `npm run build` | exit 0; Linux production build와 script 내부 typecheck |
+| 기준 docs → 최신 제품 `git diff --check` | exit 0 |
+
+Ignored 근거는 `.orca/phase4-save-correction/gates/8513d186067876053a405e6e0349cf4ce0eecb90/`이다. 명령별 full stdout/stderr·exit·cwd/argv·UTC 시각·비밀값 redacted 환경·source-before/after·제품 Git blob manifest를 보존했다. 169개 제품 입력의 전후 SHA-256과 제품/current Git blob이 모두 같으며 built voice-capture bytes도 원본과 같다. 통합 gate index `manifest.json` SHA-256은 `4e32bd2110a2c18527ffadbbc180450952f0a0045ca31a2563fa36b3593268af`, 공통 source manifest는 `2318c572c5182f87ed6674f0ed5407432f7a07d924f3850be535e66b1c15c91f`, 제품 blob manifest는 `fd234a57138100ae2d05cc78421580dfee299a66c5c21b978c60385ee1d4049f`다. `.orca/phase4-save-correction/report.txt`, `receipt.json`, `verification.json`에 최종 제품/docs SHA와 명령별 hash를 인계한다. 기존 415개 gate·원본 재현 실패의 raw 로그와 receipt hash도 그대로 대조했다. Coordinator가 다음 별도 **전체 Phase 4** 독립 검토와 수락을 소유하며 저장 보정만의 검토로 대체하지 않는다.
+
+Coordinator가 제품 commit·docs-only 기록·raw receipt를 별도 Sol reviewer에게 인계해 독립 검토와 필요한 후속 Dispatch를 소유한다. 실계정 권한·실제 provider 음성/차감·OS permission/hardware·시각적 수동 검증·CI·macOS 서명/공증·Windows 설치는 미실시다. Linux 빌드를 그 성공으로 승격하지 않는다. 기존 desktop-to-compact open-dialog focus-return 문제는 Phase 3 이전부터 있던 deferred 항목으로 보존했다. main merge/push/release/version 변경·추가 설계 감사는 하지 않았다.
+
+## 전체 독립 검토 후 lifecycle 보정 — 좁은 acceptance 대기
+
+전체 읽기 전용 독립 검토 `task_f602ce552735` / `ctx_0179f336f020`는 다섯 P2로 CHANGES_REQUIRED 판정 후 settle/release/ACK됐다. 동결 보고 `.orca/phase4-review/report.txt` SHA-256은 `e9ea03201be17949f878e56ac6de4d5c07c8a6021d7f1d84f5ce4b09114b2302`다. 기준 docs `e8fec573577bd50b53f86195d95807cccf6c2b11` / 제품 `8513d186067876053a405e6e0349cf4ce0eecb90`에서 단일 보정 소유자 `task_7e22146377c9` / `ctx_54549387433f`가 아래 범위를 직렬 수정했다. 제품은 `839bf75a8e0137209e6ef325daef7adcf8dee53e`이며 기능 commit `50542b6` 뒤 새 test bridge의 EOF 공백만 정리했다. 저장 트랜잭션·동기 예약과 이전 단계는 보존했다.
+
+| 지적 | 보정 결과·등록된 실제 경로 검증 |
+| --- | --- |
+| P2-A 전환 socket 유실 | 기존 mutex를 유지하고 모든 session generation 전환 전에 음성·완료 claim을 정리하고 renderer에 통지한다. 백업 취소·실패한 계정 확인도 명시적 종료/미저장 텍스트 폐기를 표시한다. 준비·발급 대기·handshake·active·muted·Soniox stopping, 전환 이전 epoch 통지, pending save 취소·이미 commit된 암호문 보존과 명시적 재시작을 검사했다. delivery 32개 포화도 terminal discard를 차단하거나 claim을 재생성하지 않는다. |
+| P2-B 예전 IPC 실패 | session/target/component epoch와 active owner를 재확인하고 Stop 시 이전 제어 callback을 retire한다. 늦은 played/interrupted/mute/stop 성공·실패가 교체 owner를 닫지 않는다. 아직 소유한 제어·오디오/Stop 실패는 자원을 닫고 오류를 알리며 재시작할 수 있다. |
+| P2-C 폐기된 Save | 완료된 대화에는 claim 폐기 통지를 받을 한 listener만 남기며 오디오와 timer는 즉시 닫는다. 저장 성공·새 시작·collapse·전환·target/unmount에서 listener를 제거한다. collapse는 대화 preview/저장 동의를 지우고 폐기를 설명하므로 재개해도 잘못된 Save 요청이 없다. 의도적으로 보존하는 받아쓰기 final append는 유지했다. 실제 main↔React IPC bridge가 retryable 실패·collapse 후 새 pending save·예전 결과·전환 중 pending save를 검사한다. |
+| P2-D Gemini 확정 입력 누락 | [raw WS reference](https://ai.google.dev/api/live.md#BidiGenerateContentServerContent)에 따라 `inputTranscription`을 도착 순서로 한 번씩 final에 기록하며 model turn에 임의 대응시키지 않는다. `interimInputTranscription`은 교체 가능한 preview만 제공한다. 출력은 generationComplete/turnComplete에서 한 번 확정하고 Stop/interrupt로 미완성 출력을 승격하지 않는다. 두 모델의 input/output 순서·늦은 입력·filler·Stop/interrupt·반복된 동일 입력·12,000자 한도와 실제 암호화 save/backup을 검사했다. 현재 thread LLM·voice 출처와 별도 text opt-in을 유지한다. |
+| P2-E activity 미표시 | mic/mute·경과 시간과 듣는 중/생각 중/응답 중을 함께 표시한다. filler 뒤 background thinking도 보존하며 재생 큐가 남으면 응답 중을 유지한다. 시작 시 activity를 초기화하고 Stop/오류/닫힘·dictation·빈 상태, status/live 속성·native focus·420px portrait·두 테마를 DOM으로 검사했다. |
+
+원본 review tree의 **81개 파일**은 bytes/hash 그대로 유지했다. actionable 원본 재현과 유효 control은 총 30개가 통과하며 별도 등록 추가 회귀는 Node 12개·DOM 14개다. 집중 등록 결과는 main/session 43/43, VoicePanel/App DOM 27/27이다. 전체 독립 검토가 제외한 Gemini top-level/status-only probes와 초기 TSX loader 실패는 제품 finding으로 승격하지 않았다. 필터 첫 시도의 file-parent 매칭으로 제외된 두 진단만 실행/실패한 로그도 보존했고 `--test-skip-pattern=extended-thinking (status-only|documented top-level)`로 유효 11 control만 통과시켰다. protocol schema/assertion을 낮추지 않았다. evidence verifier의 최초 archive 경로 착오도 로그/스크립트를 보존하고 review-index의 정확한 `validatedAt`으로 고쳤다.
+
+| 제품 commit 고정 뒤 각각 1회 실행 | 결과 |
+| --- | --- |
+| `npm run typecheck` | exit 0 |
+| `npm test` | exit 0; **Node 350/350 + DOM 109/109 = 459/459**, fail/cancelled/skipped/todo 0 |
+| `npm run ui:audit` | exit 0; 테마 tokens 각 39, hardcoded color 0, contrast 68, control mappings 32 |
+| `npm run build` | exit 0; Linux production build와 script 내부 typecheck |
+| 기준 docs → 제품 `git diff --check` | exit 0 |
+
+Ignored `.orca/phase4-lifecycle-correction/gates/839bf75a8e0137209e6ef325daef7adcf8dee53e/`에 per-command full stdout/stderr·exit·cwd/argv·UTC·환경의 비밀값 redaction·source-before/after·product Git blob manifest를 보존했다. **170개** 제품 입력의 전후 bytes/hash와 제품/current Git blobs가 일치한다. gate index `manifest.json` SHA-256은 `851c0a62a44b97aa2ba7c9b4ae38c319f4e7545dfc4cf1e4f0f0eb6584c39267`, source manifest는 `ef9c60131c642c1a7fae26cb5a9c16696a5dcc036a8c13a360fe3010b76c9572`, product blob manifest는 `a2d3dc6397dd8cc709fd50451860a4bd0627d0b80a9d41d311656e83d132068b`다. historical 415/433 gate·실패 원본도 log/source/Git byte 일치를 검증하고 반복 실행하지 않았다. built voice worklet은 원본과 byte-identical이다. `.orca/phase4-lifecycle-correction/report.txt`, `receipt.json`, `verification.json`은 최종 제품/docs SHA와 raw command/hash를 인계한다.
+
+다음 소유자는 coordinator와 별도 **다섯 지적·인접 lifecycle/save guard의 좁은 독립 acceptance**다. 전체 Phase 4 재감사나 구현자 self-acceptance는 하지 않는다. Linux 합성 DOM·격리 암호화 vault·mock mic/context/WS와 로컬 native WS/Fetch 검증이다. 실계정 권한/실제 과금·provider 실행·OS 마이크/hardware·수동 시각/assistive technology·CI·macOS 서명/공증·Windows 설치는 미실시다. 기존 compact dialog focus-return deferred 항목, 최초 창 비율/복원과 업무 UI를 보존했다. main branch·merge/push·버전·의존성·릴리즈 변경은 없다.
+
+## 독립 acceptance PASS와 네 단계 코드 수락
+
+별도 읽기 전용 Sol `task_e08ad434b0b2` / `ctx_45c093dce4ec`가 보정 제품 `839bf75a8e0137209e6ef325daef7adcf8dee53e`와 docs-only HEAD `7433882fcbd492d1ff8071fc925700c9bdedc259`를 독립 검토해 **PASS**로 판정했다. 전체 독립 검토의 다섯 지적과 인접 lifecycle/save 경로만 확인했으며 전체 재감사·구현자 self-acceptance로 대체하지 않았다. 실행 책임자는 실제 Task/Dispatch 완료와 capability 회수, 보고서·원본 receipt를 확인해 코드를 수락하고 reviewer를 release 후 ACK했다.
+
+새 독립 실행은 **Node 34개 + DOM 25개 = 59/59 PASS**다. 원본 유효 재현과 control 30개는 fixture/assertion 변경 없이 통과했고 등록 보정 회귀 26개, 실제 main의 추가 백업 성공·실패/동시 전환 검사 3개도 통과했다. 3개 인접 검사의 내부 사례는 준비·발급 대기·handshake·active·muted·Soniox stopping 전 상태를 다뤘다. 이전 coordinator 저장 재현은 기존 보정 결과와 원본 hash를 확인했으며 중복 실행하지 않았다. 미지원 Gemini probe 두 개와 초기 loader 진단은 통과 개수에 포함하지 않았다.
+
+별도 reviewer와 실행 책임자가 최신 제품 gate **350 Node + 109 DOM = 459/459**, typecheck·UI audit·Linux build의 exit 0과 명령별 full 로그/hash, 동일 source manifest·현재/제품 Git blob을 각각 확인했다. 170개 입력과 self-hosted voice worklet이 일치하고 docs-only 인계는 제품을 변경하지 않았다. 통과한 전체 gate를 반복 실행하지 않았다. review 파일 81개와 coordinator 파일 8개는 총 89개가 byte-identical로 보존됐다.
+
+Ignored 근거는 `.orca/phase4-acceptance/report.txt`, `verification.json`, `evidence-verification.json`과 각 실행 폴더의 `stdout.log`, `stderr.log`, `receipt.json`, source-before/after 및 settled-gates 사본에 있다. 최종 보고서 SHA-256은 `df05a0d1ecee6a7d112774d20740799ead191a93dc9b490e9d2cd37cff8e346d`다. 실행 책임자가 자체 대조한 `.orca/orchestration/phase4-acceptance-coordinator-verification.json`은 main 작업 폴더의 ignored 기록이다. fixture·원문·receipt와 과거 실패를 완료 문서에 임의로 합치거나 성공으로 바꾸지 않았다.
+
+[확장 계획](chatkhu-api-expansion-plan-2026-10-08.md)의 네 단계가 작업 브랜치 `airkjw/chatkhu-api-expansion-20261008`에서 구현·보정·로컬 검증·독립 검토까지 완료됐다. 사용자는 연구 검색 도구를 명시적으로 조회하고, 프로젝트에서 의미 검색을 켜고 별도 색인 동의를 받으며, 대화 고급 설정의 코드 실행·미디어 비용 확인·실시간 음성/받아쓰기를 각각 사용할 수 있다. 기본 꺼짐·동의·계정별 권한·실패 시 자동 유료 재실행 금지 계약을 유지한다.
+
+실계정의 제공사 권한·실제 검색/음성·차감, OS permission·실제 microphone/speaker, 수동 시각·스크린리더, CI·macOS 서명/공증·Windows 설치는 미검증이다. 기존 compact dialog focus-return 항목도 후속 과제로 남아 있다. 앱 버전 `v0.5.1`, 기존 main HEAD와 관련 없는 작업 파일은 보존했다. 이 코드 수락과 문서 커밋은 main merge·push·버전 변경·설치파일 릴리즈를 수행하지 않는다.

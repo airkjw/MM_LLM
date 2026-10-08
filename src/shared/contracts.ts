@@ -1,4 +1,20 @@
-export type ModelKind = "llm" | "image" | "audio" | "video";
+export type ModelKind = "llm" | "embedding" | "rerank" | "decisions" | "realtime" | "image" | "audio" | "video";
+export type NativeSearchProvider = "claude" | "responses" | "gemini" | "sonar";
+export type SearchCapability = {
+  status: "supported" | "unsupported" | "unknown";
+  provider?: NativeSearchProvider;
+  checkedAt?: string;
+  reason: string;
+};
+export type WebCitation = { url: string; title: string; citedText?: string; startIndex?: number; endIndex?: number };
+export type WebSearchExecution = {
+  route: "native" | "sonar" | "shared" | "cache" | "none";
+  provider?: NativeSearchProvider;
+  status: "pending" | "executed" | "missing" | "failed" | "empty" | "cached" | "not_requested";
+  queries: string[];
+  citations: WebCitation[];
+  requestCount?: number;
+};
 export type WebSearchMode = "always" | "auto" | "deep" | "off";
 export type ReasoningMode = "auto" | "fast" | "balanced" | "deep";
 export type ThemeMode = "system" | "light" | "dark";
@@ -46,7 +62,14 @@ export type ResponsesSettings = {
   reasoningSummary?: "auto" | "none";
 };
 
+export type ServerCodeResult = {
+  id: string; provider: "claude" | "responses"; status: "executing" | "completed" | "failed" | "cancelled";
+  code: string; stdout?: string; stderr?: string; outputLogs?: string; summary: string;
+  artifacts: Array<{ kind: "file" | "image"; id?: string; name?: string }>;
+};
+
 export type ChatAdvancedSettings = {
+  serverCode?: boolean;
   temperature?: number;
   maxOutputTokens?: number;
   topP?: number;
@@ -77,6 +100,8 @@ export type GatewayModel = {
   type: ModelKind;
   profile_image_url?: string | null;
   audio_client?: string;
+  pricing?: { web_search_per_1k?: number | null };
+  searchCapability?: SearchCapability;
 };
 
 export type CreditBalance = {
@@ -84,6 +109,8 @@ export type CreditBalance = {
   monthly_allocated?: { quota?: number; used?: number; remaining?: number; renewal_date?: string };
   purchased?: { quota?: number; used?: number; remaining?: number };
 };
+
+export type UnsupportedContinuationReason = "claude_pause_turn";
 
 export type PublicMessage = {
   id: string;
@@ -94,13 +121,17 @@ export type PublicMessage = {
   createdAt: string;
   attachments?: string[];
   status?: "complete" | "incomplete" | "resolved";
+  /** Safe public reason only; paused server-tool content is not retained for replay. */
+  continuationUnsupportedReason?: UnsupportedContinuationReason;
   usage?: TokenUsage;
   /** Provider-generated, user-visible reasoning summary. Raw hidden reasoning is never stored here. */
   reasoningSummary?: string;
   toolCalls?: ManualToolCall[];
+  serverCodeResults?: ServerCodeResult[];
   credits?: number;
   files?: Array<{ id: string; name: string; mediaUrl: string; expiresAt: string }>;
   backgroundResponseId?: string;
+  webSearch?: WebSearchExecution;
 };
 
 export type ThreadTarget =
@@ -170,11 +201,13 @@ export type ChatRequest = {
 };
 
 export type ChatEvent =
+  | { type: "server_code"; result: ServerCodeResult }
+  | { type: "web_search"; search: WebSearchExecution }
   | { type: "delta"; text: string }
   | { type: "reasoning_summary"; text: string }
   | { type: "progress"; message: string }
   | { type: "tool_call"; call: ManualToolCall }
-  | { type: "status"; status: string; responseId?: string }
+  | { type: "status"; status: string; responseId?: string; continuationUnsupportedReason?: UnsupportedContinuationReason }
   | { type: "credits"; credits: number }
   | { type: "files"; files: Array<{ id: string; name: string; mediaUrl: string; expiresAt: string }> }
   | { type: "done"; snapshot: ThreadSnapshot; usage?: TokenUsage }
@@ -195,6 +228,7 @@ export type BackgroundResponse = {
   reasoningSummary?: string;
   error?: string;
   toolCalls?: ManualToolCall[];
+  serverCodeResults?: ServerCodeResult[];
 };
 
 export type ProjectDocument = {
@@ -206,6 +240,7 @@ export type ProjectDocument = {
 };
 
 export type ProjectSummary = {
+  retrieval?: import("./document-retrieval").RetrievalSettings;
   id: string;
   name: string;
   instruction: string;
@@ -232,6 +267,7 @@ export type CompareRun = {
   attachmentNames: string[];
   /** Shared public web evidence stored in the encrypted local workspace record. */
   sharedEvidence?: string;
+  webSearch?: WebSearchExecution;
   results: Array<{ modelId: string; status: "running" | "completed" | "incomplete" | "failed" | "cancelled";
     text: string; usage?: TokenUsage; error?: string }>;
   synthesis?: {
@@ -298,6 +334,17 @@ export type AudioRequest =
   | { lane: "music"; modelId: string; prompt: string; lyrics?: string;
       durationSeconds?: number; instrumental?: boolean; deidentifiedConfirmed: boolean };
 
+export type QuoteBound = "exact" | "minimum" | "maximum" | "approximate";
+export type MediaEstimateRequest =
+  | ({ kind: "image" } & Pick<ImageRequest, "modelId" | "numberOfImages" | "aspectRatio" | "quality" | "imageSize" | "background">)
+  | ({ kind: "video" } & Pick<VideoRequest, "modelId" | "aspectRatio" | "durationSeconds" | "resolution" | "mode" | "loop" | "audio">)
+  | { kind: "music"; modelId: string; durationSeconds?: number; instrumental?: boolean };
+export type MediaQuote = {
+  kind: "image" | "video" | "music"; modelId: string; credits: number; bound: QuoteBound; exact: boolean;
+  lines: Array<{ item: "image" | "video" | "music" | "content_filter"; credits: number; bound: QuoteBound; exact: boolean; basis: string; note?: string }>;
+  note?: string; fingerprint: string; quotedAt: string;
+};
+
 export type TranscriptSegment = {
   speaker: string;
   text: string;
@@ -357,6 +404,21 @@ export type UpdateState = {
 };
 
 export type DesktopApi = {
+  prepareVoice(request: import('./realtime').VoiceStart): Promise<void>;
+  connectVoice(id: string): Promise<void>;
+  sendVoiceFrame(frame: import('./realtime').VoiceFrame): Promise<void>;
+  controlVoice(control: import('./realtime').VoiceControl): Promise<void>;
+  stopVoice(id: string, immediate: boolean): Promise<void>;
+  saveVoiceText(id: string, threadId: string, consent: true): Promise<ThreadSnapshot>;
+  onVoiceEvent(listener: (event: import('./realtime').VoiceEvent) => void): () => void;
+  getProjectRetrieval(projectId: string): Promise<import("./document-retrieval").RetrievalStatus>;
+  configureProjectRetrieval(projectId: string, settings: import("./document-retrieval").RetrievalSettings): Promise<void>;
+  startProjectIndex(requestId: string, projectId: string, indexConsent: boolean, resumeConsent: boolean): Promise<import("./document-retrieval").RetrievalStatus>;
+  searchProjectDocuments(requestId: string, projectId: string, query: string): Promise<import("./document-retrieval").RetrievalResult>;
+  discoverResearch(requestId: string): Promise<import("./research").ResearchSuite[]>;
+  listResearchTools(requestId: string, suite: string): Promise<import("./research").ResearchTool[]>;
+  searchResearch(requestId: string, token: string, args: Record<string, unknown>): Promise<import("./research").ResearchResult>;
+  cancelResearch(requestId: string): Promise<void>;
   exportBackup(password: string): Promise<boolean>;
   restoreBackup(password: string): Promise<boolean>;
   updateModelPreference(modelId: string, action: "favorite" | "recent"): Promise<AppSettings>;
@@ -366,6 +428,7 @@ export type DesktopApi = {
   cancelLogin(): Promise<boolean>;
   logout(): Promise<void>;
   refreshModels(): Promise<GatewayModel[]>;
+  checkModelSearch(modelId: string): Promise<SearchCapability>;
   getCredits(force?: boolean): Promise<CreditBalance>;
   getSettings(): Promise<AppSettings>;
   updateSettings(settings: AppSettings): Promise<AppSettings>;
@@ -412,6 +475,8 @@ export type DesktopApi = {
   getChatbotUsage(bookmarkId: string): Promise<ChatbotUsageReport>;
   acknowledgeAttachmentPrivacy(threadId: string): Promise<ThreadSnapshot>;
   streamChat(request: ChatRequest, onEvent: (event: ChatEvent) => void): () => void;
+  estimateMedia(requestId: string, request: MediaEstimateRequest): Promise<MediaQuote>;
+  cancelMediaEstimate(requestId: string): Promise<void>;
   generateImage(request: ImageRequest): Promise<MediaResult>;
   generateVideo(request: VideoRequest): Promise<MediaResult>;
   runAudio(request: AudioRequest): Promise<MediaResult>;

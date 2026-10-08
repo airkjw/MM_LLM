@@ -1,19 +1,18 @@
 import type { GatewayModel, WebSearchMode } from "./contracts";
 
-const SONAR_MODELS = new Set(["sonar-pro", "sonar-reasoning-pro"]);
-
-/** Models that the FactChat Gateway documents as having native web search. */
-export function hasNativeWebSearch(modelId: string): boolean {
-  return modelId.startsWith("gemini-") || SONAR_MODELS.has(modelId);
+/** Display only an account-verified native capability, never an ID prefix. */
+export function hasNativeWebSearch(model: GatewayModel | undefined): boolean {
+  return model?.type === "llm" && model.searchCapability?.status === "supported";
 }
 
-export function webSearchMode(modelId: string): "native" | "sonar" {
-  return hasNativeWebSearch(modelId) ? "native" : "sonar";
+export function webSearchMode(model: GatewayModel | undefined): "native" | "sonar" {
+  return hasNativeWebSearch(model) ? "native" : "sonar";
 }
 
 export function availableSearchModel(catalog: GatewayModel[]): string | null {
   for (const id of ["sonar-pro", "sonar-reasoning-pro"]) {
-    if (catalog.some((model) => model.type === "llm" && model.id === id)) return id;
+    if (catalog.some((model) => model.type === "llm" && model.id === id && model.pricing?.web_search_per_1k !== null &&
+      model.searchCapability?.status !== "unsupported")) return id;
   }
   return null;
 }
