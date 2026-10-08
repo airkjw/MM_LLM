@@ -888,12 +888,15 @@ export default function App() {
       }} />
     <main className="main-area">
       <AppDialogs
-        onResearchEvidence={(text) => { void (async () => {
+        retrievalModels={session.models}
+        onResearchEvidence={(text) => { const epoch = uiEpochRef.current; void (async () => {
           try {
             const current = thread?.target?.kind !== "chatbot" ? thread : null;
             const target = current ?? await window.mmllm.createThread({ modelId: defaultModel(session.models) });
+            if (epoch !== uiEpochRef.current) return;
             if (!current) { applyThreadUpdate(target); await refreshThreads(); }
-            setTemplateDraft({ threadId: target.id, text }); setToolsOpen(false); setScreen("chat");
+            if (epoch !== uiEpochRef.current) return;
+            setTemplateDraft({ threadId: target.id, text }); setToolsOpen(false); setProjectsOpen(false); setScreen("chat");
           } catch (error) { setError(errorText(error)); }
         })(); }}
         renameDialog={renameDialog}

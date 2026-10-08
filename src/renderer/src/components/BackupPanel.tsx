@@ -12,7 +12,7 @@ export function BackupPanel() {
   async function run(restore: boolean) {
     if (busy) return;
     if (!restore && password !== repeat) { setError("백업 암호와 확인 입력이 일치하지 않습니다."); return; }
-    if (restore && !await confirm({ title: "백업 복원", message: "현재 계정의 대화·프로젝트·설정을 백업 내용으로 전환합니다. 현재 기록이 필요하면 먼저 백업해 주세요. API 키는 바뀌지 않습니다.",
+    if (restore && !await confirm({ title: "백업 복원", message: "현재 계정의 대화·프로젝트·설정을 백업 내용으로 전환합니다. 현재 기록이 필요하면 먼저 백업해 주세요. API 키는 바뀌지 않습니다. 의미 색인 벡터는 생략되며 복원 후 로컬 검색으로 시작하고 별도 동의 후 재구축합니다.",
       confirmLabel: "백업 내용으로 복원", danger: true })) return;
     setBusy(true); clear();
     try {
@@ -28,7 +28,7 @@ export function BackupPanel() {
   }
   return <fieldset className="backup-panel" disabled={busy}>
     <legend>암호화 백업·복원</legend>
-    <p>대화와 첨부 자료, 프로젝트 문서, 앱 설정을 다른 컴퓨터로 옮길 수 있습니다. API 키는 포함하지 않습니다.
+    <p>대화와 첨부 자료, 프로젝트 문서, 앱 설정을 다른 컴퓨터로 옮길 수 있습니다. API 키는 포함하지 않습니다. 의미 색인 벡터는 생략되며 복원 후 재구축이 필요합니다.
       미디어 생성물과 비교 실행 기록은 이 백업에 포함하지 않습니다. 최대 512MB이며 암호를 잃으면 복원할 수 없습니다.</p>
     <label>백업 암호 (12자 이상)<input type="password" autoComplete="off" value={password}
       maxLength={1024} onChange={(event) => setPassword(event.target.value)} /></label>

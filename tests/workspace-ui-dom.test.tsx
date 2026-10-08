@@ -181,7 +181,7 @@ test("blocked links retain readable content and an explanation", async () => {
 });
 
 
-async function openRealComparison() {
+async function openRealComparison(extraApi: Record<string, unknown> = {}) {
   const now = new Date().toISOString();
   const models = ["gpt-5.6-sol", "claude-opus-5", "gemini-3.8-flash"].map(id => ({ id, type: "llm" }));
   const thread = { id: "compare-origin", title: "새 대화", modelId: models[0].id,
@@ -199,10 +199,10 @@ async function openRealComparison() {
     pickAttachment: async () => ({ id: `report-${++nextId}`, name: "report.pdf", kind: "document", size: 100 }),
     discardAttachments: async () => {}, streamCompare: (request: CompareRequest, listener: (event: CompareEvent) => void) => {
       requests.push(request); receive = listener; return () => {};
-    }
+    }, ...extraApi
   } });
   await render(<ConfirmProvider><App /></ConfirmProvider>);
-  const button = [...document.querySelectorAll("button")].find(button => button.textContent?.includes("모델 비교"))!;
+  const button = [...document.querySelectorAll("button")].find(button => button.textContent?.includes("모델 비교") || button.getAttribute("aria-label")?.includes("모델 비교"))!;
   await click(button);
   const question = document.querySelector<HTMLTextAreaElement>(".compare-panel textarea")!;
   await act(async () => {
@@ -461,4 +461,44 @@ test("real native citations explain blocked HTTP links and handle external-open 
   await click(http); assert.equal(attempts, 0);
   await click([...document.querySelectorAll("button")].find((button) => button.textContent === "HTTPS 출처")!);
   assert.equal(attempts, 1); assert.match(document.querySelector('[role="alert"]')!.textContent!, /출처를 열지 못했습니다/);
+});
+
+test("real App research results use the existing modal focus layer in narrow windows and both themes", async () => {
+  const style = document.createElement("style"); style.textContent = readFileSync(new URL("../src/renderer/src/styles.css", import.meta.url), "utf8"); document.head.append(style);
+  const originalWidth = browser.innerWidth;
+  let discoveries = 0;
+  try {
+    await openRealComparison({ discoverResearch: async () => { discoveries++; return []; }, cancelResearch: async () => {} });
+    await act(async () => { browser.innerWidth = 480; browser.dispatchEvent(new browser.Event("resize")); });
+    const toggle = [...document.querySelectorAll("button")].find((button) => button.textContent === "논문·법령 검색")!;
+    await click(toggle); assert.equal(discoveries, 0);
+    const dialog = document.querySelector<HTMLElement>('.workspace-tools-dialog[role="dialog"]')!;
+    assert.ok(dialog.querySelector('.research-panel[aria-label="논문·법령 검색"]'));
+    for (const theme of ["light", "dark"]) {
+      document.documentElement.dataset.theme = theme;
+      assert.equal(Number.parseFloat(browser.getComputedStyle(dialog.querySelector('.research-panel')!).minWidth), 0);
+      assert.match(dialog.textContent!, /키 30회\/분.*200회\/일/);
+    }
+    const controls = [...dialog.querySelectorAll<HTMLButtonElement>('button:not([disabled])')];
+    await act(async () => controls.at(-1)!.focus()); await key("Tab");
+    assert.equal(document.activeElement, controls[0]);
+    await key("Escape"); assert.equal(document.querySelector('.workspace-tools-dialog'), null);
+    assert.equal(discoveries, 0);
+  } finally { browser.innerWidth = originalWidth; style.remove(); }
+});
+
+test("real App project dialog loads saved semantic settings while cached project summaries remain local", async () => {
+  const now = new Date().toISOString();
+  const project = { id: "synthetic-ui-project", name: "합성 연구", instruction: "", documents: [], threadCount: 0, createdAt: now, updatedAt: now };
+  const settings = { mode: "semantic", embeddingModelId: "text-embedding-3-small", queryConsent: true, rerankConsent: false };
+  let paid = 0;
+  await openRealComparison({ listProjects: async () => [project], getProjectRetrieval: async () => ({ settings, documents: [], uncertain: 0, running: false }),
+    startProjectIndex: async () => { paid++; }, searchProjectDocuments: async () => { paid++; } });
+  await key("Escape");
+  const open = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("프로젝트") && button.closest(".sidebar"))!;
+  await click(open);
+  const select = document.querySelector<HTMLSelectElement>('.retrieval-settings select')!;
+  assert.equal(select.value, "semantic"); assert.equal(paid, 0);
+  await key("Escape"); await click(open);
+  assert.equal(document.querySelector<HTMLSelectElement>('.retrieval-settings select')!.value, "semantic"); assert.equal(paid, 0);
 });

@@ -1,5 +1,5 @@
 import { app, safeStorage } from "electron";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { mkdir, open, readdir, rm, unlink } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { decodeBackupBytes, type PortableProject } from "../shared/backup-format";
@@ -8,6 +8,8 @@ import { writeAtomic } from "./atomic-file";
 import { extractDocx, extractPdf, extractXlsx } from "./document-text";
 import { createVaultKey, decryptVaultBlob, encryptVaultBlob, type VaultKey } from "./project-vault-crypto";
 import { chunkDocument } from "./thread-context";
+import { chunkKey, LOCAL_RETRIEVAL, validateRetrievalSettings, validateSemanticIndex,
+  type RetrievalChunk, type RetrievalSettings, type SemanticIndex } from "../shared/document-retrieval";
 
 export const MAX_PROJECT_DOCUMENT_BYTES = 18 * 1024 * 1024;
 export const MAX_PROJECT_BYTES = 64 * 1024 * 1024;
@@ -16,9 +18,10 @@ export const MAX_PROJECTS = 50;
 export const MAX_PROJECT_METADATA_BYTES = 1024 * 1024;
 export const MAX_PROJECT_INDEX_BYTES = 6 * 1024 * 1024;
 export const MAX_PROJECT_RAW_PDF_BYTES = 14 * 1024 * 1024;
+export const MAX_SEMANTIC_INDEX_BYTES = 22 * 1024 * 1024;
 
-type StoredDocument = ProjectDocument & { blobId: string; indexBlobId: string };
-type ProjectRecord = Omit<ProjectSummary, "threadCount" | "documents"> & { documents: StoredDocument[] };
+type StoredDocument = ProjectDocument & { blobId: string; indexBlobId: string; sourceHash?: string };
+type ProjectRecord = Omit<ProjectSummary, "threadCount" | "documents"> & { documents: StoredDocument[]; semanticBlobId?: string };
 type ProjectDb = { version: 1; projects: ProjectRecord[] };
 type Keyring = { version: 1; current: { id: string; key: string }; previous?: { id: string; key: string } };
 
@@ -138,11 +141,14 @@ async function rotateProjectVaultKeyUnlocked(profileId: string): Promise<void> {
   await recoverRotation(profileId);
 }
 
+function publicProject(project: ProjectRecord, threadCount = 0): ProjectSummary {
+  return { id: project.id, name: project.name, instruction: project.instruction,
+    documents: project.documents.map(({ blobId: _b, indexBlobId: _i, sourceHash: _h, ...doc }) => doc),
+    retrieval: project.retrieval, threadCount, createdAt: project.createdAt, updatedAt: project.updatedAt };
+}
 async function listProjectsUnlocked(profileId: string, threadCounts: Map<string, number> = new Map()): Promise<ProjectSummary[]> {
   await sweepProjectOrphansUnlocked(profileId);
-  return (await db(profileId)).projects.map((project) => ({ id: project.id, name: project.name,
-    instruction: project.instruction, documents: project.documents.map(({ blobId: _b, indexBlobId: _i, ...doc }) => doc),
-    threadCount: threadCounts.get(project.id) ?? 0, createdAt: project.createdAt, updatedAt: project.updatedAt }));
+  return (await db(profileId)).projects.map((project) => publicProject(project, threadCounts.get(project.id) ?? 0));
 }
 
 async function createProjectUnlocked(profileId: string, name: string, instruction = ""): Promise<ProjectSummary> {
@@ -153,7 +159,7 @@ async function createProjectUnlocked(profileId: string, name: string, instructio
   const project: ProjectRecord = { id: randomUUID(), name: cleaned, instruction: instruction.trim().slice(0, 12_000),
     documents: [], createdAt: now, updatedAt: now };
   value.projects.unshift(project); await saveDb(profileId, value);
-  return { ...project, documents: [], threadCount: 0 };
+  return publicProject(project);
 }
 
 async function updateProjectUnlocked(profileId: string, projectId: string,
@@ -165,7 +171,7 @@ async function updateProjectUnlocked(profileId: string, projectId: string,
   if (!name) throw new Error("프로젝트 이름을 입력해 주세요.");
   project.name = name; project.instruction = update.instruction.trim().slice(0, 12_000);
   project.updatedAt = new Date().toISOString(); await saveDb(profileId, value);
-  return { ...project, documents: project.documents.map(({ blobId: _b, indexBlobId: _i, ...doc }) => doc), threadCount: 0 };
+  return publicProject(project);
 }
 
 async function extractedText(name: string, bytes: Buffer, signal?: AbortSignal): Promise<string> {
@@ -210,10 +216,10 @@ async function addProjectDocumentUnlocked(profileId: string, projectId: string,
     encryptVaultBlob(indexBytes, key, `${profileId}:${indexBlobId}`)); }
   catch (error) { await unlink(blobPath(profileId, blobId)).catch(() => undefined); throw error; }
   const now = new Date().toISOString(); const document: StoredDocument = { id: randomUUID(), blobId, indexBlobId, name,
-    mime: input.mime, size: input.bytes.length, createdAt: now };
+    mime: input.mime, size: input.bytes.length, createdAt: now, sourceHash: createHash("sha256").update(input.bytes).digest("hex") };
   try { project.documents.push(document); project.updatedAt = now; await saveDb(profileId, value); }
   catch (error) { await Promise.all([blobId, indexBlobId].map((id) => unlink(blobPath(profileId, id)).catch(() => undefined))); throw error; }
-  return { ...project, documents: project.documents.map(({ blobId: _b, indexBlobId: _i, ...doc }) => doc), threadCount: 0 };
+  return publicProject(project);
 }
 
 async function removeProjectDocumentUnlocked(profileId: string, projectId: string, documentId: string): Promise<void> {
@@ -221,7 +227,9 @@ async function removeProjectDocumentUnlocked(profileId: string, projectId: strin
   const project = value.projects.find((item) => item.id === projectId); if (!project) throw new Error("프로젝트를 찾을 수 없습니다.");
   const document = project.documents.find((item) => item.id === documentId); if (!document) throw new Error("프로젝트 문서를 찾을 수 없습니다.");
   project.documents = project.documents.filter((item) => item.id !== documentId); project.updatedAt = new Date().toISOString();
+  const semanticBlobId = project.semanticBlobId; delete project.semanticBlobId;
   await saveDb(profileId, value);
+  if (semanticBlobId) await unlink(blobPath(profileId, semanticBlobId)).catch(() => undefined);
   for (const blobId of [document.blobId, document.indexBlobId]) {
     const refs = value.projects.flatMap((item) => item.documents)
       .filter((item) => item.blobId === blobId || item.indexBlobId === blobId).length;
@@ -238,8 +246,9 @@ async function deleteProjectUnlocked(profileId: string, projectId: string): Prom
 
 async function sweepProjectOrphansUnlocked(profileId: string): Promise<void> {
   await ensure(profileId); const value = await db(profileId);
-  const referenced = new Set(value.projects.flatMap((project) => project.documents
-    .flatMap((doc) => [`${doc.blobId}.blob`, `${doc.indexBlobId}.blob`])));
+  const referenced = new Set(value.projects.flatMap((project) => [
+    ...(project.semanticBlobId ? [`${project.semanticBlobId}.blob`] : []),
+    ...project.documents.flatMap((doc) => [`${doc.blobId}.blob`, `${doc.indexBlobId}.blob`])]));
   for (const name of await readdir(blobRoot(profileId))) {
     if (/^[a-f0-9-]{36}\.blob$/.test(name) && !referenced.has(name)) await unlink(join(blobRoot(profileId), name));
     if (name.endsWith(".tmp")) await unlink(join(blobRoot(profileId), name)).catch(() => undefined);
@@ -326,13 +335,14 @@ export function exportProjectBackup(profileId: string): Promise<PortableProject[
     const projects: PortableProject[] = [];
     for (const project of value.projects) {
       const documents: PortableProject["documents"] = [];
-      for (const { blobId, indexBlobId, ...doc } of project.documents) {
+      for (const { blobId, indexBlobId, sourceHash: _hash, ...doc } of project.documents) {
         const content = decryptVaultBlob(await readEncryptedBlob(profileId, blobId), keys, `${profileId}:${blobId}`);
         const index = decryptVaultBlob(await readEncryptedBlob(profileId, indexBlobId), keys, `${profileId}:${indexBlobId}`);
         try { documents.push({ ...doc, content: content.toString("base64"), index: index.toString("base64") }); }
         finally { content.fill(0); index.fill(0); }
       }
-      projects.push({ ...project, documents });
+      projects.push({ id: project.id, name: project.name, instruction: project.instruction, createdAt: project.createdAt, updatedAt: project.updatedAt, documents,
+        retrieval: project.retrieval?.mode === "semantic" || project.retrieval?.rebuildRequired ? { ...LOCAL_RETRIEVAL, rebuildRequired: true } : undefined });
     }
     return projects;
   });
@@ -353,10 +363,99 @@ export function restoreProjectBackup(profileId: string, projects: PortableProjec
           await atomic(blobPath(profileId, blobId), encryptVaultBlob(bytes, key, `${profileId}:${blobId}`));
           await atomic(blobPath(profileId, indexBlobId), encryptVaultBlob(indexBytes, key, `${profileId}:${indexBlobId}`));
         } finally { bytes.fill(0); indexBytes.fill(0); }
-        documents.push({ ...doc, blobId, indexBlobId });
+        documents.push({ id: doc.id, name: doc.name, mime: doc.mime, size: doc.size, createdAt: doc.createdAt, blobId, indexBlobId });
       }
-      restored.push({ ...project, documents });
+      restored.push({ id: project.id, name: project.name, instruction: project.instruction, createdAt: project.createdAt, updatedAt: project.updatedAt, documents,
+        retrieval: project.retrieval?.rebuildRequired ? { ...LOCAL_RETRIEVAL, rebuildRequired: true } : undefined });
     }
     await saveDb(profileId, { version: 1, projects: restored });
+  });
+}
+
+export type RetrievalSnapshot = { settings: RetrievalSettings; chunks: RetrievalChunk[]; index: SemanticIndex | null };
+async function retrievalSnapshotUnlocked(profileId: string, projectId: string): Promise<RetrievalSnapshot> {
+  safeId(projectId, "프로젝트"); const value = await db(profileId);
+  const project = value.projects.find((item) => item.id === projectId);
+  if (!project) throw new Error("프로젝트를 찾을 수 없습니다.");
+  const keys = (await loadKeyring(profileId)).keys; const chunks: RetrievalChunk[] = [];
+  for (const document of project.documents) {
+    const plain = decryptVaultBlob(await readEncryptedBlob(profileId, document.indexBlobId), keys, `${profileId}:${document.indexBlobId}`);
+    let parsed: unknown;
+    try { if (plain.length > MAX_PROJECT_INDEX_BYTES) throw new Error("문서 텍스트 한도를 넘었습니다."); parsed = JSON.parse(plain.toString("utf8")); }
+    finally { plain.fill(0); }
+    if (!Array.isArray(parsed) || parsed.some((text) => typeof text !== "string" || text.length > 6000)) throw new Error("문서 청크 형식이 올바르지 않습니다.");
+    let sourceHash = document.sourceHash;
+    if (!sourceHash) {
+      const source = decryptVaultBlob(await readEncryptedBlob(profileId, document.blobId), keys, `${profileId}:${document.blobId}`);
+      try { sourceHash = createHash("sha256").update(source).digest("hex"); } finally { source.fill(0); }
+    }
+    let start = 0; let previous = "";
+    (parsed as string[]).forEach((text, position) => {
+      if (!text.trim() || /OCR로 읽히지|선택 가능한 텍스트가 없는 PDF/.test(text)) return;
+      let overlap = Math.min(500, previous.length, text.length);
+      while (overlap > 0 && !previous.endsWith(text.slice(0, overlap))) overlap--;
+      start -= overlap;
+      chunks.push({ documentId: document.id, name: document.name, sourceHash: sourceHash!, position, start, end: start + text.length, text });
+      start += text.length; previous = text;
+    });
+  }
+  let index: SemanticIndex | null = null;
+  if (project.semanticBlobId) {
+    const plain = decryptVaultBlob(await readEncryptedBlob(profileId, project.semanticBlobId), keys, `${profileId}:${project.semanticBlobId}`);
+    try { if (plain.length > MAX_SEMANTIC_INDEX_BYTES) throw new Error("의미 색인 저장 한도를 넘었습니다."); index = validateSemanticIndex(JSON.parse(plain.toString("utf8"))); }
+    finally { plain.fill(0); }
+  }
+  const current = new Map(chunks.map((chunk) => [chunkKey(chunk), chunk]));
+  if (index) {
+    index.chunks = index.chunks.filter((chunk) => { const source = current.get(chunkKey(chunk)); return source && source.start === chunk.start && source.end === chunk.end; });
+    index.uncertain = index.uncertain.filter((key) => current.has(key));
+  }
+  return { settings: project.retrieval ? validateRetrievalSettings(project.retrieval) : { ...LOCAL_RETRIEVAL }, chunks, index };
+}
+export const retrievalSnapshot = (profileId: string, projectId: string) =>
+  serializeProfile(profileId, () => retrievalSnapshotUnlocked(profileId, projectId));
+
+/** Short disk-only critical sections: no network or job wait under this queue. */
+export function saveSemanticIndex(profileId: string, projectId: string, index: SemanticIndex, signal: AbortSignal): Promise<void> {
+  return serializeProfile(profileId, async () => {
+    signal.throwIfAborted(); validateSemanticIndex(index);
+    const current = await retrievalSnapshotUnlocked(profileId, projectId);
+    if (current.settings.mode !== "semantic" || current.settings.embeddingModelId !== index.modelId) throw new Error("검색 모델이 변경되어 재색인이 필요합니다.");
+    const currentKeys = new Set(current.chunks.map(chunkKey));
+    if (index.chunks.some((chunk) => !currentKeys.has(chunkKey(chunk))) || index.uncertain.some((key) => !currentKeys.has(key))) throw new Error("문서가 변경되어 오래된 색인을 폐기했습니다.");
+    const value = await db(profileId); const project = value.projects.find((item) => item.id === projectId)!;
+    const bytes = Buffer.from(JSON.stringify(index), "utf8");
+    if (bytes.length > MAX_SEMANTIC_INDEX_BYTES) throw new Error("의미 색인이 22MB 저장 한도를 넘었습니다.");
+    const blobId = project.semanticBlobId ?? randomUUID(); const key = await recoverRotation(profileId);
+    try {
+      signal.throwIfAborted();
+      await atomic(blobPath(profileId, blobId), encryptVaultBlob(bytes, key, `${profileId}:${blobId}`));
+      project.semanticBlobId = blobId;
+      if (current.chunks.every((chunk) => index.chunks.some((entry) => chunkKey(entry) === chunkKey(chunk)))) project.retrieval!.rebuildRequired = false;
+      await saveDb(profileId, value);
+    } finally { bytes.fill(0); }
+  });
+}
+export function configureRetrieval(profileId: string, projectId: string, settings: RetrievalSettings): Promise<void> {
+  return serializeProfile(profileId, async () => {
+    validateRetrievalSettings(settings); safeId(projectId, "프로젝트"); const value = await db(profileId);
+    const project = value.projects.find((item) => item.id === projectId); if (!project) throw new Error("프로젝트를 찾을 수 없습니다.");
+    const remove = settings.mode === "local" || project.retrieval?.embeddingModelId !== settings.embeddingModelId;
+    const previous = remove ? project.semanticBlobId : undefined;
+    if (remove) delete project.semanticBlobId;
+    project.retrieval = settings; await saveDb(profileId, value);
+    if (previous) await unlink(blobPath(profileId, previous)).catch(() => undefined);
+  });
+}
+export function clearProfileRetrieval(profileId: string): Promise<void> {
+  return serializeProfile(profileId, async () => {
+    const value = await db(profileId); const blobs: string[] = [];
+    for (const project of value.projects) {
+      if (project.semanticBlobId) blobs.push(project.semanticBlobId);
+      const rebuildRequired = Boolean(project.semanticBlobId || project.retrieval?.mode === "semantic" || project.retrieval?.rebuildRequired);
+      delete project.semanticBlobId; project.retrieval = { ...LOCAL_RETRIEVAL, rebuildRequired };
+    }
+    await saveDb(profileId, value);
+    for (const blob of blobs) await unlink(blobPath(profileId, blob)).catch(() => undefined);
   });
 }

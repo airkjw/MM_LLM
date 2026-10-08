@@ -4,6 +4,7 @@ import { Bot, CircleHelp, Columns3, Edit3, FileText, FolderOpen, Paperclip, Plus
 import { serializeCompareAnalysis } from "../../shared/compare-export";
 import type { AppSettings, ChatbotBookmark, ChatbotUsageReport, CompareRun, GatewayModel, PickedAttachment, ProjectSummary, ThreadSearchResult, ThreadSnapshot, ThreadSummary, WebSearchMode } from "../../shared/contracts";
 import { useState } from "react";
+import { ProjectRetrievalSettings } from "./ProjectRetrievalSettings";
 import { ResearchPanel } from "./ResearchPanel";
 import { BackupPanel } from "./components/BackupPanel";
 import { DiagnosticButton } from "./components/DiagnosticButton";
@@ -16,6 +17,7 @@ type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; 
 
 type Props = {
   onResearchEvidence: (text: string) => void;
+  retrievalModels: GatewayModel[];
   renameDialog: RenameDialogState | null;
   closeRename: () => void;
   renameRef: React.RefObject<HTMLFormElement | null>;
@@ -101,7 +103,7 @@ type Props = {
   saveGlobalSettings: () => Promise<void>;
 };
 
-export function AppDialogs({ onResearchEvidence, renameDialog, closeRename, renameRef, saveRenamedConversation, renameInputRef, setRenameDialog, toolsOpen, compareBusy, compareSynthesisBusy, bookmarkBusy, closeTools, toolsRef, toolsTab, toolsNotice, clearToolsNotice, comparePrompt, setComparePrompt, llmModels, compareModels, setCompareModels, compareMode, setCompareMode, addCompareAttachment, compareAttachments, setCompareAttachments, compareConfirmed, setCompareConfirmed, compareStopRef, startCompare, compareRun, continueCompare, compareSynthesisReady, compareSynthesisModelAvailable, compareSynthesisStopRef, startCompareSynthesis, bookmarkDraft, setBookmarkDraft, saveBookmark, bookmarks, openChatbot, loadChatbotUsage, setBookmarks, setError, chatbotUsage, projectsOpen, projectBusy, closeProjects, projectsRef, selectedProjectId, setSelectedProjectId, setProjectDraft, projects, projectDraft, saveProject, removeProjectDocument, addDocumentToProject, thread, assignCurrentThreadToProject, createProjectThread, removeProject, keyReplaceOpen, keyReplacing, closeKeyReplace, keyReplaceRef, replacementKey, setReplacementKey, replaceApiKey, searchOpen, closeSearch, searchRef, searchQuery, setSearchQuery, searchResults, setSearchOpen, selectThread, settingsOpen, settingsDraft, settingsSaving, closeSettings, settingsRef, modelId, setSettingsDraft, saveGlobalSettings }: Props) {
+export function AppDialogs({ retrievalModels, onResearchEvidence, renameDialog, closeRename, renameRef, saveRenamedConversation, renameInputRef, setRenameDialog, toolsOpen, compareBusy, compareSynthesisBusy, bookmarkBusy, closeTools, toolsRef, toolsTab, toolsNotice, clearToolsNotice, comparePrompt, setComparePrompt, llmModels, compareModels, setCompareModels, compareMode, setCompareMode, addCompareAttachment, compareAttachments, setCompareAttachments, compareConfirmed, setCompareConfirmed, compareStopRef, startCompare, compareRun, continueCompare, compareSynthesisReady, compareSynthesisModelAvailable, compareSynthesisStopRef, startCompareSynthesis, bookmarkDraft, setBookmarkDraft, saveBookmark, bookmarks, openChatbot, loadChatbotUsage, setBookmarks, setError, chatbotUsage, projectsOpen, projectBusy, closeProjects, projectsRef, selectedProjectId, setSelectedProjectId, setProjectDraft, projects, projectDraft, saveProject, removeProjectDocument, addDocumentToProject, thread, assignCurrentThreadToProject, createProjectThread, removeProject, keyReplaceOpen, keyReplacing, closeKeyReplace, keyReplaceRef, replacementKey, setReplacementKey, replaceApiKey, searchOpen, closeSearch, searchRef, searchQuery, setSearchQuery, searchResults, setSearchOpen, selectThread, settingsOpen, settingsDraft, settingsSaving, closeSettings, settingsRef, modelId, setSettingsDraft, saveGlobalSettings }: Props) {
   const [researchOpen, setResearchOpen] = useState(false);
   return <>
       {renameDialog && <div className="dialog-backdrop" onMouseDown={(event) => {
@@ -127,7 +129,7 @@ export function AppDialogs({ onResearchEvidence, renameDialog, closeRename, rena
         if (event.target === event.currentTarget && !compareBusy && !compareSynthesisBusy && !bookmarkBusy) closeTools();
       }}><div className={`dialog-card workspace-tools-dialog${compareRun && toolsTab === "compare" ? " has-results" : ""}`} role="dialog" aria-modal="true"
         aria-labelledby="workspace-tools-title" ref={toolsRef} tabIndex={-1}>
-        <div className="dialog-title">{toolsTab === "compare" ? <Columns3 size={21} /> : <Bot size={21} />}<h3 id="workspace-tools-title">{toolsTab === "compare" ? "모델 비교" : "Studio Chatbot"}</h3>
+        <div className="dialog-title">{researchOpen ? <Search size={21} /> : toolsTab === "compare" ? <Columns3 size={21} /> : <Bot size={21} />}<h3 id="workspace-tools-title">{researchOpen ? "논문·법령 검색" : toolsTab === "compare" ? "모델 비교" : "Studio Chatbot"}</h3>
           <button type="button" className="icon-button dialog-close" aria-label="워크스페이스 도구 닫기" onClick={closeTools}
             disabled={compareBusy || compareSynthesisBusy || bookmarkBusy}><X size={18} /></button></div>
         <button type="button" className="secondary-button" aria-pressed={researchOpen}
@@ -285,6 +287,7 @@ export function AppDialogs({ onResearchEvidence, renameDialog, closeRename, rena
                       onClick={() => void removeProjectDocument(selected.id, document.id)}><X size={13} /></button></div>)}</div>
                 <button type="button" className="secondary-button project-add-doc" disabled={projectBusy}
                   onClick={() => void addDocumentToProject(selected.id)}><Paperclip size={15} /> 문서 추가</button>
+                <ProjectRetrievalSettings key={`${selected.id}:${selected.documents.map((doc) => doc.id).join()}`} project={selected} models={retrievalModels} onEvidence={onResearchEvidence} />
                 <div className="project-actions">
                   <button type="button" className="secondary-button" disabled={projectBusy || thread?.projectId === selected.id || thread?.target?.kind === "chatbot"}
                     onClick={() => void assignCurrentThreadToProject(selected.id)}>현재 대화 연결</button>

@@ -230,6 +230,7 @@ export type ProjectDocument = {
 };
 
 export type ProjectSummary = {
+  retrieval?: import("./document-retrieval").RetrievalSettings;
   id: string;
   name: string;
   instruction: string;
@@ -382,6 +383,10 @@ export type UpdateState = {
 };
 
 export type DesktopApi = {
+  getProjectRetrieval(projectId: string): Promise<import("./document-retrieval").RetrievalStatus>;
+  configureProjectRetrieval(projectId: string, settings: import("./document-retrieval").RetrievalSettings): Promise<void>;
+  startProjectIndex(requestId: string, projectId: string, indexConsent: boolean, resumeConsent: boolean): Promise<import("./document-retrieval").RetrievalStatus>;
+  searchProjectDocuments(requestId: string, projectId: string, query: string): Promise<import("./document-retrieval").RetrievalResult>;
   discoverResearch(requestId: string): Promise<import("./research").ResearchSuite[]>;
   listResearchTools(requestId: string, suite: string): Promise<import("./research").ResearchTool[]>;
   searchResearch(requestId: string, token: string, args: Record<string, unknown>): Promise<import("./research").ResearchResult>;

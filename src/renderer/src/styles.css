@@ -911,7 +911,11 @@ a:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
 }
 
 .research-panel { display: grid; gap: 10px; min-width: 0; }
-.research-panel pre, .retrieval-settings pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; max-height: 200px; overflow: auto; }
+.research-panel pre, .retrieval-settings pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-xs); max-height: 200px; overflow: auto; }
 .research-results { display: grid; gap: 10px; min-width: 0; }
-.research-results article { display: grid; gap: 5px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
-.research-results .link-button { text-align: left; overflow-wrap: anywhere; color: var(--accent-text); }
+.research-results article { display: grid; gap: 5px; padding: 10px; border: 1px solid var(--color-border); border-radius: 8px; }
+.research-results .link-button { text-align: left; overflow-wrap: anywhere; color: var(--color-accent-text); }
+.retrieval-settings { display: grid; gap: 10px; min-width: 0; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--color-border); }
+.retrieval-settings .compare-consent { align-items: start; }
+.retrieval-progress { display: grid; gap: 5px; color: var(--color-text-secondary); }
+.retrieval-settings article p, .research-results p { white-space: pre-wrap; overflow-wrap: anywhere; }

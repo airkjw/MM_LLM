@@ -79,3 +79,8 @@ test('unreviewed schemas and arbitrary suite paths never execute; stale and canc
   const controller = new AbortController(); controller.abort(new Error('synthetic cancel'));
   await assert.rejects(client.discover('synthetic', controller.signal), /synthetic cancel/); assert.equal(calls.length, 4);
 });
+test('actual tools/call local key minute quota prevents the 31st paid attempt without retry', async () => {
+  const { client, tools, calls } = await ready((init) => envelope(init, { content: [{ type: 'text', text: 'synthetic' }] }));
+  for (let i = 0; i < 30; i++) await client.search('synthetic', tools[0].token, { words: 'synthetic' }, signal());
+  await assert.rejects(client.search('synthetic', tools[0].token, { words: 'synthetic' }, signal()), /키 호출 한도/); assert.equal(calls.length, 33);
+});

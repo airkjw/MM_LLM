@@ -544,20 +544,10 @@ export function validateChatRequest(
   return request;
 }
 
-export async function* streamChat(
-  modelId: string,
-  messages: ChatMessage[],
-  searchQuery: string,
-  controller: AbortController,
-  web: { mode: WebSearchMode; cachedContext?: string; onContext?: (context: string) => void },
-  generation: { reasoningMode: ReasoningMode; advanced: ChatAdvancedSettings; previousResponseId?: string }
-): AsyncGenerator<ChatStreamItem> {
-  const signal = controller.signal;
-  const budget = new ChatStreamBudget();
-  const acceptDelta = (delta: string): string => {
-    try { budget.acceptDelta(delta); return delta; }
-    catch (error) { controller.abort(error); throw error; }
-  };
+/** Shared real route preflight for semantic retrieval and ordinary chat; optional GET only. */
+export async function preflightChatSearch(modelId: string, messages: ChatMessage[], searchQuery: string,
+  mode: WebSearchMode, generation: { reasoningMode: ReasoningMode; advanced: ChatAdvancedSettings }, signal: AbortSignal) {
+  const web = { mode };
   const model = assertModel(modelId, "llm");
   assertAdvancedOptionsForModel(model, generation.advanced);
   const shouldSearch = web.mode === "always" || web.mode === "deep" || web.mode === "auto" &&
@@ -578,8 +568,26 @@ export async function* streamChat(
       throw new Error("Gemini 자체 검색에서는 사고 수준·예산을 직접 설정하거나 사고 강도를 자동으로 선택해 주세요.");
     }
   }
-  // Validate the selected route/body before any billed Sonar request as well.
   validateChatRequest(modelId, messages, generation, nativeSearch);
+  if (shouldSearch && !nativeSearch && !availableSearchModel(models)) throw new Error("웹 검색 모델(Sonar)을 사용할 수 없습니다. 모델 목록을 새로고침해 주세요.");
+  return { model, shouldSearch, nativeSearch };
+}
+
+export async function* streamChat(
+  modelId: string,
+  messages: ChatMessage[],
+  searchQuery: string,
+  controller: AbortController,
+  web: { mode: WebSearchMode; cachedContext?: string; onContext?: (context: string) => void },
+  generation: { reasoningMode: ReasoningMode; advanced: ChatAdvancedSettings; previousResponseId?: string }
+): AsyncGenerator<ChatStreamItem> {
+  const signal = controller.signal;
+  const budget = new ChatStreamBudget();
+  const acceptDelta = (delta: string): string => {
+    try { budget.acceptDelta(delta); return delta; }
+    catch (error) { controller.abort(error); throw error; }
+  };
+  const { model, shouldSearch, nativeSearch } = await preflightChatSearch(modelId, messages, searchQuery, web.mode, generation, signal);
   let search: WebSearchExecution = { route: nativeSearch ? "native" : shouldSearch ? "sonar"
     : web.mode !== "off" && web.cachedContext ? "cache" : "none", provider: nativeSearch ?? (shouldSearch ? "sonar" : undefined),
     status: shouldSearch ? "pending" : web.mode !== "off" && web.cachedContext ? "cached" : "not_requested", queries: [], citations: [] };
@@ -702,17 +710,20 @@ function backgroundFromJson(value: Record<string, unknown>, base: {
     ...(responseToolCalls(value).length ? { toolCalls: responseToolCalls(value) } : {}) };
 }
 
+export function preflightBackgroundSearch(modelId: string, query: string, mode: WebSearchMode,
+  advanced: ChatAdvancedSettings): void {
+  const model = assertModel(modelId, "llm");
+  if (mode === "always" || mode === "deep" || mode === "auto" && shouldSearchWebInAuto(query)) throw new Error("백그라운드 응답과 웹 검색을 함께 사용할 수 없습니다. 검색을 끄거나 일반 응답을 선택해 주세요.");
+  if (!isOpenAiModel(model)) throw new Error("백그라운드 Responses는 OpenAI 모델에서만 사용할 수 있습니다.");
+  assertAdvancedOptionsForModel(model, advanced);
+}
 export async function startBackgroundResponse(
   threadId: string, modelId: string, messages: ChatMessage[], controller: AbortController,
   generation: { reasoningMode: ReasoningMode; advanced: ChatAdvancedSettings }, previousResponseId?: string,
   web?: { query: string; mode: WebSearchMode; cachedContext?: string; onContext?: (context: string) => void }
 ): Promise<BackgroundResponse> {
+  preflightBackgroundSearch(modelId, web?.query ?? "", web?.mode ?? "off", generation.advanced);
   const model = assertModel(modelId, "llm");
-  if (web && (web.mode === "always" || web.mode === "deep" || web.mode === "auto" && shouldSearchWebInAuto(web.query))) {
-    throw new Error("백그라운드 응답과 웹 검색을 함께 사용할 수 없습니다. 검색을 끄거나 일반 응답을 선택해 주세요.");
-  }
-  if (!isOpenAiModel(model)) throw new Error("백그라운드 Responses는 OpenAI 모델에서만 사용할 수 있습니다.");
-  assertAdvancedOptionsForModel(model, generation.advanced);
   if (MOCK) {
     const now = new Date().toISOString();
     return { id: `resp_mock_${Date.now()}`, threadId, modelId, status: "queued", createdAt: now,

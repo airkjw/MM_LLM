@@ -13,6 +13,10 @@ const initialTheme = initialThemeValue === "light" || initialThemeValue === "dar
 contextBridge.exposeInMainWorld("mmllmBootstrap", Object.freeze({ initialTheme }));
 
 const desktopApi: DesktopApi = {
+  getProjectRetrieval: (id) => ipcRenderer.invoke("projects:retrieval-status", id),
+  configureProjectRetrieval: (id, settings) => ipcRenderer.invoke("projects:retrieval-settings", id, settings),
+  startProjectIndex: (id, projectId, consent, resume) => ipcRenderer.invoke("projects:index", id, projectId, consent, resume),
+  searchProjectDocuments: (id, projectId, query) => ipcRenderer.invoke("projects:retrieve", id, projectId, query),
   discoverResearch: (id) => ipcRenderer.invoke("research:discover", id),
   listResearchTools: (id, suite) => ipcRenderer.invoke("research:tools", id, suite),
   searchResearch: (id, token, args) => ipcRenderer.invoke("research:search", id, token, args),
