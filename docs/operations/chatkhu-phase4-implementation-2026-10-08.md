@@ -2,7 +2,7 @@
 
 ## 현재 상태·범위·소유권
 
-**구현·로컬 합성 gate 완료 / 별도 독립 검토 대기 / 실계정·OS 하드웨어·CI 미검증.** 수락된 Phase 3 HEAD `2d98a502eea512124016e89333ec5acdc1920be6`의 깨끗한 feature worktree에서 시작했다. 제품 commit은 `2963ea9e903807076d950262a9b0d1df4fea2057`이다. 단일 구현 소유자 `task_6f1a1328f5c8` / `ctx_e882a4b52487`가 shared/main/preload/renderer/storage 경로/CSS/packaging 및 테스트를 직렬 편집했다. 내부 순서는 OpenAI Realtime → Gemini Live → Soniox 받아쓰기이며 위임하지 않았다. Coordinator가 다음 별도 읽기 전용 독립 검토·필요 보정 배정·수락·통합을 소유한다. 구현자의 검증을 독립 acceptance로 보고하지 않는다.
+**구현·저장 보정·로컬 합성 gate 완료 / 별도 전체 Phase 4 독립 검토 대기 / 실계정·OS 하드웨어·CI 미검증.** 수락된 Phase 3 HEAD `2d98a502eea512124016e89333ec5acdc1920be6`의 깨끗한 feature worktree에서 시작했다. 최초 제품은 `2963ea9e903807076d950262a9b0d1df4fea2057`, 최신 저장 보정 제품은 `8513d186067876053a405e6e0349cf4ce0eecb90`이다. 단일 구현 소유자 `task_6f1a1328f5c8` / `ctx_e882a4b52487`가 shared/main/preload/renderer/storage 경로/CSS/packaging 및 테스트를 직렬 편집했다. 내부 순서는 OpenAI Realtime → Gemini Live → Soniox 받아쓰기이며 위임하지 않았다. Coordinator가 다음 별도 읽기 전용 전체 독립 검토·필요 보정 배정·수락·통합을 소유한다. 구현자의 검증을 독립 acceptance로 보고하지 않는다.
 
 직접 runtime 의존성 `ws` 8.21.3과 dev `@types/ws` 8.18.1을 편집 전에 이유와 함께 선언했다. 모두 기존 전이 설치 버전과 같으며 기존 package 버전 상승은 0건이다. Node built-in WebSocket은 browser-compatible API이므로 ws 전용 maxPayload/handshakeTimeout/followRedirects 옵션을 제공한다고 가정하지 않았다. [공식 ws API](https://github.com/websockets/ws/blob/master/doc/ws.md)와 설치 소스에서 payload 제한, bufferedAmount, close/terminate, redirect 정책을 확인했고 직접 의존성·lock의 ws production 분류만 반영했다. 앱은 v0.5.1을 유지한다.
 
@@ -32,7 +32,7 @@ Soniox는 [WebSocket API](https://soniox.com/docs/api-reference/stt/websocket-ap
 
 UI는 1분 예약·사용 중 추가 예약·종료 후 실제 정산, 음소거가 과금 종료가 아님, 조직 설정에 따른 OpenAI/Gemini 개인정보 필터와 Soniox 무필터를 표시한다. 첨부 동의를 음성 전송 동의로 재사용하지 않는다. 실제 [Electron session API](https://www.electronjs.org/docs/latest/api/session)와 설치된 44.4.1 types에 따라 nullable contents·top frame·trusted URL·singular mediaType 체크와 mediaTypes 요청을 분리한다. audio만 준비 상태에서 허용하고 camera/mixed/unknown/subframe/read 권한은 거절하며 trusted clipboard-sanitized-write와 기존 main 외부 링크 경로를 보존한다. Apple [media authorization](https://developer.apple.com/documentation/bundleresources/requesting-authorization-for-media-capture-on-macos)·[audio-input entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.device.audio-input)에 따라 microphone만 선언했다.
 
-## 고정 소스 검증·receipt
+## 최초 제품의 고정 소스 검증·receipt (역사)
 
 Linux x86_64, Node v24.21.0, npm 11.19.0에서 synthetic temp vault·주입 mock WS·가상 마이크/AudioContext·fake timer·로컬 native WS/Fetch만 사용했다. 실제 학생 키·프로필·음성·유료 API는 사용하지 않았다.
 
@@ -51,5 +51,25 @@ Linux x86_64, Node v24.21.0, npm 11.19.0에서 synthetic temp vault·주입 mock
 Ignored 근거의 기준 폴더는 `.orca/phase4/gates/2963ea9e903807076d950262a9b0d1df4fea2057/`이다. 각 `typecheck`, `test`, `ui-audit`, `build`, `diff-check` 아래 `stdout.log`, `stderr.log`, `receipt.json`, `source-before.json`, `source-after.json`이 있다. receipt는 argv·cwd·시각·exit·HEAD·OS/Node/npm·비밀값을 redacted한 환경·log bytes/hash를 담는다. `.orca/phase4/receipt.json`과 `verification.json`이 최종 index/blob 검증이다. 초기 집중 실패와 원문도 같은 `.orca/phase4/`에 덮어쓰지 않고 보존했다. TypeScript fixture 호환/VoiceOwner narrowing, 실제 close listener 등록 순서, canonical CSS token을 보정했다. 나머지 초기 실패는 mock quit·동일 synthetic token 재발급·directory iteration·비현실적 즉시 audio frame timing·DOM EventTarget fixture 차이를 수정했으며 gate assertion을 낮추지 않았다. 성공 이후 제품 소스를 수정하지 않았다.
 
 ## 다음 소유권·제한
+
+### 사전 검토 저장 보정 — 전체 독립 검토 대기
+
+기준 docs `431404b7827ac47fbd78f1a4aa1114ceb074dfaa` / 제품 `2963ea9e903807076d950262a9b0d1df4fea2057`에서 단일 보정 소유자 `task_1a3c5c47a6fc` / `ctx_b4b994bae0aa`가 P2-A main 확정문 저장의 예약·commit·rollback과 P2-B VoicePanel 동시 저장·늦은 완료 소유권만 수정했다. 범위는 실제 main/session/storage/atomic-file의 짧은 로컬 트랜잭션, VoicePanel과 관련 등록 회귀 테스트이며 의존성·버전·이전 단계 리팩터는 제외했다.
+
+main은 첫 await 전에 같은 completed object를 예약하고 명시적으로 캡처한 profile/epoch/창 owner로 읽기·변경·암호화·파일 교체 직전과 반환 시 소유권을 확인한다. 기존 vault mutation queue에서 캡처한 프로필 파일만 읽고 쓴다. 누락/삭제/chatbot/용량/교체 전 디스크 실패는 같은 completed object와 identity가 여전히 소유할 때만 예약을 반환해 사용자의 새 저장 동작을 허용한다. atomic rename 성공 시에만 claim을 소비하며, 그 뒤 directory sync가 실패해도 이미 기록된 문장을 중복 저장하지 않는다. 계정/키/복원/새 세션/창/화면 변경 뒤 예전 완료는 새 claim이나 반환 화면을 바꾸지 않는다. 현재 thread LLM 모델은 보존하고 메시지의 안전한 voice 모델 출처와 확정문만 암호화한다. 추가 endpoint·자동 재시도·원음/토큰 저장·vault lock 안의 네트워크는 없다.
+
+VoicePanel은 동기 예약과 session/target/component epoch를 캡처한다. pending save 중 Start/모델/용도는 동기 handler guard와 disabled control로 막고, 종료 화면 collapse/target 변경/unmount에서 예약 소유권을 폐기한다. 성공·실패·finally는 해당 operation만 갱신하며 같은 세션 실패 후 명시적 재시도가 가능하고 새 세션은 저장됨 표시를 상속하지 않는다.
+
+보호된 원본 main 1개·UI 2개는 bytes/hash 변경 없이 모두 통과했다. 누락/삭제/chatbot/10,000개 메시지/마지막 1개 슬롯/ENOSPC, 실제 암호화 저장의 동시 중복·queue 대기·암호화/임시 sync 중 lifecycle 변경·교체 이후 늦은 결과, 같은 UUID의 새 completed object를 등록 테스트로 검증했다. UI는 같은 batch Start/모델/용도·실패 재시도·collapse 후 새 pending save·target/unmount/logout·좁은 창/두 테마/키보드 포커스를 검사했다. 추가 등록 회귀는 Node 11개·DOM 7개이며 집중 결과는 Node 31/31·DOM 13/13이다. 초기 새 UI fixture의 동의 toggle/viewport 오염 실패와 실행 종료 receipt는 보존하고 fixture만 바로잡았으며 원본 assertions는 변경하지 않았다.
+
+| 최신 제품 커밋 고정 뒤 각 1회 실행 | 결과 |
+| --- | --- |
+| `npm run typecheck` | exit 0 |
+| `npm test` | exit 0; **Node 338/338 + DOM 95/95 = 433/433**, fail/cancelled/skipped/todo 0 |
+| `npm run ui:audit` | exit 0; 테마 tokens 각 39, hardcoded color 0, contrast 68, control mappings 32 |
+| `npm run build` | exit 0; Linux production build와 script 내부 typecheck |
+| 기준 docs → 최신 제품 `git diff --check` | exit 0 |
+
+Ignored 근거는 `.orca/phase4-save-correction/gates/8513d186067876053a405e6e0349cf4ce0eecb90/`이다. 명령별 full stdout/stderr·exit·cwd/argv·UTC 시각·비밀값 redacted 환경·source-before/after·제품 Git blob manifest를 보존했다. 169개 제품 입력의 전후 SHA-256과 제품/current Git blob이 모두 같으며 built voice-capture bytes도 원본과 같다. 통합 gate index `manifest.json` SHA-256은 `4e32bd2110a2c18527ffadbbc180450952f0a0045ca31a2563fa36b3593268af`, 공통 source manifest는 `2318c572c5182f87ed6674f0ed5407432f7a07d924f3850be535e66b1c15c91f`, 제품 blob manifest는 `fd234a57138100ae2d05cc78421580dfee299a66c5c21b978c60385ee1d4049f`다. `.orca/phase4-save-correction/report.txt`, `receipt.json`, `verification.json`에 최종 제품/docs SHA와 명령별 hash를 인계한다. 기존 415개 gate·원본 재현 실패의 raw 로그와 receipt hash도 그대로 대조했다. Coordinator가 다음 별도 **전체 Phase 4** 독립 검토와 수락을 소유하며 저장 보정만의 검토로 대체하지 않는다.
 
 Coordinator가 제품 commit·docs-only 기록·raw receipt를 별도 Sol reviewer에게 인계해 독립 검토와 필요한 후속 Dispatch를 소유한다. 실계정 권한·실제 provider 음성/차감·OS permission/hardware·시각적 수동 검증·CI·macOS 서명/공증·Windows 설치는 미실시다. Linux 빌드를 그 성공으로 승격하지 않는다. 기존 desktop-to-compact open-dialog focus-return 문제는 Phase 3 이전부터 있던 deferred 항목으로 보존했다. main merge/push/release/version 변경·추가 설계 감사는 하지 않았다.
