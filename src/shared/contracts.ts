@@ -404,6 +404,13 @@ export type UpdateState = {
 };
 
 export type DesktopApi = {
+  prepareVoice(request: import('./realtime').VoiceStart): Promise<void>;
+  connectVoice(id: string): Promise<void>;
+  sendVoiceFrame(frame: import('./realtime').VoiceFrame): Promise<void>;
+  controlVoice(control: import('./realtime').VoiceControl): Promise<void>;
+  stopVoice(id: string, immediate: boolean): Promise<void>;
+  saveVoiceText(id: string, threadId: string, consent: true): Promise<ThreadSnapshot>;
+  onVoiceEvent(listener: (event: import('./realtime').VoiceEvent) => void): () => void;
   getProjectRetrieval(projectId: string): Promise<import("./document-retrieval").RetrievalStatus>;
   configureProjectRetrieval(projectId: string, settings: import("./document-retrieval").RetrievalSettings): Promise<void>;
   startProjectIndex(requestId: string, projectId: string, indexConsent: boolean, resumeConsent: boolean): Promise<import("./document-retrieval").RetrievalStatus>;

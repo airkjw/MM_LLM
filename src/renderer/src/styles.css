@@ -926,3 +926,19 @@ a:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
 .media-quote strong, .media-quote small { display: block; }
 .media-quote ul { padding-left: 18px; }
 .media-quote p { margin: 6px 0; }
+
+.voice-panel { flex: 0 0 auto; margin: 8px 16px; border: 1px solid var(--color-border-control); border-radius: 10px; background: var(--color-bg); font-size: var(--text-sm); }
+.voice-panel summary { padding: 8px 12px; cursor: pointer; color: var(--color-text-secondary); }
+.voice-panel summary:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
+.voice-content { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; max-height: 45vh; overflow: auto; }
+.voice-content p { margin: 0; overflow-wrap: anywhere; }
+.voice-options, .voice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.voice-options label { display: flex; flex-direction: column; gap: 4px; flex: 1 1 160px; min-width: 0; }
+.voice-options select { min-width: 0; width: 100%; background: var(--color-bg); color: var(--color-text); border: 1px solid var(--color-border-control); border-radius: 6px; padding: 6px; }
+.voice-consent { display: flex; gap: 8px; align-items: flex-start; color: var(--color-text-secondary); }
+.voice-consent input { flex: 0 0 auto; }
+.voice-notice { color: var(--color-text-secondary); font-size: var(--text-xs); }
+.voice-preview { max-height: 120px; overflow: auto; white-space: pre-wrap; padding: 8px; background: var(--color-bg-subtle); border-radius: 6px; }
+.voice-provisional { color: var(--color-text-tertiary); }
+.voice-content button:focus-visible, .voice-content select:focus-visible, .voice-content input:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
+@media (max-width: 760px) { .voice-panel { margin: 0 8px; } .voice-actions { align-items: flex-start; } }

@@ -1,7 +1,7 @@
 import { CODE_BILLING_NOTICE, CODE_ARTIFACT_NOTICE, serverCodeProvider, mergeServerCode } from "../../shared/server-code";
 import { ActionBarPrimitive, AssistantRuntimeProvider, ComposerPrimitive, MessagePrimitive, ThreadPrimitive, useAui, useExternalStoreRuntime, type ThreadMessageLike } from "@assistant-ui/react";
 import { ArrowRight, ArrowUp, CircleHelp, Copy, Download, FileText, Globe2, Image as ImageIcon, LoaderCircle, Paperclip, RefreshCw, Settings, ShieldCheck, Sparkles, Square, X } from "lucide-react";
-import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import { claudeAllowsSampling, claudeDefaultThinkingMode, claudeForbidsForcedToolChoice, claudeThinkingCapabilities, isClaudeModel, isGeminiModel, isOpenAiModel } from "../../shared/advanced-chat";
 import { hasFixedTemperature, reasoningSupport } from "../../shared/chat-options";
 import type { ChatAdvancedSettings, ChatEvent, ChatRequest, GatewayModel, PickedAttachment, PublicMessage, ReasoningMode, ThreadSnapshot, WebSearchMode, SearchCapability, WebSearchExecution } from "../../shared/contracts";
@@ -211,7 +211,7 @@ function ChatKeyboardShortcuts({ messages, running, stop }: {
 export function ChatPanel({
   thread, modelId, models, onModelChange, onThreadUpdated, onRefreshThreads, onUsageChanged,
   onTemplateStart, initialDraft, onDraftApplied, evidenceAppends = NO_EVIDENCE, onEvidenceApplied,
-  composerRef
+  composerRef, voicePanel
 }: {
   thread: ThreadSnapshot; modelId: string; models: GatewayModel[];
   onModelChange: (id: string) => void;
@@ -224,6 +224,7 @@ export function ChatPanel({
   evidenceAppends?: EvidenceAppend[];
   onEvidenceApplied?: (ids: string[]) => void;
   composerRef?: Ref<ComposerHandle>;
+  voicePanel?: ReactNode;
 }) {
   const confirm = useConfirm();
   const [messages, setMessages] = useState<PublicMessage[]>(thread.messages);
@@ -630,6 +631,7 @@ export function ChatPanel({
             disabled={isRunning || controlsPending} />}
           {chatbotTarget && <span className="chatbot-target"><Sparkles size={14} />{chatbotTarget.alias}</span>}</div>
       </div>
+      {voicePanel}
       <ThreadPrimitive.Root className="chat-thread">
         <ThreadPrimitive.Viewport className="chat-viewport">
           {messages.length === 0 && <div className="chat-welcome">

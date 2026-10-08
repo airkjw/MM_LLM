@@ -1,3 +1,5 @@
+import { RealtimeSessionManager } from './realtime-session';
+import { installVoicePermissions } from './voice-permissions';
 import { estimateMedia } from "./gateway";
 import { normalizeEstimateRequest } from "../shared/media-estimate";
 import { mergeServerCode, settleServerCode } from "../shared/server-code";
@@ -107,6 +109,7 @@ const researchRuns = new Map<string, AbortController>();
 const mcpClient = new McpClient();
 const documentRetrieval = new DocumentRetrieval();
 function clearResearchSession(): void {
+  voiceManager.abort();
   for (const controller of researchRuns.values()) controller.abort(new Error("계정 전환으로 연구 요청을 중단했습니다."));
   researchRuns.clear(); mcpClient.clear();
   documentRetrieval.cancelAll();
@@ -134,6 +137,11 @@ let activeModelRefreshes = 0;
 const sessionTransitions = new SessionTransitionMutex();
 let sessionStateRequest: Promise<SessionState> | null = null;
 const creditCache = new EpochRequestCache<Awaited<ReturnType<typeof getCredits>>>(60_000);
+const voiceManager = new RealtimeSessionManager({
+  identity: () => ({ epoch: sessionTransitions.currentGeneration(), profileId: (() => { try { return getActiveProfileId(); } catch { return ''; } })(), owner: mainWindow?.webContents.id ?? -1 }),
+  models: currentModels,
+  emit: (event) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('voice:event', event); }
+});
 const documentRoot = () => resolve(__dirname, "../renderer");
 
 function assertSessionStable(): void { sessionTransitions.assertIdle(); }
@@ -317,6 +325,28 @@ async function releasePendingMeetingSources(profileId: string): Promise<void> {
 
 let loginValidation: AbortController | null = null;
 function registerHandlers(): void {
+  ipcMain.handle('voice:prepare', (event, raw: unknown) => { trustedInvoke(event); assertSessionStable(); voiceManager.begin(raw); });
+  ipcMain.handle('voice:connect', async (event, id: unknown) => {
+    trustedInvoke(event); assertSessionStable(); const generation = sessionTransitions.currentGeneration();
+    const key = await loadKey(); sessionTransitions.assertGeneration(generation);
+    if (!key) { voiceManager.abort(); throw new Error('로그인이 필요합니다.'); }
+    await voiceManager.connect(id, key);
+  });
+  ipcMain.handle('voice:frame', (event, raw: unknown) => { trustedInvoke(event); assertSessionStable(); voiceManager.frame(raw); });
+  ipcMain.handle('voice:control', (event, raw: unknown) => { trustedInvoke(event); assertSessionStable(); voiceManager.control(raw); });
+  ipcMain.handle('voice:stop', (event, id: unknown, immediate: unknown) => { trustedInvoke(event); if (typeof immediate !== 'boolean') throw new Error('종료 형식을 확인해 주세요.'); voiceManager.stop(id, immediate); });
+  ipcMain.handle('voice:save-text', (event, id: unknown, threadId: unknown, consent: unknown) => {
+    trustedInvoke(event); assertSessionStable(); if (consent !== true) throw new Error('암호화 텍스트 저장에 동의해 주세요.');
+    const target = shortString(threadId, 100, '대화 ID'); const generation = sessionTransitions.currentGeneration();
+    const text = voiceManager.claimText(id);
+    return updateThread(target, (thread) => {
+      sessionTransitions.assertGeneration(generation);
+      if (thread.target?.kind === 'chatbot') throw new Error('일반 대화에 음성 텍스트를 저장해 주세요.');
+      assertMessageCapacity(thread.messages.length);
+      thread.messages.push({ id: randomUUID(), modelId: text.modelId, role: 'assistant', text: text.text,
+        apiContent: text.text, createdAt: new Date().toISOString() });
+    });
+  });
   ipcMain.handle("projects:retrieval-status", (event, rawId: unknown) => {
     trustedInvoke(event); return runSessionBound((_controller, identity) => documentRetrieval.status(identity.profileId, shortString(rawId, 100, "프로젝트")));
   });
@@ -1764,6 +1794,9 @@ async function createWindow(): Promise<void> {
       webSecurity: true
     }
   });
+  installVoicePermissions(mainWindow.webContents.session,
+    (contents, url) => Boolean(mainWindow && contents === mainWindow.webContents && trustedRendererUrl(url)),
+    () => voiceManager.permissionPending);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
   const updateSystemBackground = () => {
@@ -1775,6 +1808,7 @@ async function createWindow(): Promise<void> {
   if (saved?.maximized) mainWindow.maximize();
   let closeCleanupStarted = false;
   mainWindow.on("close", (event) => {
+    voiceManager.abort();
     if (!mainWindow) return;
     const bounds = mainWindow.getNormalBounds();
     const current: WindowState = { ...bounds, maximized: mainWindow.isMaximized() };
@@ -1823,12 +1857,14 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
+  voiceManager.abort();
   clearAttachments();
   for (const run of activeRuns.values()) run.abort(new Error("창이 닫혀 답변 생성을 중단했습니다."));
   if (process.platform !== "darwin") app.quit();
 });
 
 app.on("before-quit", () => {
+  voiceManager.abort();
   clearAttachments();
   stopAttachmentSweeper();
   stopMediaCacheSweeper();

@@ -19,6 +19,7 @@ import { ThemePersistence } from "./theme-persistence";
 import { useDialogFocus } from "./use-focus-layer";
 
 import { ChatPanel, type ComposerHandle, type EvidenceAppend } from "./ChatPanel";
+import { VoicePanel } from './VoicePanel';
 import { Login } from "./Login";
 import { MediaPanel } from "./MediaPanel";
 import { errorText, templates } from "./ui-shared";
@@ -1034,6 +1035,10 @@ export default function App() {
       {!toolsOpen && <Notice notice={notice} onClose={clearNotice} floating />}
       {screen === "chat" && thread && llmModels.length > 0
         ? <ChatPanel key={thread.id} thread={thread} modelId={modelId}
+          voicePanel={<VoicePanel key={`voice-${uiEpochRef.current}-${thread.id}`} models={session.models}
+            threadId={thread.id} canApply={thread.target?.kind !== 'chatbot'}
+            onApply={(text) => setEvidenceAppends(current => [...current, { id: crypto.randomUUID(), threadId: thread.id, text }])}
+            onSaved={applyThreadUpdate} onUsageChanged={handleUsageChanged} />}
           models={llmModels} onModelChange={setModelId}
           onThreadUpdated={applyThreadUpdate} onRefreshThreads={() => void refreshThreads()}
           onUsageChanged={handleUsageChanged} onTemplateStart={startTemplate}

@@ -13,6 +13,17 @@ const initialTheme = initialThemeValue === "light" || initialThemeValue === "dar
 contextBridge.exposeInMainWorld("mmllmBootstrap", Object.freeze({ initialTheme }));
 
 const desktopApi: DesktopApi = {
+  prepareVoice: (request) => ipcRenderer.invoke('voice:prepare', request),
+  connectVoice: (id) => ipcRenderer.invoke('voice:connect', id),
+  sendVoiceFrame: (frame) => ipcRenderer.invoke('voice:frame', frame),
+  controlVoice: (control) => ipcRenderer.invoke('voice:control', control),
+  stopVoice: (id, immediate) => ipcRenderer.invoke('voice:stop', id, immediate),
+  saveVoiceText: (id, threadId, consent) => ipcRenderer.invoke('voice:save-text', id, threadId, consent),
+  onVoiceEvent(listener) {
+    const receive = (_event: Electron.IpcRendererEvent, event: import('../shared/realtime').VoiceEvent) => listener(event);
+    ipcRenderer.on('voice:event', receive);
+    return () => ipcRenderer.removeListener('voice:event', receive);
+  },
   getProjectRetrieval: (id) => ipcRenderer.invoke("projects:retrieval-status", id),
   configureProjectRetrieval: (id, settings) => ipcRenderer.invoke("projects:retrieval-settings", id, settings),
   startProjectIndex: (id, projectId, consent, resume) => ipcRenderer.invoke("projects:index", id, projectId, consent, resume),
