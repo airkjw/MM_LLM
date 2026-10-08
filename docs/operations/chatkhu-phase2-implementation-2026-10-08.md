@@ -4,7 +4,7 @@
 
 완료 조건은 실제 IPC/DOM 동의·취소·preflight 경계, bounded JSON/SSE·스키마·벡터 검증, 암호화 저장/백업 회귀와 네 가지 제품 gate다. 본인 검증을 독립 검토 수락으로 기록하지 않는다.
 
-## Composer 교체·근거 추가 경합 보정 — 좁은 독립 acceptance 대기
+## Composer 교체·근거 추가 경합 보정 — 독립 PASS·코드 수락
 
 기준 HEAD `c41dc1c296a068b45b7aa0199bda1ec32c9a38ac`의 독립 acceptance는 기존 네 보정을 PASS로 확인했으나 템플릿 교체와 근거 추가가 같은 React commit에서 템플릿을 소실하는 P2를 재현해 `CHANGES_REQUIRED`를 유지했다. 단일 구현 worker `task_8e2d8c02deb3` / `ctx_18cf3779068c`가 `ChatPanel.tsx`의 composer 적용 경로, 실제 App/ChatPanel 회귀 테스트와 이 기록·계획을 직렬 소유했다. 제품 commit `22a2446c43b8c32d5c53760fbaf2f4caac48c3ea`는 두 효과를 하나로 합쳐 받아들인 교체를 기준 초안으로 사용한 뒤 미적용 operation ID의 근거를 결합하고 `setText` 한 번 후 두 의도를 확인한다. 교체가 없을 때만 현재 composer를 읽으며 교체·operation guard로 재렌더/StrictMode 재적용을 막는다. App·첨부/동의·저장·계약·UI/CSS는 변경하지 않았다.
 
@@ -20,7 +20,7 @@
 
 집중 검사 뒤 위 최종 gate를 한 번씩 실행했다. 전체 raw stdout/stderr·exit code·명령·Linux x86_64/Node `v24.21.0`/npm `11.19.0`·소스 manifest는 ignored `.orca/phase2-composer-correction/`의 `{baseline-race,corrected-race,focused-ui,focused-consent,final-typecheck,final-test,final-ui-audit,final-build,final-diffcheck}.{stdout.txt,stderr.txt,receipt.json,source.json}`에 있다. 최종 source SHA256은 `62a57e9d3e8758779fd03c960874713b0957208f7559ad74db3a3075856c8a84`이며 모든 gate의 실행 전후 `source_unchanged:true`다. 제품 commit 이후 이 문서와 계획만 별도 문서 commit으로 갱신하며 제품 gate를 반복하지 않는다. 상세 인계·receipt 대조는 같은 디렉터리의 `report.txt`, `receipts.json`, `gate-verification.json`에 기록한다.
 
-보정 완료는 구현자 검증이며 **좁은 별도 독립 acceptance/수락은 대기**다. 다음 소유자는 coordinator가 배정하는 별도 읽기 전용 Sol reviewer이고, 실행 책임자가 수락·ACK·release를 결정한다. 구현자는 인계 전까지 보정 소유권을 유지했다. desktop→compact의 열린 dialog focus 복귀 관찰은 보정 전부터 있던 별도 후속 항목이며 이번에 수정하거나 해결됐다고 주장하지 않는다. Linux 합성 DOM/mock 결과이고 실계정·유료 호출·실제 OS keychain·macOS 서명/공증·Windows 설치·CI는 미검증이다. Phase 3/4·의존성/버전·main 통합/push/릴리즈는 범위 밖이다.
+별도 읽기 전용 Sol 검토 `task_19d8e151c121` / `ctx_48600a8573d8`가 settled HEAD `ec115e7d221231f9ee584a9a5c8e2697ecd69254`에서 **PASS**를 보고했고 실행 책임자가 Phase 2 코드를 수락했다. 원본 실제 App/ChatPanel 재현 2개와 일반 초안·타이핑·중복 방지·첨부·동의 회귀를 포함한 독립 집중 검사 **13/13**이 통과했다. 검토자는 14개 보정 receipt의 전체 raw 로그 해시·150개 제품 파일을 대조해 최종 328개 테스트와 네 gate 성공을 확인했으며 동일한 전체 검사를 반복하지 않았다. 독립 근거는 ignored `.orca/phase2-composer-acceptance/report.txt`와 `acceptance-manifest.json`에 있다. 구현자·검토자는 정상 settle 후 release/ACK됐고 다음 제품 소유권은 별도 Phase 3 구현 Task로 인계한다. 구현자는 인계 전까지 보정 소유권을 유지했다. desktop→compact의 열린 dialog focus 복귀 관찰은 보정 전부터 있던 별도 후속 항목이며 이번에 수정하거나 해결됐다고 주장하지 않는다. Linux 합성 DOM/mock 결과이고 실계정·유료 호출·실제 OS keychain·macOS 서명/공증·Windows 설치·CI는 미검증이다. Phase 3/4·의존성/버전·main 통합/push/릴리즈는 범위 밖이다.
 
 ## 독립 검토 네 지적 보정 결과 — 독립 재검토 대기
 
@@ -126,4 +126,4 @@
 - 의미 색인의 앱 상한을 넘으면 문서를 나누거나 로컬 검색을 직접 선택해야 한다. 불완전 색인 검색은 완료 벡터와 로컬 어휘 후보를 사용하며 대기 청크 수를 알린다. 미확정 요청은 실제 과금 여부를 앱이 판정할 수 없다.
 - 백업/계정 전환 후 vector 재구축에는 사용자의 새 동의와 비용이 필요하다. 기존 원본은 보존한다.
 - macOS 서명·공증, Windows 설치, 실제 OS keychain 환경, CI, 실서비스 relevance 검증은 수행하지 않았다. Linux mock/build 성공으로 이를 주장하지 않는다.
-- 최초 독립 검토는 `CHANGES_REQUIRED`였으며 네 보정은 별도 독립 acceptance에서 PASS로 확인됐다. 같은 acceptance가 발견한 composer P2의 보정·자체 gate를 완료했으나 **최신 제품 commit의 좁은 별도 독립 acceptance/수락은 대기**다. coordinator가 settled HEAD와 원본 receipt를 별도 읽기 전용 Sol reviewer에게 인계하고 검토 결과를 수락한다. desktop→compact dialog focus 관찰은 별도 보정 전 후속 항목으로 남는다. Phase 3/4는 미착수이며 별도 Task다.
+- 최초 독립 검토는 `CHANGES_REQUIRED`였으며 네 보정은 별도 독립 acceptance에서 PASS로 확인됐다. 같은 acceptance가 발견한 composer P2도 보정 후 좁은 별도 독립 검토에서 PASS였으며 실행 책임자가 최신 제품 코드를 수락했다. 이 문서 수락 갱신은 제품 소스를 변경하지 않는다. desktop→compact dialog focus 관찰은 별도 보정 전 후속 항목으로 남는다. Phase 3/4는 미착수이며 별도 Task다.
