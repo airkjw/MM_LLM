@@ -2,7 +2,7 @@
 
 ## 현재 상태·범위·소유권
 
-**전체 독립 검토 CHANGES_REQUIRED 후 다섯 P2 lifecycle 보정·로컬 gate 459/459 완료 / 별도 좁은 독립 acceptance 대기 / 실계정·OS 하드웨어·CI 미검증.** 수락된 Phase 3 HEAD `2d98a502eea512124016e89333ec5acdc1920be6`의 깨끗한 feature worktree에서 시작했다. 최초 제품은 `2963ea9e903807076d950262a9b0d1df4fea2057`, 사전 검토 저장 보정 제품은 `8513d186067876053a405e6e0349cf4ce0eecb90`, 현재 lifecycle 보정 제품은 `839bf75a8e0137209e6ef325daef7adcf8dee53e`이다. 단일 구현 소유자 `task_6f1a1328f5c8` / `ctx_e882a4b52487`가 shared/main/preload/renderer/storage 경로/CSS/packaging 및 테스트를 직렬 편집했다. 내부 순서는 OpenAI Realtime → Gemini Live → Soniox 받아쓰기이며 위임하지 않았다. 전체 독립 검토는 settle/release/ACK됐으며 Coordinator가 다음 다섯 지적과 인접 guard의 별도 좁은 독립 acceptance·수락·통합을 소유한다. 구현자의 검증을 독립 acceptance로 보고하지 않는다.
+**구현·다섯 P2 보정·로컬 gate 459/459 완료 / 별도 독립 acceptance 59/59 PASS·네 단계 코드 수락 / 실계정·OS 하드웨어·CI 미검증.** 수락된 Phase 3 HEAD `2d98a502eea512124016e89333ec5acdc1920be6`의 깨끗한 feature worktree에서 시작했다. 최초 제품은 `2963ea9e903807076d950262a9b0d1df4fea2057`, 사전 검토 저장 보정 제품은 `8513d186067876053a405e6e0349cf4ce0eecb90`, 현재 lifecycle 보정 제품은 `839bf75a8e0137209e6ef325daef7adcf8dee53e`이다. 단일 구현 소유자 `task_6f1a1328f5c8` / `ctx_e882a4b52487`가 shared/main/preload/renderer/storage 경로/CSS/packaging 및 테스트를 직렬 편집했다. 내부 순서는 OpenAI Realtime → Gemini Live → Soniox 받아쓰기이며 위임하지 않았다. 전체 독립 검토와 별도 좁은 독립 acceptance는 settle/release/ACK됐으며 실행 책임자가 raw 근거를 확인해 작업 브랜치의 코드를 수락했다. 구현자의 검증을 독립 acceptance로 보고하지 않았으며 main 통합·push·릴리즈는 미실시다.
 
 직접 runtime 의존성 `ws` 8.21.3과 dev `@types/ws` 8.18.1을 편집 전에 이유와 함께 선언했다. 모두 기존 전이 설치 버전과 같으며 기존 package 버전 상승은 0건이다. Node built-in WebSocket은 browser-compatible API이므로 ws 전용 maxPayload/handshakeTimeout/followRedirects 옵션을 제공한다고 가정하지 않았다. [공식 ws API](https://github.com/websockets/ws/blob/master/doc/ws.md)와 설치 소스에서 payload 제한, bufferedAmount, close/terminate, redirect 정책을 확인했고 직접 의존성·lock의 ws production 분류만 반영했다. 앱은 v0.5.1을 유지한다.
 
@@ -99,3 +99,17 @@ Coordinator가 제품 commit·docs-only 기록·raw receipt를 별도 Sol review
 Ignored `.orca/phase4-lifecycle-correction/gates/839bf75a8e0137209e6ef325daef7adcf8dee53e/`에 per-command full stdout/stderr·exit·cwd/argv·UTC·환경의 비밀값 redaction·source-before/after·product Git blob manifest를 보존했다. **170개** 제품 입력의 전후 bytes/hash와 제품/current Git blobs가 일치한다. gate index `manifest.json` SHA-256은 `851c0a62a44b97aa2ba7c9b4ae38c319f4e7545dfc4cf1e4f0f0eb6584c39267`, source manifest는 `ef9c60131c642c1a7fae26cb5a9c16696a5dcc036a8c13a360fe3010b76c9572`, product blob manifest는 `a2d3dc6397dd8cc709fd50451860a4bd0627d0b80a9d41d311656e83d132068b`다. historical 415/433 gate·실패 원본도 log/source/Git byte 일치를 검증하고 반복 실행하지 않았다. built voice worklet은 원본과 byte-identical이다. `.orca/phase4-lifecycle-correction/report.txt`, `receipt.json`, `verification.json`은 최종 제품/docs SHA와 raw command/hash를 인계한다.
 
 다음 소유자는 coordinator와 별도 **다섯 지적·인접 lifecycle/save guard의 좁은 독립 acceptance**다. 전체 Phase 4 재감사나 구현자 self-acceptance는 하지 않는다. Linux 합성 DOM·격리 암호화 vault·mock mic/context/WS와 로컬 native WS/Fetch 검증이다. 실계정 권한/실제 과금·provider 실행·OS 마이크/hardware·수동 시각/assistive technology·CI·macOS 서명/공증·Windows 설치는 미실시다. 기존 compact dialog focus-return deferred 항목, 최초 창 비율/복원과 업무 UI를 보존했다. main branch·merge/push·버전·의존성·릴리즈 변경은 없다.
+
+## 독립 acceptance PASS와 네 단계 코드 수락
+
+별도 읽기 전용 Sol `task_e08ad434b0b2` / `ctx_45c093dce4ec`가 보정 제품 `839bf75a8e0137209e6ef325daef7adcf8dee53e`와 docs-only HEAD `7433882fcbd492d1ff8071fc925700c9bdedc259`를 독립 검토해 **PASS**로 판정했다. 전체 독립 검토의 다섯 지적과 인접 lifecycle/save 경로만 확인했으며 전체 재감사·구현자 self-acceptance로 대체하지 않았다. 실행 책임자는 실제 Task/Dispatch 완료와 capability 회수, 보고서·원본 receipt를 확인해 코드를 수락하고 reviewer를 release 후 ACK했다.
+
+새 독립 실행은 **Node 34개 + DOM 25개 = 59/59 PASS**다. 원본 유효 재현과 control 30개는 fixture/assertion 변경 없이 통과했고 등록 보정 회귀 26개, 실제 main의 추가 백업 성공·실패/동시 전환 검사 3개도 통과했다. 3개 인접 검사의 내부 사례는 준비·발급 대기·handshake·active·muted·Soniox stopping 전 상태를 다뤘다. 이전 coordinator 저장 재현은 기존 보정 결과와 원본 hash를 확인했으며 중복 실행하지 않았다. 미지원 Gemini probe 두 개와 초기 loader 진단은 통과 개수에 포함하지 않았다.
+
+별도 reviewer와 실행 책임자가 최신 제품 gate **350 Node + 109 DOM = 459/459**, typecheck·UI audit·Linux build의 exit 0과 명령별 full 로그/hash, 동일 source manifest·현재/제품 Git blob을 각각 확인했다. 170개 입력과 self-hosted voice worklet이 일치하고 docs-only 인계는 제품을 변경하지 않았다. 통과한 전체 gate를 반복 실행하지 않았다. review 파일 81개와 coordinator 파일 8개는 총 89개가 byte-identical로 보존됐다.
+
+Ignored 근거는 `.orca/phase4-acceptance/report.txt`, `verification.json`, `evidence-verification.json`과 각 실행 폴더의 `stdout.log`, `stderr.log`, `receipt.json`, source-before/after 및 settled-gates 사본에 있다. 최종 보고서 SHA-256은 `df05a0d1ecee6a7d112774d20740799ead191a93dc9b490e9d2cd37cff8e346d`다. 실행 책임자가 자체 대조한 `.orca/orchestration/phase4-acceptance-coordinator-verification.json`은 main 작업 폴더의 ignored 기록이다. fixture·원문·receipt와 과거 실패를 완료 문서에 임의로 합치거나 성공으로 바꾸지 않았다.
+
+[확장 계획](chatkhu-api-expansion-plan-2026-10-08.md)의 네 단계가 작업 브랜치 `airkjw/chatkhu-api-expansion-20261008`에서 구현·보정·로컬 검증·독립 검토까지 완료됐다. 사용자는 연구 검색 도구를 명시적으로 조회하고, 프로젝트에서 의미 검색을 켜고 별도 색인 동의를 받으며, 대화 고급 설정의 코드 실행·미디어 비용 확인·실시간 음성/받아쓰기를 각각 사용할 수 있다. 기본 꺼짐·동의·계정별 권한·실패 시 자동 유료 재실행 금지 계약을 유지한다.
+
+실계정의 제공사 권한·실제 검색/음성·차감, OS permission·실제 microphone/speaker, 수동 시각·스크린리더, CI·macOS 서명/공증·Windows 설치는 미검증이다. 기존 compact dialog focus-return 항목도 후속 과제로 남아 있다. 앱 버전 `v0.5.1`, 기존 main HEAD와 관련 없는 작업 파일은 보존했다. 이 코드 수락과 문서 커밋은 main merge·push·버전 변경·설치파일 릴리즈를 수행하지 않는다.
