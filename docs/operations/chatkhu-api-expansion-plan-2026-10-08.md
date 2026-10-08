@@ -3,7 +3,7 @@
 ## 상태·범위·소유권
 
 - 계획 기준: `418cb41e5651cc6bfb2ac17737d6c651732913fa`, 1단계 구현 기준: `609c05e9aa4d7aeb154f480521bd5edac4a76f14`, 앱 `v0.5.1`, Orca worktree `chatkhu-api-expansion-20261008`.
-- 사용자가 승인한 순서: **① 네이티브 웹 검색·모델 분류 → ② 논문·법령 검색·문서 검색 → ③ 제공사 코드 실행·공식 미디어 견적 → ④ 실시간 음성**. 네 단계의 구현·보정·로컬 검증·별도 Sol 독립 검토를 완료했고 실행 책임자가 작업 브랜치의 코드를 수락했다. 최종 제품 `839bf75a8e0137209e6ef325daef7adcf8dee53e`에서 **Node 350개 + DOM 109개 = 459개**와 typecheck·UI audit·Linux build가 통과했다. 마지막 독립 acceptance는 **59/59 PASS**다. 단계별 근거는 [1단계](chatkhu-phase1-implementation-2026-10-08.md), [2단계](chatkhu-phase2-implementation-2026-10-08.md), [3단계](chatkhu-phase3-implementation-2026-10-08.md), [4단계](chatkhu-phase4-implementation-2026-10-08.md#독립-acceptance-pass와-네-단계-코드-수락)에 남긴다. 앱 버전은 `v0.5.1`로 유지하며 실계정·OS 검증, main 통합·push·배포는 미실시다.
+- 사용자가 승인한 순서: **① 네이티브 웹 검색·모델 분류 → ② 논문·법령 검색·문서 검색 → ③ 제공사 코드 실행·공식 미디어 견적 → ④ 실시간 음성**. 네 단계의 구현·보정·로컬 검증·별도 Sol 독립 검토를 완료했고 실행 책임자가 작업 브랜치의 코드를 수락했다. 최종 제품 `839bf75a8e0137209e6ef325daef7adcf8dee53e`에서 **Node 350개 + DOM 109개 = 459개**와 typecheck·UI audit·Linux build가 통과했다. 마지막 독립 acceptance는 **59/59 PASS**다. 단계별 근거는 [1단계](chatkhu-phase1-implementation-2026-10-08.md), [2단계](chatkhu-phase2-implementation-2026-10-08.md), [3단계](chatkhu-phase3-implementation-2026-10-08.md), [4단계](chatkhu-phase4-implementation-2026-10-08.md#독립-acceptance-pass와-네-단계-코드-수락)에 남긴다. 앱 버전은 `v0.5.1`로 유지하며 실계정·OS 검증과 배포는 미실시다. 이후 사용자가 main 머지·GitHub 푸시까지만 승인했으며 아래 통합 기록에 범위를 구분한다.
 - 설계 자문은 Astra, 단계별 구현·보정은 Sol 1명, 독립 검토는 별도 Sol 1명, 계획 보정·통합·사용자 보고는 실행 책임자가 소유한다. [Orca 실행 규칙](orca-execution-policy.md)에 따라 실제 Task/Dispatch를 사용하며 이전 단계 수락 후 다음 단계를 배정한다.
 - 단계별 단일 구현·보정 worker가 settle/release한 뒤 별도 독립 reviewer에게 직렬 인계했다. 실행 책임자는 최종 raw 근거를 확인하고 모든 소유 worker를 release 후 ACK했다. 음성의 bounded WebSocket을 위해 기존 전이 버전과 같은 `ws@8.21.3`을 직접 선언하고 types를 추가한 것 외에 의존성 버전 상승은 없다. 버전 변경·유료 실계정 호출·push·릴리즈는 포함하지 않는다.
 - Guard, Decisions 실행, usage/revoke 신규 화면, Super Agent, 제공사 fileSearchStores 연동은 범위 밖이다. `decisions` 모델 분류만 보존한다. [모델 문서](https://docs.mindlogic.ai/docs/khu/api-gateway/getting-started/models/)는 Super Agent를 API 미지원으로 명시한다.
@@ -142,3 +142,9 @@
 **3단계 최종 수락:** 별도 Sol `task_1432f33a29c1` / `ctx_1ff24a26e5c2`가 보정 제품 `b8361d6`과 docs HEAD `e61a63c`를 좁게 검토해 PASS로 판정했다. 원본 재현 3개·인접 4개·등록 회귀 78개, 총 85개가 모두 통과했고, 네 gate의 원본 로그·158개 명령별 소스 manifest와 현재/제품 Git blob 일치를 확인했다. 실행 책임자는 인증·과금 POST 리다이렉트와 견적 확실성 두 지적이 해소됐음을 확인해 코드를 수락했다. [수락 기록](chatkhu-phase3-implementation-2026-10-08.md#독립-acceptance-pass와-코드-수락)에 근거·실계정/OS/CI 미검증을 남긴다.
 
 **4단계 및 네 단계 최종 수락:** 별도 Sol `task_e08ad434b0b2` / `ctx_45c093dce4ec`가 제품 `839bf75`와 docs HEAD `7433882`를 독립 검토해 PASS로 판정했다. 원본 유효 재현·control 30개, 등록 회귀 26개, 추가 실제 main 인접 검사 3개가 모두 통과했다. 실행 책임자는 raw 로그·receipt·동결 fixture·170개 제품 입력의 현재/제품 Git blob 일치와 최신 네 gate를 별도로 확인해 네 단계의 코드를 수락했다. 구현·보정·검토 worker는 모두 release 후 ACK했고 현재 작업은 로컬 코드 완료 상태다. [최종 수락 기록](chatkhu-phase4-implementation-2026-10-08.md#독립-acceptance-pass와-네-단계-코드-수락)에 남은 실계정·OS 확인과 미실시 통합·배포 범위를 명시한다.
+
+## 사용자 승인에 따른 main 통합 — 2026-10-08
+
+사용자는 네 단계 코드 수락 뒤 **main 머지·GitHub 푸시까지만** 승인했다. 검토 완료 HEAD `8c1a28586813c5fe002c9c8d6a4029e59c659a08`를 원격 기준 `418cb41e5651cc6bfb2ac17737d6c651732913fa`에 충돌 없이 머지한 커밋은 `28a3484fbf7facde00fcf576b8ed1f52a5389e78`이다. 이 머지의 전체 tree는 수락된 작업 브랜치와 같으며 제품 소스·의존성·테스트를 추가 변경하지 않았다. 기존 459개 검사와 네 gate의 동일 소스 근거를 사용하고 성공 검사를 반복하지 않았다. 이 안내만 문서 커밋으로 덧붙인다.
+
+푸시 대상은 GitHub `airkjw/MM_LLM`의 `origin/main`이며 SSH와 일반 fast-forward push를 사용한다. 로컬 미커밋 `package.json` 설정과 디자인·대화 기록 폴더는 보존하고 커밋에 포함하지 않았다. 단계별 구현 문서의 미실시 통합 표시는 각 인계 시점의 기록이며, 현재 승인된 통합 범위는 이 절을 따른다. 앱 버전·태그·설치파일·서명/공증·릴리즈·자동 업데이트 배포는 변경하지 않는다. 실계정·실기기 검증도 이번 푸시 범위에 포함하지 않는다.
