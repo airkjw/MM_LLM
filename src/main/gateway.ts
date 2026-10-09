@@ -623,8 +623,10 @@ export async function* streamChat(
   }
   const request = validateChatRequest(modelId, groundedMessages, generation, nativeSearch);
   let release: (() => void) | undefined;
-  // Created once the response arrives; before that no search can have run, so a failure is a plain "failed".
+  // Created once the response headers arrive. Before that, a request that was already sent may have run a paid
+  // search, so a cancellation then is "missing" (unconfirmed); only a non-abort failure is a plain "failed".
   let evidence: SearchEvidenceNormalizer | undefined;
+  let answered = false;
   try {
     release = await gatewayScheduler.acquire("standard", signal);
     const init = jsonInit(request.body, signal);
@@ -646,7 +648,7 @@ export async function* streamChat(
         if (fingerprint !== lastSearch) { lastSearch = fingerprint; yield { type: "web_search", search }; }
       }
       for (const normalized of normalizer.accept(event)) {
-        if (normalized.type === "text") yield { type: "delta", text: acceptDelta(normalized.text) };
+        if (normalized.type === "text") { answered ||= normalized.text.length > 0; yield { type: "delta", text: acceptDelta(normalized.text) }; }
         else if (normalized.type === "error") throw new Error(normalized.message);
         else if (normalized.type === "usage") yield normalized;
         else if (normalized.type === "progress" || normalized.type === "reasoning_summary") yield normalized;
@@ -658,11 +660,16 @@ export async function* streamChat(
       }
     }
     signal.throwIfAborted();
-    // A finished answer is stored as-is. Failed search calls are reported in the evidence, not by discarding the answer.
-    if (evidence) { search = evidence.snapshot(true); yield { type: "web_search", search }; }
+    // A finished answer is stored as-is: failed search calls are reported in the evidence, not by discarding the text.
+    // With every search failed and no text at all there is nothing to keep, so fail without retrying (saved as incomplete).
+    if (evidence) {
+      search = evidence.snapshot(true); yield { type: "web_search", search };
+      if (search.status === "failed" && !answered) throw new Error("모델 자체 검색 도구가 실패했습니다. 추가 유료 호출은 하지 않았습니다.");
+    }
   } catch (error) {
     // Cancellation or a later stream error must not rewrite a search that already ran as "failed".
-    if (nativeSearch) yield { type: "web_search", search: evidence ? evidence.snapshot(true) : { ...search, status: "failed" } };
+    if (nativeSearch) yield { type: "web_search", search: evidence ? evidence.snapshot(true)
+      : { ...search, status: signal.aborted ? "missing" : "failed" } };
     throw error;
   } finally {
     release?.();

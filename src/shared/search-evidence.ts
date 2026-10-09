@@ -60,6 +60,8 @@ export function webSearchStatusLabel(search: WebSearchExecution): string {
 }
 
 const MAX_SEARCH_CALLS = 32;
+/** Ids are capped at 200 chars, so 1024 of them stay ~200KB; repeated delivery of one call must count once. */
+const MAX_CALL_IDS = 1024;
 const MAX_SERVER_QUERY_JSON = 16_384;
 
 /**
@@ -100,11 +102,11 @@ export class SearchEvidenceNormalizer {
     if (!this.queries.has(query) && this.queries.size >= MAX_SEARCH_QUERIES) { this.truncated = true; return; }
     this.queries.add(query);
   }
-  /** Counts each distinct call once; ids beyond the dedupe window still count, but cannot be deduplicated. */
+  /** Counts each distinct call once; ids beyond the dedupe window still count, but cannot be deduplicated, so truncated is set. */
   private tally(ids: Set<string>, id: unknown): boolean {
     const key = typeof id === "string" ? id.slice(0, 200) : "search";
     if (ids.has(key)) return false;
-    if (ids.size < MAX_SEARCH_CALLS) ids.add(key); else this.truncated = true;
+    if (ids.size < MAX_CALL_IDS) ids.add(key); else this.truncated = true;
     return true;
   }
   private completedCall(id: unknown): void { if (this.tally(this.completed, id)) this.completedCount++; }
