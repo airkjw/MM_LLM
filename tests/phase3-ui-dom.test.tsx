@@ -224,3 +224,11 @@ test('actual code/quote UI keeps keyboard focus, narrow layout and theme token s
   assert.match(css,/\.media-quote[^}]*var\(--color-border\)[^}]*var\(--color-text-secondary\)[^}]*overflow-wrap: anywhere/s);
   browser.happyDOM.setWindowSize({width:1280,height:800});
 });
+
+test('L10: MediaPanel with a reference image shows a minimum quote, never a confirmed one',async()=>{
+  const m=await media('image',{pickAttachment:async()=>({id:'att_ref',name:'ref.png',kind:'image',size:10})});
+  await click(document.querySelector<HTMLElement>('.reference-button')!);
+  await click(button('비용 확인'));assert.equal(m.counts.estimate,1);
+  const text=document.querySelector('[aria-label="공식 생성 견적"]')!.textContent!;
+  assert.match(text,/참고 이미지 제외 · 최소 견적/);assert.doesNotMatch(text,/확정 견적|생성 · 확정/);
+});

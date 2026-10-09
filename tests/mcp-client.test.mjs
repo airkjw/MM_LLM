@@ -122,3 +122,11 @@ test('actual MCP small text displays and inserts without claiming truncation', a
   assert.equal(result.rawText, 'Synthetic short text'); assert.deepEqual(result.sources, []);
   assert.doesNotMatch(result.notice + researchEvidence(result), /생략/);
 });
+
+test('L5: server-declared read-only is labeled as a declaration and an absent destructiveHint stays non-executable', async () => {
+  const { tools } = await ready(() => { throw new Error('unused'); });
+  assert.match(tools[0].reason, /제공사가 읽기 전용으로 선언/);
+  const missing = reviewedSearchSchema({ ...tool, annotations: { readOnlyHint: true } });
+  assert.ok(missing.reason); assert.equal(missing.reason.includes('제공사가 읽기 전용으로 선언'), false);
+  assert.equal(reviewedSearchSchema(tool).fields.length > 0, true);
+});

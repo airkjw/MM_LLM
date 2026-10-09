@@ -7,6 +7,13 @@ function clean(value: string): string {
   return value.replace(/\u0000/g, "").trim();
 }
 
+/** Untrusted code output is fenced so it cannot render as headings or quotes; the fence outgrows any backtick run inside. */
+function fenced(value: string): string[] {
+  const longest = Math.max(0, ...(value.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return [fence, value, fence];
+}
+
 export function safeExportFilename(title: string): string {
   const base = clean(title).replace(/[\\/:*?"<>|]/g, "-").replace(/\s+/g, " ").slice(0, 80) || "MM_LLM 대화";
   return `${base}.md`;
@@ -35,10 +42,10 @@ export function serializeThreadMarkdown(thread: ThreadSnapshot): string {
     }
     for (const result of sanitizeServerCode(message.serverCodeResults) ?? []) {
       lines.push("", `#### 서버 코드 실행 · ${result.provider} · ${result.status}`, "", clean(result.summary));
-      if (result.code) lines.push("", "코드:", "", clean(result.code));
-      if (result.stdout !== undefined) lines.push("", "표준 출력:", "", clean(result.stdout));
-      if (result.outputLogs !== undefined) lines.push("", "도구 로그 (표준 출력·오류 구분 미제공):", "", clean(result.outputLogs));
-      if (result.stderr !== undefined) lines.push("", "표준 오류:", "", clean(result.stderr));
+      if (result.code) lines.push("", "코드:", "", ...fenced(clean(result.code)));
+      if (result.stdout !== undefined) lines.push("", "표준 출력:", "", ...fenced(clean(result.stdout)));
+      if (result.outputLogs !== undefined) lines.push("", "도구 로그 (표준 출력·오류 구분 미제공):", "", ...fenced(clean(result.outputLogs)));
+      if (result.stderr !== undefined) lines.push("", "표준 오류:", "", ...fenced(clean(result.stderr)));
       for (const artifact of result.artifacts) lines.push("", `산출물: ${artifact.kind} ${artifact.name ?? artifact.id ?? "이름 없음"}`);
       if (result.artifacts.length) lines.push("", CODE_ARTIFACT_NOTICE);
     }

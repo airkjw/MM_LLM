@@ -54,6 +54,10 @@ export async function gatewayRequest(url: string, init: RequestInit = {}, option
     catch (error) {
       if (init.signal?.aborted) throw init.signal.reason;
       if (timeout.aborted) throw new Error("응답 대기 시간이 초과되었습니다. 연결을 확인한 뒤 다시 시도해 주세요. 생성 요청은 서버에서 처리되었을 수 있습니다.");
+      const cause = error as { message?: unknown; cause?: { message?: unknown } };
+      const redirected = /redirect/i.test(`${cause?.cause?.message ?? ""} ${cause?.message ?? ""}`);
+      // A billed request that hit a redirect may already have been processed; say so, and never retry it.
+      if (redirected && !["GET", "HEAD"].includes(method)) throw new Error("Gateway가 요청을 다른 주소로 보내려 해 전송을 차단했습니다. 생성 요청은 서버에서 처리되었을 수 있으니 잔액을 확인한 뒤 다시 시도해 주세요.", { cause: error });
       throw new Error("서버에 연결하지 못했습니다. 네트워크를 확인한 뒤 다시 시도해 주세요.", { cause: error });
     }
     if (!shouldRetryGateway({ status: response.status, method, attempt })) break;

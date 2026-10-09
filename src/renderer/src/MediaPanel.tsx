@@ -1,4 +1,4 @@
-import { estimateFingerprint, normalizeEstimateRequest, parseMediaQuote, QUOTE_LABELS, QUOTE_NOTICE } from "../../shared/media-estimate";
+import { estimateFingerprint, normalizeEstimateRequest, parseMediaQuote, QUOTE_LABELS, QUOTE_NOTICE, quoteBoundWithContext } from "../../shared/media-estimate";
 import { CircleHelp, Copy, Download, Image as ImageIcon, LoaderCircle, MessageCircle, Mic2, Music2, Paperclip, Plus, Sparkles, Video, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AudioRequest, GatewayModel, MediaEstimateRequest, MediaQuote, MediaResult, PendingMediaJob, PickedAttachment } from "../../shared/contracts";
@@ -579,9 +579,9 @@ export function MediaPanel({
             {(quoting || displayedQuote) && <button type="button" className="secondary-button" onClick={cancelQuote}>비용 확인 취소</button>}
             {quoteError && <p className="inline-error" role="alert">견적 불가: {quoteError}</p>}
             {displayedQuote && <div role="status">
-              <strong>{QUOTE_LABELS[displayedQuote.bound]} 견적 {displayedQuote.credits.toLocaleString("ko-KR")} 크레딧</strong>
+              <strong>{quoteBoundWithContext(displayedQuote, { referenceImages: picked.length }).label} 견적 {displayedQuote.credits.toLocaleString("ko-KR")} 크레딧</strong>
               <small>{displayedQuote.modelId} · <time dateTime={displayedQuote.quotedAt}>{new Date(displayedQuote.quotedAt).toLocaleString("ko-KR")}</time></small>
-              <ul>{displayedQuote.lines.map((line, i) => <li key={i}>{line.item === "content_filter" ? "프롬프트 검사 · 별도 차감" : "생성"} · {QUOTE_LABELS[line.bound]} {line.credits.toLocaleString("ko-KR")} 크레딧 · {({ fixed: "건당", price_schema: "옵션별", per_second: "초당", per_generation: "생성당", per_request: "요청당", actual_cost: "제공사 원가", fixed_fallback: "고정 단가" } as Record<string, string>)[line.basis] ?? "단가 방식 미확인"}{line.note && <p>{line.note}</p>}</li>)}</ul>
+              <ul>{displayedQuote.lines.map((line, i) => <li key={i}>{line.item === "content_filter" ? "프롬프트 검사 · 별도 차감" : "생성"} · {line.item === "content_filter" ? QUOTE_LABELS[line.bound] : quoteBoundWithContext(line, { referenceImages: picked.length }).label} {line.credits.toLocaleString("ko-KR")} 크레딧 · {({ fixed: "건당", price_schema: "옵션별", per_second: "초당", per_generation: "생성당", per_request: "요청당", actual_cost: "제공사 원가", fixed_fallback: "고정 단가" } as Record<string, string>)[line.basis] ?? "단가 방식 미확인"}{line.note && <p>{line.note}</p>}</li>)}</ul>
               {displayedQuote.note && <p>{displayedQuote.note}</p>}
             </div>}
           </div>}
