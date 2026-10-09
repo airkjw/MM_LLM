@@ -48,7 +48,7 @@ test("cached web research has TTL and topic fingerprints", () => {
 
 import { nativeSearchProvider, searchCapabilityFromDetail, nativeSearchSettingsError, sharedEvidenceModelError } from "../src/shared/search-capability.ts";
 import { ModelSearchCache, MODEL_SEARCH_CACHE_LIMIT, MODEL_SEARCH_CACHE_TTL_MS } from "../src/main/model-search-cache.ts";
-import { SearchEvidenceNormalizer, safeCitation, sanitizeWebSearch } from "../src/shared/search-evidence.ts";
+import { SearchEvidenceNormalizer, safeCitation, sanitizeWebSearch, webSearchStatusLabel } from "../src/shared/search-evidence.ts";
 
 test("search support distinguishes null, zero, missing, malformed detail and adapter availability", () => {
   const model = { id: "gpt-6-astra", type: "llm", owned_by: "openai" };
@@ -108,8 +108,10 @@ test("citations are bounded, deduplicated, URL-safe and fail closed on provider 
   assert.equal(normalizer.snapshot(true).citations.length, 1);
   assert.equal(normalizer.snapshot(true).status, "missing", "a link without a tool event is not execution evidence");
   for (let i = 0; i < 63; i++) normalizer.accept({ type: "response.output_text.annotation.added", annotation: { ...annotation, url: `https://example.test/${i}` } });
-  assert.throws(() => normalizer.accept({ type: "response.output_text.annotation.added", annotation: { ...annotation, url: "https://example.test/overflow" } }), /출처 수/);
-  assert.throws(() => safeCitation({ url: `https://example.test/${"x".repeat(2048)}` }), /길이/);
+  // Over-limit input is truncated and flagged, never thrown: the paid response already arrived (C2/C7).
+  normalizer.accept({ type: "response.output_text.annotation.added", annotation: { ...annotation, url: "https://example.test/overflow" } });
+  assert.equal(normalizer.snapshot(true).citations.length, 64); assert.equal(normalizer.snapshot(true).truncated, true);
+  assert.equal(safeCitation({ url: `https://example.test/${"x".repeat(2048)}` }), undefined);
   assert.deepEqual(sanitizeWebSearch({ route: "native", status: "executed", provider: "gemini", queries: ["synthetic"],
     citations: [annotation, { url: "javascript:alert(1)" }], encrypted_content: "strip" }), {
     route: "native", status: "executed", provider: "gemini", queries: ["synthetic"], citations: [{ url: "https://example.test/report", title: "synthetic" }]
@@ -118,6 +120,118 @@ test("citations are bounded, deduplicated, URL-safe and fail closed on provider 
 
 test("canonical citation length matches IPC and private file links never become public search sources", () => {
   assert.equal(safeCitation({ url: "https://factchat-cloud.mindlogic.ai/v1/public/f/synthetic-file" }), undefined);
-  assert.throws(() => safeCitation({ url: "https://example.test/" + "x".repeat(1982) }), /길이/);
-  assert.throws(() => safeCitation({ url: "https://example.test/" + "가".repeat(300) }), /길이/);
+  assert.equal(safeCitation({ url: "https://example.test/" + "x".repeat(1982) }), undefined);
+  assert.equal(safeCitation({ url: "https://example.test/" + "가".repeat(300) }), undefined);
+});
+
+const claudeResult = (n, id = "srv") => ({ type: "content_block_start", content_block: { type: "web_search_tool_result", tool_use_id: id,
+  content: Array.from({ length: n }, (_, i) => ({ type: "web_search_result", url: `https://example.test/r/${id}/${i}`, title: `t${i}` })) } });
+
+test("H2: provider floods are truncated and flagged, never thrown after a paid response", () => {
+  const claude = new SearchEvidenceNormalizer("claude");
+  claude.accept(claudeResult(65));
+  const snapshot = claude.snapshot(true);
+  assert.equal(snapshot.citations.length, 64); assert.equal(snapshot.truncated, true); assert.equal(snapshot.status, "executed");
+  // A URL that is already known may still merge beyond the cap.
+  claude.accept({ type: "content_block_start", content_block: { type: "text", citations: [{ type: "web_search_result_location",
+    url: "https://example.test/r/srv/0", title: "t0", cited_text: "merged" }] } });
+  assert.equal(claude.snapshot(true).citations.find((c) => c.url === "https://example.test/r/srv/0").citedText, "merged");
+  // 2001-char URL: dropped alone, the rest survive.
+  const long = new SearchEvidenceNormalizer("claude");
+  long.accept({ type: "content_block_start", content_block: { type: "web_search_tool_result", tool_use_id: "srv", content: [
+    { type: "web_search_result", url: `https://example.test/${"x".repeat(1990)}`, title: "too long" },
+    { type: "web_search_result", url: "https://example.test/ok", title: "ok" }] } });
+  assert.deepEqual(long.snapshot(true).citations.map((c) => c.url), ["https://example.test/ok"]);
+  // 17 queries, 33 calls, 33 server calls.
+  const many = new SearchEvidenceNormalizer("gemini");
+  many.accept({ candidates: [{ groundingMetadata: { webSearchQueries: Array.from({ length: 17 }, (_, i) => `q${i}`) } }] });
+  assert.equal(many.snapshot(true).queries.length, 16); assert.equal(many.snapshot(true).truncated, true);
+  const calls = new SearchEvidenceNormalizer("claude");
+  for (let i = 0; i < 33; i++) {
+    calls.accept({ type: "content_block_start", content_block: { type: "server_tool_use", id: `s${i}`, name: "web_search", input: { query: `q${i % 16}` } } });
+    calls.accept(claudeResult(0, `s${i}`));
+  }
+  const many2 = calls.snapshot(true);
+  assert.equal(many2.status, "empty"); assert.equal(many2.truncated, true);
+  // Oversized input_json stops accumulating instead of throwing and records no query.
+  const json = new SearchEvidenceNormalizer("claude");
+  json.accept({ type: "content_block_start", content_block: { type: "server_tool_use", id: "big", name: "web_search", input: {} } });
+  json.accept({ type: "content_block_delta", delta: { type: "input_json_delta", partial_json: `{"query":"${"x".repeat(20_000)}` } });
+  json.accept({ type: "content_block_stop" });
+  assert.deepEqual(json.snapshot(true).queries, []); assert.equal(json.snapshot(true).truncated, true);
+  // Gemini: 65 chunks per event and 257 supports are cut, not rejected.
+  const gemini = new SearchEvidenceNormalizer("gemini");
+  gemini.accept({ candidates: [{ groundingMetadata: { webSearchQueries: ["q"],
+    groundingChunks: Array.from({ length: 65 }, (_, i) => ({ web: { uri: `https://example.test/g/${i}`, title: "g" } })),
+    groundingSupports: Array.from({ length: 257 }, () => ({ segment: { text: "s" }, groundingChunkIndices: [0] })) } }] });
+  assert.equal(gemini.snapshot(true).citations.length, 64); assert.equal(gemini.snapshot(true).truncated, true);
+});
+
+test("H1: sanitizeWebSearch keeps failedCount/truncated and the label reports them", () => {
+  const base = { route: "native", status: "executed", provider: "claude", queries: [], citations: [] };
+  const kept = sanitizeWebSearch({ ...base, failedCount: 2, truncated: true });
+  assert.equal(kept.failedCount, 2); assert.equal(kept.truncated, true);
+  const dropped = sanitizeWebSearch({ ...base, failedCount: -1, truncated: "yes" });
+  assert.equal(Object.hasOwn(dropped, "failedCount"), false); assert.equal(Object.hasOwn(dropped, "truncated"), false);
+  for (const failedCount of [0, 1.5, 1001, "2"]) assert.equal(Object.hasOwn(sanitizeWebSearch({ ...base, failedCount }), "failedCount"), false);
+  assert.equal(Object.hasOwn(sanitizeWebSearch({ ...base, truncated: false }), "truncated"), false);
+  assert.match(webSearchStatusLabel(kept), /일부 검색 실패 2건/); assert.match(webSearchStatusLabel(kept), /출처 일부 생략/);
+  assert.doesNotMatch(webSearchStatusLabel(sanitizeWebSearch(base)), /일부/);
+});
+
+test("H1: partial failure after a completed call is executed with failedCount; all-failed stays failed", () => {
+  const partial = new SearchEvidenceNormalizer("claude");
+  partial.accept(claudeResult(1, "ok"));
+  partial.accept({ type: "content_block_start", content_block: { type: "web_search_tool_result", tool_use_id: "bad",
+    content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" } } });
+  const snap = partial.snapshot(true);
+  assert.equal(snap.status, "executed"); assert.equal(snap.failedCount, 1);
+  const responses = new SearchEvidenceNormalizer("responses");
+  responses.accept({ type: "response.web_search_call.completed", item_id: "a" });
+  responses.accept({ type: "response.web_search_call.failed", item_id: "b" });
+  assert.equal(responses.snapshot(true).status, "executed"); assert.equal(responses.snapshot(true).failedCount, 1);
+  const all = new SearchEvidenceNormalizer("responses");
+  all.accept({ type: "response.web_search_call.failed", item_id: "b" });
+  assert.equal(all.snapshot(true).status, "failed"); assert.equal(all.snapshot(true).failedCount, 1);
+  const streamError = new SearchEvidenceNormalizer("claude");
+  streamError.accept(claudeResult(1, "ok")); streamError.accept({ type: "error", error: { type: "overloaded_error" } });
+  assert.equal(streamError.snapshot(true).status, "executed", "the search ran; the aborted answer is the message status");
+  assert.equal(Object.hasOwn(streamError.snapshot(true), "failedCount"), false);
+});
+
+test("L11: Gemini grounding indices refer to the same event's chunks, not an accumulated list", () => {
+  const evidence = new SearchEvidenceNormalizer("gemini");
+  const event = (uri, text) => ({ candidates: [{ groundingMetadata: { webSearchQueries: ["q"],
+    groundingChunks: [{ web: { uri, title: uri } }],
+    groundingSupports: [{ segment: { text }, groundingChunkIndices: [0] }] } }] });
+  evidence.accept(event("https://example.test/a", "a"));
+  evidence.accept(event("https://example.test/b", "b"));
+  const cited = Object.fromEntries(evidence.snapshot(true).citations.map((c) => [c.url, c.citedText]));
+  assert.deepEqual(cited, { "https://example.test/a": "a", "https://example.test/b": "b" });
+});
+
+test("L12: every sonar-family id selects the Sonar adapter while support still comes from account detail", () => {
+  for (const id of ["sonar", "sonar-pro", "sonar-reasoning", "sonar-reasoning-pro", "sonar-deep-research"]) {
+    assert.equal(nativeSearchProvider({ id, type: "llm" }), "sonar", id);
+    assert.match(sharedEvidenceModelError({ id, type: "llm" }), /검색 끄기/, id);
+  }
+  assert.equal(nativeSearchProvider({ id: "sonarqube-helper", type: "llm" }), undefined);
+  const model = { id: "sonar-reasoning", type: "llm" };
+  const status = (pricing) => searchCapabilityFromDetail(model, pricing === "missing" ? { id: model.id } : { id: model.id, pricing }, "now").status;
+  assert.equal(status({ web_search_per_1k: 5 }), "supported");
+  assert.equal(status({ web_search_per_1k: null }), "unsupported");
+  assert.equal(status("missing"), "unknown");
+});
+
+test("L13: invalidate keeps the in-flight detail GET alive but never caches its result; clear still aborts", async () => {
+  const cache = new ModelSearchCache(); let finish; let signal;
+  const pending = cache.get("slow", async (s) => { signal = s; return new Promise((resolve) => { finish = resolve; }); });
+  cache.invalidate(); assert.equal(signal.aborted, false);
+  finish({ status: "supported", reason: "refresh did not change the account" });
+  assert.equal((await pending).status, "supported");
+  assert.equal(cache.peek("slow"), undefined, "a result that straddled invalidate is not cached");
+  await cache.get("slow", async () => ({ status: "unknown", reason: "again" })); assert.equal(cache.peek("slow").status, "unknown");
+  cache.invalidate(); assert.equal(cache.peek("slow"), undefined);
+  let finishOld; const old = cache.get("old", async () => new Promise((resolve) => { finishOld = resolve; }));
+  cache.clear(); finishOld({ status: "supported", reason: "x" }); await assert.rejects(old, /계정이 변경/);
 });

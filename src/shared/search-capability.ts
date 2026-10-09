@@ -6,7 +6,7 @@ export function nativeSearchProvider(model: Pick<GatewayModel, "id" | "type">): 
   if (/^claude-/.test(model.id)) return "claude";
   if (/^(gpt-|o\d|codex)/.test(model.id)) return "responses";
   if (/^gemini-/.test(model.id)) return "gemini";
-  if (["sonar-pro", "sonar-reasoning-pro"].includes(model.id)) return "sonar";
+  if (/^sonar(-|$)/.test(model.id)) return "sonar";
   return undefined;
 }
 

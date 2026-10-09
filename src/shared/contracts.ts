@@ -14,6 +14,8 @@ export type WebSearchExecution = {
   queries: string[];
   citations: WebCitation[];
   requestCount?: number;
+  failedCount?: number;
+  truncated?: true;
 };
 export type WebSearchMode = "always" | "auto" | "deep" | "off";
 export type ReasoningMode = "auto" | "fast" | "balanced" | "deep";

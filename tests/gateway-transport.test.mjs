@@ -297,7 +297,9 @@ test("native failures never retry or switch to a bridge after a billed call", as
       return sse([{ type: "content_block_start", content_block: { type: "web_search_tool_result", tool_use_id: "srv_1",
         content: { type: "web_search_tool_result_error", error_code: "unavailable" } } }, { type: "message_stop" }]);
     };
-    await assert.rejects(async () => { for await (const item of gateway.streamChat("claude-sonnet-5", messages, "synthetic query", new AbortController(), { mode: "always" }, generation)) items.push(item); });
+    // A normally finished answer is kept even when every search call failed (H1); http and stream errors still reject.
+    const run = async () => { for await (const item of gateway.streamChat("claude-sonnet-5", messages, "synthetic query", new AbortController(), { mode: "always" }, generation)) items.push(item); };
+    if (scenario === "tool") await run(); else await assert.rejects(run);
     assert.equal(paid, 1); assert.equal(lastSearch(items).status, "failed");
   }
 });
