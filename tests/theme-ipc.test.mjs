@@ -191,3 +191,14 @@ test("main wires every nativeTheme update and set-theme request to one resolved 
   assert.match(main, /if \(!isThemePreference\(rawTheme\)\) throw new Error\("화면 테마가 올바르지 않습니다\."\);/, "set-theme validation is unchanged");
   assert.match(main, /throw new Error\("화면 테마 상태를 저장하지 못했습니다\."\);/, "set-theme persistence error text is unchanged");
 });
+
+test("the packaged app protocol serves bundled woff2 fonts as font/woff2", () => {
+  const main = readSource("../src/main/index.ts");
+  const start = main.indexOf("async function registerAppProtocol()");
+  const end = main.indexOf("\n}\n", start);
+  assert.ok(start >= 0 && end > start, "registerAppProtocol exists");
+  const protocolSource = main.slice(start, end);
+  assert.match(protocolSource, /target\.endsWith\("\.woff2"\) \? "font\/woff2" :/);
+  assert.ok(protocolSource.indexOf('"font/woff2"') < protocolSource.indexOf('"application/octet-stream"'),
+    "woff2 is matched before the octet-stream fallback");
+});
