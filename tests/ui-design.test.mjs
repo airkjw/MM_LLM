@@ -114,21 +114,52 @@ expectMutationError("incorrect control boundaries", (source) => source.replace(
 ), /Control boundary.*media-textarea/);
 expectMutationError("later conflicting control boundaries", (source) => `${source}\n.media-textarea { border-color: var(--color-border); }`, /Control boundary.*media-textarea/);
 expectMutationError("higher-specificity control boundary conflicts", (source) =>
-  `${source}\n.app-shell .model-trigger { border-color: var(--color-border); }`, /audited-selector conflict.*model-trigger/);
+  `${source}\n.app-shell .composer-model-token { background: var(--color-border); }`, /audited-selector conflict.*composer-model-token/);
 expectMutationError(":is control boundary conflicts", (source) =>
-  `${source}\n:is(.model-trigger) { border-color: var(--color-border); }`, /audited-selector conflict.*model-trigger/);
+  `${source}\n:is(.composer-model-token) { background: var(--color-border); }`, /audited-selector conflict.*composer-model-token/);
 expectMutationError("typed control boundary conflicts", (source) =>
-  `${source}\nbutton.model-trigger { border-color: var(--color-border); }`, /audited-selector conflict.*model-trigger/);
+  `${source}\nbutton.composer-model-token { background: var(--color-border); }`, /audited-selector conflict.*composer-model-token/);
 expectMutationError("stateful control boundary conflicts", (source) =>
-  `${source}\n.model-trigger:hover { border-color: var(--color-border); }`, /audited-selector conflict.*model-trigger/);
+  `${source}\n.composer-model-token:hover { background: var(--color-border); }`, /audited-selector conflict.*composer-model-token/);
 expectMutationError("non-text accent contrast failures", (source) => source.replace(
   /(--color-accent-graphic:\s*)#E5B04A/,
   "$1#2A2316"
 ), /accent-graphic\/accent-subtle/);
 expectMutationError("the stop-button semantic map", (source) => source.replace(
-  ".send-button.stop, .send-button.stop:hover:not(:disabled) { background: var(--color-text); color: var(--color-bg); }",
-  ".send-button.stop, .send-button.stop:hover:not(:disabled) { background: var(--color-border); color: var(--color-text); }"
-), /send-button\.stop/);
+  ".send-button.stop, .send-button.stop:hover:not(:disabled) { background: var(--color-danger-bg); color: var(--color-danger); }",
+  ".send-button.stop, .send-button.stop:hover:not(:disabled) { background: var(--color-text); color: var(--color-bg); }"
+), /send-button\.stop must use --color-danger on --color-danger-bg/);
+expectMutationError("higher-specificity stop-button conflicts", (source) =>
+  `${source}\n.composer-card .send-button.stop { background: var(--color-text); }`, /audited-selector conflict.*send-button\.stop/);
+// Stage 3 composer buttons replaced the audited .web-mode/.reasoning-mode/.model-trigger controls (contract D3.2).
+expectMutationError("a composer button state painting an unregistered pair", (source) => source.replace(
+  '.composer-toggle[aria-expanded="true"] { color: var(--color-text); background: var(--color-bg-subtle); }',
+  '.composer-toggle[aria-expanded="true"] { color: var(--color-accent); background: var(--color-bg-subtle); }'
+), /Composer button state \.composer-toggle\[aria-expanded="true"\] must paint --color-text on --color-bg-subtle/);
+expectMutationError("a composer token resting pair change", (source) => source.replace(
+  ".composer-model-token.primary { color: var(--color-accent-text); background: var(--color-accent-subtle); }",
+  ".composer-model-token.primary { color: var(--color-accent-text); background: var(--color-accent); }"
+), /Composer button state \.composer-model-token\.primary must paint/);
+expectMutationError("a composer button focus outline that is not the focus ring", (source) => source.replace(
+  ".composer-toggle:focus-visible, .composer-model-token:focus-visible, .composer-model-add:focus-visible {\n  outline: 2px solid var(--color-focus-ring);",
+  ".composer-toggle:focus-visible, .composer-model-token:focus-visible, .composer-model-add:focus-visible {\n  outline: 2px solid var(--color-border);"
+), /\.composer-model-token:focus-visible must draw a --color-focus-ring outline/);
+expectMutationError("a composer toggle that is not 24px high", (source) => source.replace(
+  ".composer-toggle { display: inline-flex; align-items: center; gap: 5px; height: 24px;",
+  ".composer-toggle { display: inline-flex; align-items: center; gap: 5px; height: 20px;"
+), /\.composer-toggle must be 24px high/);
+expectMutationError("a composer add button without the 28px target row margin", (source) => source.replace(
+  ".composer-model-add { display: inline-flex; align-items: center; gap: 4px; height: 24px; margin-block: 2px;",
+  ".composer-model-add { display: inline-flex; align-items: center; gap: 4px; height: 24px; margin-block: 0;"
+), /\.composer-model-add needs a block margin for a 28px target row/);
+for (const pair of ["text-body/bg-subtle", "text-body/bg-hover"]) {
+  expectMutationError(`the ${pair} composer token pair`, (source) => source.replace(
+    "--color-text-body: #C9CDD2;", "--color-text-body: #5F6670;"), new RegExp(`dark: ${pair} is`));
+}
+for (const background of ["bg-sidebar", "bg-subtle", "bg-hover", "accent-subtle"]) {
+  expectMutationError(`the focus-ring/${background} composer focus pair`, (source) => source.replace(
+    "--color-focus-ring: #8A5A00;", "--color-focus-ring: #D9A23A;"), new RegExp(`light: focus-ring/${background} is`));
+}
 expectMutationError("the active navigation contrast map", (source) => source.replace(
   '.rail-item[aria-current="page"] { color: var(--color-accent-text); background: var(--color-bg-subtle); }',
   '.rail-item[aria-current="page"] { color: var(--color-text-tertiary); background: var(--color-bg-subtle); }'
@@ -343,9 +374,13 @@ test("D1.3 text-md is a verified font-size path in the audit", () => {
 });
 
 test("UI audit rejects removing md from the font-size token pattern", async () => {
-  const probe = `${css}\n.x { font-size: var(--text-md); }`;
+  // Stage 3 uses --text-md for answer bodies (D3.9), so the baseline swaps those uses out before probing.
+  const withoutMd = css.replaceAll("var(--text-md)", "var(--text-base)");
+  const probe = `${withoutMd}\n.x { font-size: var(--text-md); }`;
   const mutated = await mutatedAudit((source) => source.replace("text-(?:xs|sm|base|md|lg|", "text-(?:xs|sm|base|lg|"));
-  assert.deepEqual(mutated.auditCss(css).errors, [], "mutated audit still passes CSS that does not use --text-md");
+  assert.deepEqual(mutated.auditCss(withoutMd).errors, [], "mutated audit still passes CSS that does not use --text-md");
+  assert.ok(mutated.auditCss(css).errors.some((error) => /Unverified font-size path: var\(--text-md\)/.test(error)),
+    "the real stylesheet uses --text-md and depends on the md branch");
   assert.ok(mutated.auditCss(probe).errors.some((error) => /Unverified font-size path: var\(--text-md\)/.test(error)));
 });
 

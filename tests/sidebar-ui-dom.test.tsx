@@ -80,7 +80,8 @@ let calls: string[] = [];
 let order: string[] = [];
 
 const RAIL_ITEMS = ["대화", "모델 비교", "논문·법령 리서치", "미디어", "음성", "프로젝트", "챗봇"] as const;
-const DIALOG_DESTINATIONS = new Set(["compare", "research", "projects", "chatbot", "settings"]);
+// Stage 3: compare is a screen (contract D3.4); research, projects, chatbot and settings still open dialogs.
+const DIALOG_DESTINATIONS = new Set(["research", "projects", "chatbot", "settings"]);
 
 function setCompact(next: boolean) {
   compact = next;
@@ -113,7 +114,7 @@ function Harness({ responsive = false, initialOpen = true, modalHandoff = false,
   updateStatus = "error", creditStatus = "default", screen = "chat" }: {
   responsive?: boolean; initialOpen?: boolean; modalHandoff?: boolean; removeOnDelete?: boolean;
   updateStatus?: "error" | "ready" | "latest"; creditStatus?: CreditStatus;
-  screen?: "chat" | "media";
+  screen?: "chat" | "compare" | "media";
 }) {
   const responsiveState = useResponsiveSidebarState();
   const manualState = useState(initialOpen);
@@ -331,7 +332,13 @@ test("aria-current marks exactly one rail item and only for real screens", async
   assert.equal(current.length, 1);
   assert.equal(accessibleName(current[0]), "미디어");
 
-  for (const label of ["모델 비교", "논문·법령 리서치", "음성", "프로젝트", "챗봇", "앱 설정"]) {
+  await act(async () => root!.render(<Harness screen="compare" />));
+  await flushFocus();
+  current = document.querySelectorAll('[aria-current="page"]');
+  assert.equal(current.length, 1);
+  assert.equal(accessibleName(current[0]), "모델 비교", "compare is a real screen since stage 3");
+
+  for (const label of ["논문·법령 리서치", "음성", "프로젝트", "챗봇", "앱 설정"]) {
     assert.equal(railItem(label).hasAttribute("aria-current"), false, `${label} opens a dialog, not a screen`);
   }
 });
@@ -590,7 +597,6 @@ const compactRailDialogRoutes = [
       .find((button) => button.textContent?.trim() === "설정")!);
   }],
   ["projects", () => railItem("프로젝트"), async () => { await click(railItem("프로젝트")); }],
-  ["compare", () => railItem("모델 비교"), async () => { await click(railItem("모델 비교")); }],
   ["research", () => railItem("논문·법령 리서치"), async () => { await click(railItem("논문·법령 리서치")); }],
   ["chatbot", () => railItem("챗봇"), async () => { await click(railItem("챗봇")); }]
 ] as const;
@@ -778,8 +784,8 @@ test("thread rows show the model id and a relative time as metadata", async () =
   assert.match(row.querySelector(".thread-meta")?.textContent ?? "", /^gpt-5\.6-luna · \d+d$/);
 });
 
-for (const label of ["프로젝트", "모델 비교", "앱 설정"]) {
-  const modal = label === "프로젝트" ? "projects" : label === "모델 비교" ? "compare" : "settings";
+for (const label of ["프로젝트", "논문·법령 리서치", "앱 설정"]) {
+  const modal = label === "프로젝트" ? "projects" : label === "논문·법령 리서치" ? "research" : "settings";
   test(`collapsed rail ${label} opens a dialog and restores its visible trigger`, async () => {
     await render(<Harness modalHandoff />);
     await click(byLabel("사이드바 닫기"));
@@ -837,7 +843,7 @@ function appFixture(overrides: Record<string, unknown> = {}) {
     listBackgroundResponses: async () => [], getUpdateState: async () => ({ status: "idle", currentVersion: "0.5.1" }),
     onUpdateChanged: () => () => {}, discardAttachments: async () => {},
     getCredits: async () => ({ total: { quota: 1000, used: 120, remaining: 880 } }),
-    searchThreads: async () => [], listMediaJobs: async () => [], listChatbotBookmarks: async () => [],
+    searchThreads: async () => [], listMediaJobs: async () => [], listChatbotBookmarks: async () => [], listCompareRuns: async () => [],
     cancelResearch: async () => {}, onVoiceEvent: () => () => {}, ...overrides
   } });
 }
@@ -889,10 +895,14 @@ test("real App: rail research, compare and voice reach the existing flows", asyn
   await key("Escape");
   assertFocused(railItem("논문·법령 리서치"));
 
-  await click(railItem("모델 비교"));
-  assert.ok(document.querySelector(".workspace-tools-dialog .compare-panel"), "compare opens without the research view");
-  assert.equal(document.querySelector(".workspace-tools-dialog .research-panel"), null);
-  await key("Escape");
+  // Stage 3: compare is a screen with aria-current; focus stays on its rail trigger.
+  const compare = railItem("모델 비교");
+  compare.focus();
+  await click(compare);
+  assert.equal(compare.getAttribute("aria-current"), "page");
+  assert.ok(document.querySelector(".compare-screen"), "compare opens its screen, not a dialog");
+  assert.equal(document.querySelector(".workspace-tools-dialog"), null);
+  assertFocused(compare);
 
   await click(railItem("음성"));
   await flushFocus();

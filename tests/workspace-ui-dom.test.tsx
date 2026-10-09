@@ -72,8 +72,8 @@ async function render(ui: React.ReactNode) {
   await act(async () => root!.render(ui));
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
 }
-async function key(value: string) {
-  await act(async () => { document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true })); });
+async function key(value: string, modifiers: { shiftKey?: boolean; altKey?: boolean; metaKey?: boolean; ctrlKey?: boolean } = {}) {
+  await act(async () => { (document.activeElement ?? document.body).dispatchEvent(new browser.KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true, ...modifiers })); });
 }
 async function click(element: Element) {
   await act(async () => { (element as HTMLElement).focus(); (element as HTMLElement).click(); });
@@ -86,7 +86,7 @@ afterEach(async () => {
 test("real model picker uses arrow/Home/End, selects and restores focus", async () => {
   const chosen: string[] = [];
   await render(<ModelPicker models={["a", "b", "c"].map((id) => ({ id, type: "llm" }))} selected="a" onSelect={(id) => chosen.push(id)} />);
-  const trigger = document.querySelector(".model-trigger")!;
+  const trigger = document.querySelector(".composer-model-token")!;
   await click(trigger);
   const input = document.querySelector('[role="combobox"]')!;
   assertFocused(input);
@@ -167,13 +167,66 @@ test("model favorites and recent choices appear as separate groups", async () =>
       changes.push([id, action]); if (action === "favorite") setFavorites((items) => items.includes(id) ? [] : [id]);
     } }}><ModelPicker models={["a", "b", "c"].map((id) => ({ id, type: "llm" }))} selected="b" onSelect={() => {}} /></ModelPreferences.Provider>;
   }
-  await render(<Harness />); await click(document.querySelector(".model-trigger")!);
+  await render(<Harness />); await click(document.querySelector(".composer-model-token")!);
   assert.ok(document.querySelector('[role="group"][aria-label="최근 사용"]'));
   const favorite = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("즐겨찾기 추가"))!;
   await click(favorite); assert.ok(document.querySelector('[role="group"][aria-label="즐겨찾기"]'));
   await click(document.querySelector('[role="option"]')!);
   assert.deepEqual(changes, [["b", "favorite"], ["b", "recent"]]);
 });
+test("model picker Shift+Enter adds the active row to the comparison and announces the three-model limit without closing", async () => {
+  const added: string[] = [];
+  function Harness() {
+    const [ids, setIds] = React.useState(["a"]);
+    return <ModelPreferences.Provider value={{ favorites: [], recent: [], update: () => {} }}>
+      <ModelPicker models={["a", "b", "c", "d"].map((id) => ({ id, type: "llm" }))} selected="a" onSelect={() => {}}
+        compare={{ ids, onAdd: (id) => {
+          if (ids.includes(id)) return "이미 비교 목록에 있는 모델입니다.";
+          if (ids.length >= 3) return "비교는 최대 3개 모델까지 할 수 있습니다.";
+          added.push(id); setIds([...ids, id]); return `${id} 비교에 추가 · ${ids.length + 1}/3`;
+        } }} /></ModelPreferences.Provider>;
+  }
+  await render(<Harness />);
+  await click(document.querySelector(".composer-model-token")!);
+  const input = document.querySelector('[role="combobox"]')!;
+  await key("ArrowDown"); await key("Enter", { shiftKey: true });
+  await key("ArrowDown"); await key("Enter", { shiftKey: true });
+  assert.deepEqual(added, ["b", "c"]);
+  assert.ok(document.querySelector(".model-popover"), "Shift+Enter never closes the picker");
+  await key("ArrowDown"); await key("Enter", { shiftKey: true });
+  assert.deepEqual(added, ["b", "c"], "a fourth model is refused");
+  assert.match(document.querySelector('.model-popover [role="status"]')!.textContent!, /최대 3개/);
+  assert.ok(document.querySelector(".model-popover"), "the limit notice keeps the picker open");
+  assertFocused(input);
+  assert.match(document.querySelector(".model-picker-footer")!.textContent!, /⇧↵ 비교에 추가 · ⌥↵ 즐겨찾기/);
+});
+
+test("model picker Alt+Enter toggles the active favorite and every row star is a pressed-state button reachable by Tab", async () => {
+  const changes: Array<[string, string]> = [];
+  function Harness() {
+    const [favorites, setFavorites] = React.useState<string[]>([]);
+    return <ModelPreferences.Provider value={{ favorites, recent: [], update: (id, action) => {
+      changes.push([id, action]);
+      if (action === "favorite") setFavorites((items) => items.includes(id) ? items.filter((item) => item !== id) : [...items, id]);
+    } }}><ModelPicker models={["a", "b"].map((id) => ({ id, type: "llm" }))} selected="a" onSelect={() => {}} /></ModelPreferences.Provider>;
+  }
+  await render(<Harness />);
+  await click(document.querySelector(".composer-model-token")!);
+  const input = document.querySelector<HTMLInputElement>('[role="combobox"]')!;
+  await key("ArrowDown"); await key("Enter", { altKey: true });
+  assert.deepEqual(changes, [["b", "favorite"]]);
+  assert.ok(document.querySelector(".model-popover"), "the favorite shortcut keeps the picker open");
+  assert.equal(input.value, "", "Alt+Enter does not type into the search field");
+  const stars = [...document.querySelectorAll<HTMLButtonElement>(".model-favorite-action")];
+  assert.equal(stars.length, 2);
+  assert.ok(stars.every((star) => star.tabIndex !== -1 && star.hasAttribute("aria-pressed")));
+  assert.deepEqual(stars.map((star) => star.getAttribute("aria-pressed")), ["true", "false"], "favorite b now sorts first");
+  // The modal focus trap wraps from the last row star back to the search field, so the stars are in its Tab sequence.
+  stars[1].focus(); assertFocused(stars[1]);
+  await key("Tab");
+  assertFocused(input);
+});
+
 test("blocked links retain readable content and an explanation", async () => {
   await render(<MarkdownText text="[자료](http://example.invalid)" />);
   assert.equal(document.querySelector("a"), null);
@@ -181,101 +234,163 @@ test("blocked links retain readable content and an explanation", async () => {
 });
 
 
-async function openRealComparison(extraApi: Record<string, unknown> = {}) {
+const compareModels = ["gpt-5.6-sol", "claude-opus-5", "gemini-3.8-flash"];
+function compareFixture(extraApi: Record<string, unknown> = {}, threadOverrides: Record<string, unknown> = {}) {
   const now = new Date().toISOString();
-  const models = ["gpt-5.6-sol", "claude-opus-5", "gemini-3.8-flash"].map(id => ({ id, type: "llm" }));
+  const models = compareModels.map(id => ({ id, type: "llm" }));
   const thread = { id: "compare-origin", title: "새 대화", modelId: models[0].id,
     createdAt: now, updatedAt: now, webSearchMode: "off", reasoningMode: "auto",
-    instruction: "", advanced: {}, attachmentConsent: false, messages: [], messageCount: 0 };
+    instruction: "", advanced: {}, attachmentConsent: true, messages: [], messageCount: 0, ...threadOverrides };
   const requests: CompareRequest[] = [];
+  const continued: Array<[string, string]> = [];
   let receive: ((event: CompareEvent) => void) | undefined;
   let nextId = 0;
+  const settings = { theme: "dark", fontSize: "medium", defaultInstruction: "", favoriteModels: [] as string[], recentModels: [] as string[] };
   Object.assign(browser, { mmllm: {
     getSession: async () => ({ authenticated: true, models, credits: { total: { remaining: 1000 } } }),
-    getSettings: async () => ({ theme: "dark", fontSize: "medium", defaultInstruction: "" }),
+    getSettings: async () => settings, updateModelPreference: async () => settings,
     setThemePreference: async () => {}, listThreads: async () => [thread], loadThread: async () => thread,
-    listProjects: async () => [], listBackgroundResponses: async () => [],
+    listProjects: async () => [], listBackgroundResponses: async () => [], listCompareRuns: async () => [],
     getUpdateState: async () => ({ status: "idle", currentVersion: "0.5.0" }), onUpdateChanged: () => () => {}, onThemeResolved: () => () => {},
     pickAttachment: async () => ({ id: `report-${++nextId}`, name: "report.pdf", kind: "document", size: 100 }),
+    acknowledgeAttachmentPrivacy: async () => ({ ...thread, attachmentConsent: true }),
+    continueCompare: async (runId: string, modelId: string) => { continued.push([runId, modelId]); return { ...thread, id: "continued", modelId }; },
     discardAttachments: async () => {}, streamCompare: (request: CompareRequest, listener: (event: CompareEvent) => void) => {
       requests.push(request); receive = listener; return () => {};
     }, ...extraApi
   } });
-  await render(<ConfirmProvider><App /></ConfirmProvider>);
-  const button = [...document.querySelectorAll("button")].find(button => button.textContent?.includes("모델 비교") || button.getAttribute("aria-label")?.includes("모델 비교"))!;
-  await click(button);
-  const question = document.querySelector<HTMLTextAreaElement>(".compare-panel textarea")!;
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")!.set!.call(question, "첨부 보고서를 비교 검토해 주세요.");
-    question.dispatchEvent(new browser.Event("input", { bubbles: true }));
-  });
-  for (const input of [...document.querySelectorAll(".compare-models input")].slice(0, 3)) await click(input);
-  return { requests, emit: async (event: CompareEvent) => { await act(async () => receive!(event)); } };
+  return { thread, requests, continued, emit: async (event: CompareEvent) => { await act(async () => receive!(event)); } };
 }
+const sendButton = () => document.querySelector<HTMLButtonElement>('[aria-label="메시지 전송"]')!;
+const composerInput = () => document.querySelector<HTMLTextAreaElement>(".composer-input")!;
+async function typeComposer(value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")!.set!.call(composerInput(), value);
+    composerInput().dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+}
+async function addCompareModel(id: string) {
+  await click(document.querySelector(".composer-model-add")!);
+  await click([...document.querySelectorAll('[role="option"]')].find((option) => option.textContent?.includes(id))!);
+}
+async function openRealComparison(extraApi: Record<string, unknown> = {}, threadOverrides: Record<string, unknown> = {}) {
+  const fixture = compareFixture(extraApi, threadOverrides);
+  await render(<ConfirmProvider><App /></ConfirmProvider>);
+  await addCompareModel(compareModels[1]); await addCompareModel(compareModels[2]);
+  assert.deepEqual([...document.querySelectorAll(".composer-model-token")].map((token) => token.textContent?.replace(/[^\w.@-]/g, "")),
+    compareModels.map((id) => `@${id}`));
+  await typeComposer("첨부 보고서를 비교 검토해 주세요.");
+  return fixture;
+}
+const attachButton = () => document.querySelector<HTMLButtonElement>(".attach-button")!;
 
-test("real comparison requires a visible attachment consent and sends confirmed attachments", async () => {
+test("real inline comparison requires a visible attachment consent and sends confirmed attachments", async () => {
   const style = document.createElement("style");
   style.textContent = readFileSync(new URL("../src/renderer/src/styles.css", import.meta.url), "utf8");
   document.head.append(style);
   try {
     const { requests } = await openRealComparison();
-    await click(document.querySelector(".compare-controls button")!);
-    const send = document.querySelector<HTMLButtonElement>(".compare-run-actions button")!;
-    const checkbox = document.querySelector<HTMLInputElement>(".deid-check input")!;
+    await click(attachButton());
+    const checkbox = document.querySelector<HTMLInputElement>(".compare-consent .deid-check input")!;
+    assert.ok(checkbox, "attachments with two or more models show the existing consent checkbox below the composer");
+    assert.match(checkbox.closest(".deid-check")!.textContent!, /환자 식별정보나 개인정보를 제거했습니다. 자료는 선택한 모델 수만큼 외부 전송·과금될 수 있습니다./);
     const css = window.getComputedStyle(checkbox);
     assert.notEqual(css.opacity, "0");
     assert.ok(parseFloat(css.width) > 0 && parseFloat(css.height) > 0);
-    assert.equal(send.disabled, true);
-    await click(send); assert.equal(requests.length, 0);
+    assert.equal(sendButton().disabled, true);
+    await click(sendButton()); assert.equal(requests.length, 0);
     assert.match(document.querySelector("#compare-consent-hint")!.textContent!, /확인란을 체크/);
+    assert.equal(checkbox.getAttribute("aria-describedby"), "compare-consent-hint");
     await click(checkbox);
-    assert.equal(checkbox.checked, true); assert.equal(send.disabled, false);
-    await click(send);
+    assert.equal(checkbox.checked, true); assert.equal(sendButton().disabled, false);
+    await click(sendButton());
     assert.equal(requests.length, 1);
     assert.equal(requests[0].deidentifiedConfirmed, true);
     assert.deepEqual(requests[0].attachmentIds, ["report-1"]);
-    assert.equal(requests[0].modelIds.length, 3);
-    assert.match(document.querySelector(".compare-panel .inline-progress")!.textContent!, /비교를 준비/);
+    assert.deepEqual(requests[0].modelIds, compareModels);
+    assert.equal(requests[0].webSearchMode, "off", "the composer web toggle value is the comparison web mode");
+    assert.equal(requests[0].prompt, "첨부 보고서를 비교 검토해 주세요.");
+    assert.match(document.querySelector(".compare-inline .inline-progress")!.textContent!, /비교를 준비/);
+    assert.equal(document.querySelector(".chat-welcome"), null, "the start screen gives way to the comparison");
   } finally { style.remove(); }
 });
 
-test("real comparison without attachments runs immediately and shows server errors inside the dialog", async () => {
+test("real inline comparison without attachments runs immediately and a server error releases the busy state", async () => {
   const { requests, emit } = await openRealComparison();
-  const send = document.querySelector<HTMLButtonElement>(".compare-run-actions button")!;
-  assert.equal(send.disabled, false);
-  await click(send);
+  assert.equal(document.querySelector(".compare-consent"), null, "no attachment, no consent checkbox");
+  assert.equal(sendButton().disabled, false);
+  await click(sendButton());
   assert.equal(requests.length, 1);
   assert.deepEqual(requests[0].attachmentIds, []);
+  assert.equal(requests[0].deidentifiedConfirmed, false);
+  assert.ok(document.querySelector('[aria-label="비교 중단"]'), "a running comparison offers stop in place of send");
   await emit({ type: "error", message: "공통 웹 검색 연결에 실패했습니다." });
-  const alert = document.querySelector('[role="alert"]')!;
-  assert.ok(alert.closest(".workspace-tools-dialog"));
-  assert.match(alert.textContent!, /공통 웹 검색 연결/);
-  assert.equal(document.querySelectorAll('[role="alert"]').length, 1);
-  assert.equal(document.querySelector<HTMLButtonElement>(".compare-run-actions button")!.disabled, false);
+  const alerts = [...document.querySelectorAll('[role="alert"]')];
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0].textContent!, /공통 웹 검색 연결/);
+  assert.equal(document.querySelector('[aria-label="비교 중단"]'), null);
+  await typeComposer("다시 질문");
+  assert.equal(sendButton().disabled, false);
 });
 
 test("adding another comparison attachment resets consent before sending", async () => {
   const { requests } = await openRealComparison();
-  await click(document.querySelector(".compare-controls button")!);
-  await click(document.querySelector(".deid-check input")!);
-  await click(document.querySelector(".compare-controls button")!);
-  assert.equal(document.querySelector<HTMLInputElement>(".deid-check input")!.checked, false);
-  const send = document.querySelector<HTMLButtonElement>(".compare-run-actions button")!;
-  assert.equal(send.disabled, true);
-  await click(send); assert.equal(requests.length, 0);
+  await click(attachButton());
+  await click(document.querySelector(".compare-consent .deid-check input")!);
+  await click(attachButton());
+  assert.equal(document.querySelector<HTMLInputElement>(".compare-consent .deid-check input")!.checked, false);
+  assert.equal(sendButton().disabled, true);
+  await click(sendButton()); assert.equal(requests.length, 0);
 });
 
-
-test("comparison startup errors release busy state and preserve attachments for retry", async () => {
+test("comparison startup errors release busy state and preserve attachments and the question for retry", async () => {
   await openRealComparison();
-  await click(document.querySelector(".compare-controls button")!);
-  await click(document.querySelector(".deid-check input")!);
+  await click(attachButton());
+  await click(document.querySelector(".compare-consent .deid-check input")!);
   window.mmllm.streamCompare = () => { throw new Error("비교 연결을 시작하지 못했습니다."); };
-  await click(document.querySelector(".compare-run-actions button")!);
-  assert.match(document.querySelector('.workspace-tools-dialog [role="alert"]')!.textContent!, /비교 연결을 시작/);
-  assert.equal(document.querySelector<HTMLButtonElement>(".compare-run-actions button")!.disabled, false);
+  await click(sendButton());
+  assert.match(document.querySelector('[role="alert"]')!.textContent!, /비교 연결을 시작/);
+  assert.equal(sendButton().disabled, false);
   assert.ok(document.querySelector(".attachment-chip"));
-  assert.equal(document.querySelector(".compare-panel .inline-progress"), null);
+  assert.equal(composerInput().value, "첨부 보고서를 비교 검토해 주세요.");
+  assert.equal(document.querySelector(".compare-inline .inline-progress"), null);
+});
+
+test("inline comparison renders three columns, continues by click or digit only outside editable focus, and stacks at 960px", async () => {
+  const { requests, continued, emit } = await openRealComparison({}, { attachmentConsent: false });
+  await click(sendButton());
+  const run = { id: "run-1", prompt: requests[0].prompt, modelIds: compareModels, webSearchMode: "off" as const,
+    createdAt: new Date().toISOString(), attachmentNames: [],
+    results: compareModels.map((modelId, index) => ({ modelId, status: "completed" as const, text: `합성 답변 ${index + 1}` })) };
+  await emit({ type: "done", run });
+  const columns = [...document.querySelectorAll(".compare-inline-columns > .compare-inline-column")];
+  assert.equal(columns.length, 3);
+  assert.match(document.querySelector(".compare-inline")!.textContent!, /합성 답변 2/);
+  assert.match(columns[1].querySelector(".compare-inline-column-footer")!.textContent!, /이 답변으로 계속.*2/s);
+  const css = readFileSync(new URL("../src/renderer/src/styles.css", import.meta.url), "utf8");
+  assert.match(css, /@media \(max-width: 960px\) \{[^@]*\.compare-inline-columns \{ grid-template-columns: minmax\(0, 1fr\); \}/);
+  assert.ok(columns[0].parentElement?.classList.contains("compare-inline-columns"), "the columns sit in the stacking grid");
+  // A digit typed in the composer is text, never a column choice.
+  composerInput().focus();
+  await key("2");
+  assert.deepEqual(continued, []);
+  (document.activeElement as HTMLElement).blur();
+  await act(async () => { document.body.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "2", bubbles: true, cancelable: true })); });
+  assert.deepEqual(continued, [["run-1", compareModels[1]]]);
+});
+
+test("inline comparison synthesis bar appears only when ready and keeps the existing wording", async () => {
+  const { requests, emit } = await openRealComparison();
+  await click(sendButton());
+  const base = { id: "run-2", prompt: requests[0].prompt, modelIds: compareModels, webSearchMode: "off" as const,
+    createdAt: new Date().toISOString(), attachmentNames: [] };
+  await emit({ type: "snapshot", run: { ...base, results: compareModels.map((modelId) => ({ modelId, status: "running" as const, text: "" })) } });
+  assert.equal(document.querySelector(".compare-synthesis-bar"), null, "not ready while answers are running");
+  await emit({ type: "done", run: { ...base, results: compareModels.map((modelId) => ({ modelId, status: "completed" as const, text: "합성" })) } });
+  const bar = document.querySelector(".compare-synthesis-bar")!;
+  assert.ok(bar);
+  assert.match(bar.textContent!, /GPT-5.6 Sol이 답변 A·B·C의 차이와 근거를 검토합니다. 실행 시 추가 크레딧이 사용됩니다./);
+  assert.match(bar.querySelector("button")!.textContent!, /종합분석/);
 });
 
 test("real model picker keeps auxiliary types out and only labels verified native search", async () => {
@@ -288,7 +403,7 @@ test("real model picker keeps auxiliary types out and only labels verified nativ
   ];
   await render(<ModelPicker models={models} selected="gemini-3.8-flash" onSelect={() => {}} />);
   assert.equal(document.querySelector(".model-trigger-web"), null);
-  const trigger = document.querySelector(".model-trigger")!; await click(trigger);
+  const trigger = document.querySelector(".composer-model-token")!; await click(trigger);
   assert.equal(document.querySelectorAll('[role="option"]').length, 2);
   assert.equal(document.querySelectorAll(".native-search-badge").length, 1);
   assert.doesNotMatch(document.querySelector(".model-options")!.textContent!, /aux-/);
@@ -353,9 +468,15 @@ test("real ChatPanel deep route ignores native-only setting conflicts and keeps 
     assert.match(document.body.textContent!, /Sonar 공통 검색 후 선택 모델 답변/);
     assert.doesNotMatch(document.body.textContent!, /모델 자체 검색|함께 사용할 수 없습니다/);
     assert.equal([...document.querySelectorAll("button")].filter((b) => b.textContent === "검색 기능 확인").length, 0);
-    const select = document.querySelector<HTMLSelectElement>('[aria-label="웹 검색 방식"]')!;
-    assert.deepEqual([...select.options].map((option) => option.value), ["always", "auto", "deep", "off"]);
-    select.focus(); assertFocused(select);
+    // The globe toggle is a menu showing the current value; the four modes are its items.
+    const toggle = document.querySelector<HTMLButtonElement>('.composer-toggle[aria-label^="웹 검색 방식"]')!;
+    assert.equal(toggle.getAttribute("aria-haspopup"), "menu");
+    assert.match(toggle.getAttribute("aria-label")!, /딥리서치/);
+    await click(toggle);
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitem"]')];
+    assert.deepEqual(items.map((item) => item.dataset.value), ["always", "auto", "deep", "off"]);
+    assert.equal(items.find((item) => item.getAttribute("aria-current") === "true")?.dataset.value, "deep");
+    await key("Escape"); assertFocused(toggle);
   }
 });
 
@@ -468,10 +589,11 @@ test("real App research results use the existing modal focus layer in narrow win
   const originalWidth = browser.innerWidth;
   let discoveries = 0;
   try {
-    await openRealComparison({ discoverResearch: async () => { discoveries++; return []; }, cancelResearch: async () => {} });
+    compareFixture({ discoverResearch: async () => { discoveries++; return []; }, cancelResearch: async () => {} });
+    await render(<ConfirmProvider><App /></ConfirmProvider>);
     await act(async () => { browser.innerWidth = 480; browser.dispatchEvent(new browser.Event("resize")); });
-    const toggle = [...document.querySelectorAll("button")].find((button) => button.textContent === "논문·법령 검색")!;
-    await click(toggle); assert.equal(discoveries, 0);
+    const railResearch = [...document.querySelectorAll<HTMLButtonElement>(".rail .rail-item")].find((button) => button.textContent === "논문·법령 리서치")!;
+    await click(railResearch); assert.equal(discoveries, 0);
     const dialog = document.querySelector<HTMLElement>('.workspace-tools-dialog[role="dialog"]')!;
     assert.ok(dialog.querySelector('.research-panel[aria-label="논문·법령 검색"]'));
     for (const theme of ["light", "dark"]) {
@@ -492,13 +614,125 @@ test("real App project dialog loads saved semantic settings while cached project
   const project = { id: "synthetic-ui-project", name: "합성 연구", instruction: "", documents: [], threadCount: 0, createdAt: now, updatedAt: now };
   const settings = { mode: "semantic", embeddingModelId: "text-embedding-3-small", queryConsent: true, rerankConsent: false };
   let paid = 0;
-  await openRealComparison({ listProjects: async () => [project], getProjectRetrieval: async () => ({ settings, documents: [], uncertain: 0, running: false }),
+  compareFixture({ listProjects: async () => [project], getProjectRetrieval: async () => ({ settings, documents: [], uncertain: 0, running: false }),
     startProjectIndex: async () => { paid++; }, searchProjectDocuments: async () => { paid++; } });
-  await key("Escape");
+  await render(<ConfirmProvider><App /></ConfirmProvider>);
   const open = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("프로젝트") && button.closest(".rail"))!;
   await click(open);
   const select = document.querySelector<HTMLSelectElement>('.retrieval-settings select')!;
   assert.equal(select.value, "semantic"); assert.equal(paid, 0);
   await key("Escape"); await click(open);
   assert.equal(document.querySelector<HTMLSelectElement>('.retrieval-settings select')!.value, "semantic"); assert.equal(paid, 0);
+});
+
+test("start cards answer digits 1–4 only when nothing editable has focus and no modal or popover is open", async () => {
+  Object.assign(browser, { mmllm: { discardAttachments: async () => {} } });
+  const { templates } = await import("../src/renderer/src/ui-shared");
+  const chosen: string[] = [];
+  const thread = syntheticChatThread({ webSearchMode: "off" });
+  await render(<ConfirmProvider><ChatPanel {...syntheticChatProps} thread={thread} modelId={thread.modelId}
+    models={[{ id: thread.modelId, type: "llm" }]} onTemplateStart={async (item) => { chosen.push(item.title); }} /></ConfirmProvider>);
+  const cards = [...document.querySelectorAll<HTMLButtonElement>(".template-grid .template-card")];
+  assert.equal(cards.length, 4);
+  assert.deepEqual(cards.map((card) => card.querySelector("kbd")?.textContent), ["1", "2", "3", "4"]);
+  assert.deepEqual(cards.map((card) => card.getAttribute("aria-keyshortcuts")), ["1", "2", "3", "4"]);
+  assert.match(document.querySelector(".chat-welcome .eyebrow")!.textContent!, /KYUNG HEE UNIVERSITY · MEDICAL MBA/);
+  composerInput().focus();
+  await key("1");
+  assert.deepEqual(chosen, [], "a digit typed in the composer stays text");
+  composerInput().blur();
+  await act(async () => { document.body.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "3", bubbles: true, cancelable: true })); });
+  assert.deepEqual(chosen, [templates[2].title]);
+  await click(document.querySelector('.composer-toggle[aria-label^="웹 검색 방식"]')!);
+  assert.ok(document.querySelector('[role="menu"]'));
+  await act(async () => { document.body.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "2", bubbles: true, cancelable: true })); });
+  assert.deepEqual(chosen, [templates[2].title], "an open menu blocks digit shortcuts");
+});
+
+test("the composer footer shows one README notice line and the web route exactly once", async () => {
+  Object.assign(browser, { mmllm: { discardAttachments: async () => {} } });
+  const thread = syntheticChatThread({ webSearchMode: "always" });
+  await render(<ConfirmProvider><ChatPanel {...syntheticChatProps} thread={thread} modelId={thread.modelId}
+    models={[{ id: thread.modelId, type: "llm" }]} /></ConfirmProvider>);
+  const notices = [...document.querySelectorAll(".composer-notice")];
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].textContent, "환자 식별정보는 전송 전에 직접 제거해 주세요 · 대화 기록은 이 기기에 암호화 저장됩니다");
+  const text = document.querySelector(".chat-panel")!.textContent!;
+  assert.equal(text.split("자체 검색 미확인 · 전송 시 확인, 미확인/미지원은 Sonar 추가 요청").length - 1, 1,
+    "the billing-relevant route label is visible exactly once");
+  assert.ok(document.querySelector('.composer-route [role="status"]'));
+  assert.doesNotMatch(text, /환자 식별정보는 입력 전에 제거해 주세요|대화 기록은 기기 안에 저장됩니다/);
+  assert.match(document.querySelector(".composer-hint")!.textContent!, /↵ 전송 · ⇧↵ 줄바꿈/);
+});
+
+test("composer reasoning menu lists only the selected model's choices and saves the picked value", async () => {
+  const saved: unknown[] = [];
+  Object.assign(browser, { mmllm: { discardAttachments: async () => {},
+    updateThreadSettings: async (_id: string, value: unknown) => { saved.push(value); return syntheticChatThread({ reasoningMode: "deep" }); } } });
+  const thread = syntheticChatThread({ modelId: "gemini-3.8-flash" });
+  await render(<ConfirmProvider><ChatPanel {...syntheticChatProps} thread={thread} modelId={thread.modelId}
+    models={[{ id: thread.modelId, type: "llm" }]} /></ConfirmProvider>);
+  const toggle = document.querySelector<HTMLButtonElement>('.composer-toggle[aria-label^="사고 강도"]')!;
+  await click(toggle);
+  const items = [...document.querySelectorAll<HTMLElement>('[role="menu"] [role="menuitem"]')];
+  assert.deepEqual(items.map((item) => item.textContent?.trim().replace(/, 현재 선택$/, "")), ["자동", "빠르게", "균형", "깊게"]);
+  await click(items[3]);
+  assert.equal((saved[0] as { reasoningMode: string }).reasoningMode, "deep");
+  assertFocused(toggle);
+  await render(<ConfirmProvider><ChatPanel {...syntheticChatProps} thread={syntheticChatThread({ modelId: "claude-sonnet-5" })}
+    modelId="claude-sonnet-5" models={[{ id: "claude-sonnet-5", type: "llm" }]} /></ConfirmProvider>);
+  assert.equal(document.querySelector('.composer-toggle[aria-label^="사고 강도"]'), null, "Claude has no adjustable menu");
+  assert.match(document.querySelector(".reasoning-unavailable")!.textContent!, /사고 강도: 자동/);
+});
+
+test("real App: Cmd/Ctrl+N and Cmd/Ctrl+Shift+C work inside the composer, other shortcuts stay text", async () => {
+  let creates = 0;
+  const { thread } = compareFixture({ createThread: async () => { creates++; return { ...syntheticChatThread(), id: `new-${creates}`, modelId: compareModels[0] }; },
+    listThreads: async () => [] });
+  await render(<ConfirmProvider><App /></ConfirmProvider>);
+  assert.ok(thread);
+  composerInput().focus();
+  await key("n", { ctrlKey: true });
+  assert.equal(creates, 2, "the startup thread plus one Ctrl+N from inside the composer");
+  composerInput().focus();
+  await key("C", { metaKey: true, shiftKey: true });
+  const tokens = [...document.querySelectorAll(".composer-model-token")];
+  assert.equal(tokens.length, 2, "a second model token was added");
+  assert.ok(document.querySelector(".model-popover"), "the picker opens on the new token");
+  await key("Escape");
+  assertFocused(tokens[1]);
+  composerInput().focus();
+  await key("b", { ctrlKey: true });
+  assert.ok(!document.querySelector(".sidebar")?.classList.contains("collapsed"), "Ctrl+B stays a text-field key");
+});
+
+test("real App: the body header search stays visible while models are missing", async () => {
+  compareFixture({ getSession: async () => ({ authenticated: true, models: [], credits: { total: { remaining: 1000 } } }) });
+  await render(<ConfirmProvider><App /></ConfirmProvider>);
+  assert.ok(document.querySelector(".no-models"));
+  const search = document.querySelector<HTMLButtonElement>(".panel-header .header-search");
+  assert.ok(search, "the header Cmd+K entry is rendered in the no-models state");
+  assert.equal(search.getAttribute("aria-keyshortcuts"), "Meta+K Control+K");
+});
+
+test("real App: the compare rail item is a screen listing saved runs read-only", async () => {
+  const run = { id: "saved-run", prompt: "저장된 합성 비교", modelIds: compareModels.slice(0, 2), webSearchMode: "off" as const,
+    createdAt: new Date().toISOString(), attachmentNames: [],
+    results: compareModels.slice(0, 2).map((modelId) => ({ modelId, status: "completed" as const, text: `${modelId} 합성 답변` })) };
+  let syntheses = 0; let compares = 0;
+  const { continued } = compareFixture({ listCompareRuns: async () => [run], streamCompareSynthesis: () => { syntheses++; return () => {}; },
+    streamCompare: () => { compares++; return () => {}; } });
+  await render(<ConfirmProvider><App /></ConfirmProvider>);
+  const rail = [...document.querySelectorAll<HTMLButtonElement>(".rail .rail-item")].find((item) => item.textContent === "모델 비교")!;
+  await click(rail);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  assert.equal(rail.getAttribute("aria-current"), "page");
+  assert.equal(document.querySelectorAll('[aria-current="page"]').length, 1);
+  assert.ok(document.querySelector(".compare-screen .panel-header .header-search"));
+  await click([...document.querySelectorAll<HTMLButtonElement>(".compare-run-list button")].find((item) => item.textContent?.includes("저장된 합성 비교"))!);
+  assert.equal(document.querySelectorAll(".compare-screen .compare-inline-column").length, 2);
+  assert.equal(document.querySelector(".compare-screen .compare-synthesis-bar"), null, "a saved run starts no new synthesis");
+  await click([...document.querySelectorAll<HTMLButtonElement>(".compare-screen button")].find((item) => item.textContent?.includes("이 답변으로 계속"))!);
+  assert.deepEqual(continued, [["saved-run", compareModels[0]]]);
+  assert.equal(syntheses + compares, 0);
 });

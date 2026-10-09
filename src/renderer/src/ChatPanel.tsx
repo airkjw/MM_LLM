@@ -1,43 +1,97 @@
 import { CODE_BILLING_NOTICE, CODE_ARTIFACT_NOTICE, serverCodeProvider, mergeServerCode } from "../../shared/server-code";
 import { ActionBarPrimitive, AssistantRuntimeProvider, ComposerPrimitive, MessagePrimitive, ThreadPrimitive, useAui, useExternalStoreRuntime, type ThreadMessageLike } from "@assistant-ui/react";
-import { ArrowRight, ArrowUp, CircleHelp, Copy, Download, FileText, Globe2, Image as ImageIcon, LoaderCircle, Paperclip, RefreshCw, Settings, ShieldCheck, Sparkles, Square, X } from "lucide-react";
-import { useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import { ArrowUp, Brain, Check, CircleHelp, Copy, Download, FileText, Globe2, Image as ImageIcon, LoaderCircle, Paperclip, RefreshCw, Settings, ShieldCheck, Sparkles, Square, X } from "lucide-react";
+import { useCallback, useContext, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import { claudeAllowsSampling, claudeDefaultThinkingMode, claudeForbidsForcedToolChoice, claudeThinkingCapabilities, isClaudeModel, isGeminiModel, isOpenAiModel } from "../../shared/advanced-chat";
 import { hasFixedTemperature, reasoningSupport } from "../../shared/chat-options";
-import type { ChatAdvancedSettings, ChatEvent, ChatRequest, GatewayModel, PickedAttachment, PublicMessage, ReasoningMode, ThreadSnapshot, WebSearchMode, SearchCapability, WebSearchExecution } from "../../shared/contracts";
-import { nativeSearchSettingsError, nativeSearchProvider } from "../../shared/search-capability";
+import type { ChatAdvancedSettings, ChatEvent, ChatRequest, CompareRequest, CompareRun, GatewayModel, PickedAttachment, PublicMessage, ReasoningMode, ThreadSnapshot, WebSearchMode, SearchCapability, WebSearchExecution } from "../../shared/contracts";
+import { nativeSearchSettingsError, nativeSearchProvider, sharedEvidenceModelError } from "../../shared/search-capability";
 import { citationLinkBlockReason, webSearchStatusLabel } from "../../shared/search-evidence";
 import { unsupportedContinuationMessage } from "../../shared/chat-continuation";
+import { CompareInline, type CompareSynthesisControls } from "./CompareInline";
 import { useConfirm } from "./components/ConfirmDialog";
 import { DiagnosticButton } from "./components/DiagnosticButton";
 import { modelLabel } from "./model-names";
-import { hasBlockingModal } from "./shortcut-policy";
-import { useDialogFocus } from "./use-focus-layer";
+import { ModelPreferences } from "./model-preferences";
+import { digitShortcut, hasBlockingModal } from "./shortcut-policy";
+import { useDialogFocus, useFocusLayer } from "./use-focus-layer";
 
 import { ModelPicker } from "./ModelPicker";
 import { errorText, MarkdownText, readDroppedFiles, templates } from "./ui-shared";
-function TemplateCard({ item, onChoose, disabled }: {
-  item: typeof templates[number]; onChoose: () => Promise<void>; disabled: boolean;
+function TemplateCard({ item, index, onChoose, disabled }: {
+  item: typeof templates[number]; index: number; onChoose: () => Promise<void>; disabled: boolean;
 }) {
   const Icon = item.icon;
-  return <button type="button" className="template-card"
+  return <button type="button" className="template-card" aria-keyshortcuts={String(index + 1)}
     onClick={() => void onChoose()} disabled={disabled}>
-    <span className="template-icon"><Icon size={19} /></span>
+    <span className="template-icon" aria-hidden="true"><Icon size={17} /></span>
     <span className="template-content"><strong>{item.title}</strong><small>{item.detail}</small></span>
-    <ArrowRight size={16} className="template-arrow" />
+    <kbd aria-hidden="true">{index + 1}</kbd>
   </button>;
+}
+
+const WEB_MODES: ReadonlyArray<{ value: WebSearchMode; label: string; short: string }> = [
+  { value: "always", label: "웹검색 항상", short: "항상" }, { value: "auto", label: "웹검색 자동", short: "자동" },
+  { value: "deep", label: "딥리서치 · 최대 6회 호출", short: "딥리서치" }, { value: "off", label: "웹검색 끄기", short: "끄기" }
+];
+const REASONING_MODES: ReadonlyArray<{ value: ReasoningMode; label: string }> = [
+  { value: "auto", label: "자동" }, { value: "fast", label: "빠르게" }, { value: "balanced", label: "균형" }, { value: "deep", label: "깊게" }
+];
+const MAX_COMPARE_MODELS = 3;
+
+/**
+ * A composer toggle that opens a menu of the choices the current model supports and shows the current value
+ * (contract D3.2: a menu instead of click-cycling, so keyboard users can see the options).
+ */
+function ComposerMenu<T extends string>({ name, icon, value, options, disabled, busy = false, onChoose }: {
+  name: string; icon: ReactNode; value: T; options: ReadonlyArray<{ value: T; label: string; short?: string }>;
+  /** `busy` (a save in flight) keeps the trigger focusable so focus returned to it is not dropped. */
+  disabled: boolean; busy?: boolean; onChoose: (value: T) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const { ref, requestClose } = useFocusLayer<HTMLDivElement>({
+    active: open, mode: "menu", onClose: () => setOpen(false), closeOnOutside: true, restoreTo: trigger
+  });
+  const current = options.find((option) => option.value === value) ?? options[0];
+  useEffect(() => {
+    if (!open) return;
+    // Start on the current value; this frame runs after the focus layer's first-item focus.
+    const frame = window.requestAnimationFrame(() =>
+      ref.current?.querySelector<HTMLElement>('[role="menuitem"][aria-current="true"]')?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, ref]);
+  return <div className="composer-menu">
+    <button ref={trigger} type="button" className="composer-toggle" aria-haspopup="menu" aria-expanded={open}
+      aria-label={`${name}: ${current.label}`} title={`${name}: ${current.label}`} disabled={disabled}
+      aria-disabled={busy || undefined} onClick={() => open ? requestClose("programmatic", true) : !busy && setOpen(true)}>
+      {icon}<span aria-hidden="true">{current.short ?? current.label}</span></button>
+    {open && <div className="composer-menu-list" role="menu" aria-label={name} ref={ref} tabIndex={-1}>
+      {options.map((option) => <button type="button" role="menuitem" key={option.value} data-value={option.value}
+        tabIndex={option.value === value ? 0 : -1} aria-current={option.value === value ? "true" : undefined}
+        onClick={() => { requestClose("programmatic", true); if (option.value !== value) onChoose(option.value); }}>
+        <span>{option.label}</span>{option.value === value && <><Check size={14} aria-hidden="true" /><span className="sr-only">, 현재 선택</span></>}
+      </button>)}
+    </div>}
+  </div>;
 }
 
 export type EvidenceAppend = { id: string; threadId: string; text: string };
 export type ComposerHandle = { getText: () => string };
-function ComposerDraft({ text, onDraftApplied, operations, onEvidenceApplied, composerRef }: {
+function ComposerDraft({ text, onDraftApplied, operations, onEvidenceApplied, composerRef, restoreRef }: {
   text?: string; onDraftApplied: () => void;
   operations: EvidenceAppend[]; onEvidenceApplied?: (ids: string[]) => void; composerRef?: Ref<ComposerHandle>;
+  /** Lets a refused comparison put the question back after the composer cleared it on send. */
+  restoreRef: { current: ((value: string) => void) | null };
 }) {
   const aui = useAui();
   const replacement = useRef<string | undefined>(undefined);
   const applied = useRef(new Set<string>());
   useImperativeHandle(composerRef, () => ({ getText: () => aui.composer.getState().text }), [aui]);
+  useEffect(() => {
+    restoreRef.current = (value) => aui.composer.setText(value);
+    return () => { restoreRef.current = null; };
+  }, [aui, restoreRef]);
   useEffect(() => {
     if (!text) replacement.current = undefined;
     const replace = Boolean(text) && replacement.current !== text;
@@ -208,10 +262,21 @@ function ChatKeyboardShortcuts({ messages, running, stop }: {
   return null;
 }
 
+/** The live comparison owned by App (streaming, gates and storage stay there); ChatPanel only renders and routes. */
+export type ChatCompare = {
+  run: CompareRun | null; busy: boolean; synthesis: CompareSynthesisControls;
+  /** Starts `streamCompare`; false when it was refused or failed to start, so the draft and attachments stay. */
+  onStart: (request: CompareRequest) => boolean;
+  onStop: () => void;
+  onContinue: (runId: string, modelId: string) => void;
+  continueDisabled: boolean;
+  onError: (message: string) => void;
+};
+
 export function ChatPanel({
   thread, modelId, models, onModelChange, onThreadUpdated, onRefreshThreads, onUsageChanged,
   onTemplateStart, initialDraft, onDraftApplied, evidenceAppends = NO_EVIDENCE, onEvidenceApplied,
-  composerRef, voicePanel, headerSearch
+  composerRef, voicePanel, headerSearch, compare, compareShortcut, onCompareShortcutHandled
 }: {
   thread: ThreadSnapshot; modelId: string; models: GatewayModel[];
   onModelChange: (id: string) => void;
@@ -226,8 +291,18 @@ export function ChatPanel({
   composerRef?: Ref<ComposerHandle>;
   voicePanel?: ReactNode;
   headerSearch?: ReactNode;
+  /** Present when this conversation can start comparisons; `run` is set only for runs started here. */
+  compare?: ChatCompare;
+  /** Cmd/Ctrl+Shift+C request: add a second model token and open its picker. */
+  compareShortcut?: number;
+  onCompareShortcutHandled?: (id: number) => void;
 }) {
   const confirm = useConfirm();
+  const preferences = useContext(ModelPreferences);
+  const [compareExtras, setCompareExtras] = useState<string[]>([]);
+  const [compareConfirmed, setCompareConfirmed] = useState(false);
+  const [tokenPickerRequest, setTokenPickerRequest] = useState<{ index: number; id: number } | null>(null);
+  const restoreDraftRef = useRef<((value: string) => void) | null>(null);
   const [messages, setMessages] = useState<PublicMessage[]>(thread.messages);
   const [pending, setPending] = useState<PickedAttachment[]>([]);
   const attachmentConsent = thread.attachmentConsent;
@@ -253,6 +328,9 @@ export function ChatPanel({
   const stopRef = useRef<(() => void) | null>(null);
   const settleRef = useRef<(() => void) | null>(null);
   const pendingRef = useRef(pending);
+  const pendingKey = pending.map((item) => item.id).join();
+  // Any attachment change resets the comparison consent (contract D3.5).
+  useEffect(() => { setCompareConfirmed(false); }, [pendingKey]);
   const consentRef = useRef(attachmentConsent);
   const modelRef = useRef(modelId);
   const messagesRef = useRef(messages);
@@ -275,6 +353,14 @@ export function ChatPanel({
   messagesRef.current = messages;
   threadIdRef.current = thread.id;
   privacyBusyRef.current = privacyBusy;
+  const chatModelIds = models.filter((model) => model.type === "llm").map((model) => model.id);
+  const composerModels = [modelId, ...compareExtras.filter((id) => id !== modelId && chatModelIds.includes(id))]
+    .filter(Boolean).slice(0, MAX_COMPARE_MODELS);
+  const compareMode = Boolean(compare) && thread.target?.kind !== "chatbot" && composerModels.length >= 2;
+  const compareRef = useRef(compare);
+  compareRef.current = compare;
+  const compareRequestRef = useRef({ compareMode, composerModels, compareConfirmed, webSearchMode: thread.webSearchMode });
+  compareRequestRef.current = { compareMode, composerModels, compareConfirmed, webSearchMode: thread.webSearchMode };
 
   const hasAttachedHistory = messages.some((message) => Boolean(message.attachments?.length));
   const needsConsent = pending.length > 0 || hasAttachedHistory || Boolean(thread.projectId);
@@ -426,6 +512,18 @@ export function ChatPanel({
   const onNew = useCallback(async (message: { content: readonly { type: string; text?: string }[] }) => {
     const text = message.content.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n").trim();
     if (!text) return;
+    const request = compareRequestRef.current;
+    if (request.compareMode && compareRef.current) {
+      // Comparison is a separate stream (contract D3.4): the composer's tokens, web toggle and attachments
+      // become one CompareRequest. Attachment ownership passes to main only when the stream starts.
+      const attachments = pendingRef.current;
+      const started = compareRef.current.onStart({ prompt: text, modelIds: request.composerModels,
+        webSearchMode: request.webSearchMode, attachmentIds: attachments.map((item) => item.id),
+        deidentifiedConfirmed: request.compareConfirmed });
+      if (started) { setPending([]); setCompareConfirmed(false); }
+      else restoreDraftRef.current?.(text);
+      return;
+    }
     try { await run(text); }
     catch (error) { setError(errorText(error)); }
   }, [run]);
@@ -471,6 +569,67 @@ export function ChatPanel({
     : "자체 검색 미확인 · 전송 시 확인, 미확인/미지원은 Sonar 추가 요청";
   const chatbotTarget = thread.target?.kind === "chatbot" ? thread.target : undefined;
   const reasoning = selectedModel ? reasoningSupport(selectedModel) : "none";
+  const modelById = (id: string) => models.find((model) => model.id === id);
+  const compareModelError = compareMode
+    ? composerModels.map(modelById).find((model) => model && sharedEvidenceModelError(model)) : undefined;
+  const compareBusy = Boolean(compare?.busy || compare?.synthesis.busy);
+  const compareSendBlocked = compareMode && (compareBusy || Boolean(compareModelError) ||
+    pending.length > 0 && !compareConfirmed);
+  const showCompare = Boolean(compare && (compare.run || compare.busy));
+  const unavailableForCompare = (model: GatewayModel) => sharedEvidenceModelError(model);
+  function addCompareModel(id: string): string {
+    const current = compareRequestRef.current.composerModels;
+    const model = modelById(id);
+    if (current.includes(id)) return "이미 비교 목록에 있는 모델입니다.";
+    if (current.length >= MAX_COMPARE_MODELS) return "비교는 최대 3개 모델까지 할 수 있습니다.";
+    if (!model) return "현재 사용할 수 있는 모델을 직접 선택해 주세요.";
+    const refusal = unavailableForCompare(model);
+    if (refusal) return refusal;
+    const next = [...current.slice(1), id];
+    setCompareExtras(next);
+    compareRequestRef.current = { ...compareRequestRef.current, composerModels: [current[0], ...next] };
+    return `${modelLabel(id)} 비교에 추가 · ${current.length + 1}/${MAX_COMPARE_MODELS}`;
+  }
+  const replaceCompareModel = (index: number, id: string) => setCompareExtras((items) => {
+    const next = composerModels.slice(1);
+    if (next.includes(id) || id === modelId) return items;
+    next[index - 1] = id;
+    return next;
+  });
+  const choosePrimaryModel = (id: string) => {
+    setCompareExtras((items) => items.filter((item) => item !== id));
+    onModelChange(id);
+  };
+  // Cmd/Ctrl+Shift+C: add a second token (favorites → recent → list order, never Sonar) and open its picker.
+  const shortcutRef = useRef({ composerModels, preferences, models });
+  shortcutRef.current = { composerModels, preferences, models };
+  useEffect(() => {
+    if (!compareShortcut) return;
+    onCompareShortcutHandled?.(compareShortcut);
+    if (thread.target?.kind === "chatbot") return;
+    const { composerModels: current, preferences: prefs, models: available } = shortcutRef.current;
+    if (current.length < 2) {
+      const llms = available.filter((model) => model.type === "llm" && !current.includes(model.id) && !sharedEvidenceModelError(model));
+      const candidate = prefs.favorites.find((id) => llms.some((model) => model.id === id)) ??
+        prefs.recent.find((id) => llms.some((model) => model.id === id)) ?? llms[0]?.id;
+      if (!candidate) { setError("비교에 추가할 수 있는 다른 대화 모델이 없습니다."); return; }
+      setCompareExtras([candidate]);
+    }
+    setTokenPickerRequest({ index: 1, id: compareShortcut });
+  }, [compareShortcut]);
+  // Start cards answer 1–4 only while the empty start screen is visible (contract D3.1).
+  const templateKeysRef = useRef({ enabled: false, choose: (_item: typeof templates[number]) => {} });
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      const digit = digitShortcut(event);
+      const { enabled, choose } = templateKeysRef.current;
+      if (!digit || !enabled || digit > templates.length) return;
+      event.preventDefault();
+      choose(templates[digit - 1]);
+    };
+    window.addEventListener("keydown", keydown);
+    return () => window.removeEventListener("keydown", keydown);
+  }, []);
 
   async function saveThreadControls(nextReasoning: ReasoningMode, nextInstruction = instructionDraft,
     nextAdvanced = advancedDraft) {
@@ -510,7 +669,7 @@ export function ChatPanel({
 
   const runtime = useExternalStoreRuntime({
     messages, isRunning, onNew, onReload, onCancel, convertMessage,
-    isSendDisabled: Boolean(privacyDialog) || (needsConsent && !attachmentConsent) || isRunning ||
+    isSendDisabled: Boolean(privacyDialog) || (needsConsent && !attachmentConsent) || isRunning || compareSendBlocked ||
       controlsPending || !modelId || messages.some((message) => message.role === "assistant" &&
         message.toolCalls?.some((call) => call.status === "waiting"))
   });
@@ -613,10 +772,23 @@ export function ChatPanel({
   draftToolNames = [...new Set(draftToolNames)];
   const selectedToolChoiceValue = typeof advancedDraft.toolChoice === "object"
     ? `tool:${advancedDraft.toolChoice.name}` : advancedDraft.toolChoice ?? "auto";
+  const chooseTemplate = async (item: typeof templates[number]) => {
+    setControlsPending(true);
+    try { await onTemplateStart(item); }
+    catch (error) { setError(errorText(error)); }
+    finally { setControlsPending(false); }
+  };
+  const startVisible = messages.length === 0 && !showCompare;
+  templateKeysRef.current = { enabled: startVisible && !controlsPending, choose: (item) => void chooseTemplate(item) };
+  const modelsLocked = isRunning || controlsPending || compareBusy;
+  const pickerFallback = () => document.querySelector<HTMLElement>(".chat-panel .composer-input");
+  const routeVisible = !chatbotTarget && thread.webSearchMode !== "off";
+  const footerPrefix = chatbotTarget ? "Studio Chatbot · 원격 감사 로그가 저장될 수 있음"
+    : thread.purpose === "meeting-summary" ? "로컬 회의 요약 · 웹 검색 꺼짐" : "";
   return <AssistantRuntimeProvider runtime={runtime}>
     <ChatKeyboardShortcuts messages={messages} running={isRunning} stop={() => stopRef.current?.()} />
     <ComposerDraft text={initialDraft} onDraftApplied={onDraftApplied} operations={evidenceAppends}
-      onEvidenceApplied={onEvidenceApplied} composerRef={composerRef} />
+      onEvidenceApplied={onEvidenceApplied} composerRef={composerRef} restoreRef={restoreDraftRef} />
     <div className="chat-panel" onDragEnter={handleDragEnter} onDragOver={(event) => {
       if (!event.dataTransfer.types.includes("Files")) return;
       event.preventDefault();
@@ -627,24 +799,21 @@ export function ChatPanel({
         준비된 구간별 초안을 검토한 뒤 직접 전송합니다.
       </div>}
       <div className="panel-header">
-        <div className="panel-heading"><span className="panel-section">대화</span><h2 title={thread.title}>{thread.title === "새 대화" ? "새로운 대화" : thread.title}</h2></div>
+        <div className="panel-heading"><h2 title={thread.title}>{thread.title === "새 대화" ? "새로운 대화" : thread.title}</h2></div>
         {headerSearch}
-        <div className="panel-actions">{!chatbotTarget && <ModelPicker models={displayModels} selected={modelId} onSelect={onModelChange}
-            disabled={isRunning || controlsPending} />}
+        <div className="panel-actions">
           {chatbotTarget && <span className="chatbot-target"><Sparkles size={14} />{chatbotTarget.alias}</span>}</div>
       </div>
       {voicePanel}
       <ThreadPrimitive.Root className="chat-thread">
         <ThreadPrimitive.Viewport className="chat-viewport">
-          {messages.length === 0 && <div className="chat-welcome">
+          {startVisible && <div className="chat-welcome">
             <span className="eyebrow">KYUNG HEE UNIVERSITY · MEDICAL MBA</span>
             <h1>의료의 미래를 읽고,<br /><em>경영의 답을 설계하다</em></h1>
             <p>질문을 적거나, 아래 주제로 대화를 시작하세요.</p>
-            <div className="welcome-section-label">의료경영 시작 가이드</div>
-            <div className="template-grid">{templates.map((item) =>
-              <TemplateCard key={item.title} item={item} disabled={controlsPending}
-                onChoose={async () => { setControlsPending(true); try { await onTemplateStart(item); }
-                  catch (error) { setError(errorText(error)); } finally { setControlsPending(false); } }} />)}</div>
+            <div className="template-grid" role="group" aria-label="의료경영 시작 가이드">{templates.map((item, index) =>
+              <TemplateCard key={item.title} item={item} index={index} disabled={controlsPending}
+                onChoose={() => chooseTemplate(item)} />)}</div>
           </div>}
           <ThreadPrimitive.Messages>
             {({ message }) => {
@@ -672,6 +841,8 @@ export function ChatPanel({
                   .catch((error) => setError(errorText(error)))} />;
             }}
           </ThreadPrimitive.Messages>
+          {compare && showCompare && <CompareInline run={compare.run} busy={compare.busy} synthesis={compare.synthesis}
+            continueDisabled={compare.continueDisabled} onContinue={compare.onContinue} onError={compare.onError} />}
           <ThreadPrimitive.ViewportFooter className="chat-footer">
             {needsConsent && <small className="document-scope-note">문서는 전송 한도 안에서는 전체 본문을 전달하고, 한도를 넘으면 관련 부분을 발췌합니다.
               전체 원문을 빠짐없이 검토한 결과가 아닐 수 있으므로, 필요한 페이지·표·항목을 질문에 명시해 주세요.</small>}
@@ -680,35 +851,28 @@ export function ChatPanel({
             {error && <DiagnosticButton stage="chat" modelId={modelId} />}
             {progress && <div className="inline-progress" role="status" aria-live="polite"><LoaderCircle className="spin" size={15} />{progress}</div>}
             <ComposerPrimitive.Root className={dropActive ? "composer-card drop-active" : "composer-card"}>
-              {!chatbotTarget && <div className="composer-options" aria-label="응답 설정"><label className="web-mode"><Globe2 size={14} />
-                <select aria-label="웹 검색 방식" value={thread.webSearchMode} disabled={isRunning || controlsPending || thread.purpose === "meeting-summary"}
-                  onChange={(event) => void setSearchMode(event.target.value as WebSearchMode)}>
-                  <option value="always">웹검색 항상</option><option value="auto">웹검색 자동</option>
-                  <option value="deep">딥리서치 · 최대 6회 호출</option>
-                  <option value="off">웹검색 끄기</option>
-                </select></label>
-                {reasoning === "adjustable" && <label className="reasoning-mode" title="모델의 추론 강도">
-                  <Sparkles size={14} /><span className="control-caption">사고</span><select value={thread.reasoningMode} disabled={isRunning || controlsPending}
-                    onChange={(event) => void saveThreadControls(event.target.value as ReasoningMode,
-                      thread.instruction, thread.advanced)} aria-label="사고 강도">
-                    <option value="auto">자동</option><option value="fast">빠르게</option>
-                    <option value="balanced">균형</option><option value="deep">깊게</option>
-                  </select></label>}
-                {reasoning === "native-required" && <span className="reasoning-unavailable"
-                  title="Claude 네이티브 Messages API 전환 후 조절할 수 있습니다.">사고 강도: 자동</span>}
-                {reasoning === "model-managed" && <span className="reasoning-unavailable"
-                  title="이 모델은 사고 기능을 모델 내부에서 자동으로 관리합니다.">사고 가능 · 모델 자동</span>}
-                <button type="button" className="icon-button" aria-label="대화 설정" title="대화 설정"
-                  disabled={isRunning || controlsPending}
-                  onClick={() => { setInstructionDraft(thread.instruction); setAdvancedDraft(thread.advanced); setChatSettingsOpen(true); }}>
-                  <Settings size={17} /></button>
-              </div>}
               {dropActive && <div className="composer-drop-hint"><Paperclip size={18} />
                 PDF·Word·Excel·이미지를 여기에 놓으세요</div>}
+              {!chatbotTarget && <div className="composer-models" role="group" aria-label="대화 모델">
+                <ModelPicker models={displayModels} selected={modelId} onSelect={choosePrimaryModel} disabled={modelsLocked}
+                  compare={compare ? { ids: composerModels, onAdd: addCompareModel } : undefined} restoreFallback={pickerFallback} />
+                {composerModels.slice(1).map((id, offset) => <span className="composer-compare-token" key={id}>
+                  <ModelPicker models={displayModels} selected={id} variant="compare" disabled={modelsLocked}
+                    onSelect={(next) => replaceCompareModel(offset + 1, next)} unavailable={unavailableForCompare}
+                    compare={{ ids: composerModels, onAdd: addCompareModel }} restoreFallback={pickerFallback}
+                    openRequest={tokenPickerRequest?.index === offset + 1 ? tokenPickerRequest.id : undefined} />
+                  <button type="button" className="composer-token-remove" disabled={modelsLocked}
+                    aria-label={`${modelLabel(id)} 비교에서 제거`} title={`${modelLabel(id)} 비교에서 제거`}
+                    onClick={() => setCompareExtras((items) => items.filter((item) => item !== id))}><X size={12} aria-hidden="true" /></button>
+                </span>)}
+                {compare && <ModelPicker models={displayModels} selected="" variant="add" onSelect={(id) => void addCompareModel(id)}
+                  disabled={modelsLocked || composerModels.length >= MAX_COMPARE_MODELS} unavailable={unavailableForCompare}
+                  compare={{ ids: composerModels, onAdd: addCompareModel }} restoreFallback={pickerFallback} />}
+              </div>}
               {pending.length > 0 && <div className="attachment-row">
                 {pending.map((item) => <span className="attachment-chip" key={item.id}>
                   {item.kind === "image" ? <ImageIcon size={14} /> : <FileText size={14} />}
-                  {item.name}<button type="button" aria-label={`${item.name} 첨부 제거`} onClick={() => {
+                  {item.name}<button type="button" aria-label={`${item.name} 첨부 제거`} disabled={compareBusy} onClick={() => {
                     void window.mmllm.discardAttachments([item.id]);
                     setPending((items) => items.filter((attached) => attached.id !== item.id));
                   }}><X size={13} /></button>
@@ -718,19 +882,46 @@ export function ChatPanel({
                 className="composer-input" rows={2} addAttachmentOnPaste={false} />
               <div className="composer-bottom">
                 {!chatbotTarget && <button type="button" className="attach-button" onClick={addAttachment}
-                  disabled={isRunning || controlsPending || Boolean(privacyDialog)} title="PDF·Word·Excel·이미지 첨부">
-                  <Paperclip size={17} /><span>파일 첨부</span>
+                  disabled={isRunning || controlsPending || compareBusy || Boolean(privacyDialog)} title="PDF·Word·Excel·이미지 첨부">
+                  <Paperclip size={16} aria-hidden="true" /><span className="sr-only">파일 첨부</span>
                 </button>}
-                <span className="composer-hint">Enter 전송 · Shift+Enter 줄바꿈</span>
-                {isRunning
-                  ? <ComposerPrimitive.Cancel className="send-button stop" title="생성 중단" aria-label="생성 중단"><Square size={16} /></ComposerPrimitive.Cancel>
-                  : <ComposerPrimitive.Send className="send-button" title="전송" aria-label="메시지 전송"
-                    disabled={Boolean(sonarRestriction) || !selectedModel && !chatbotTarget}><ArrowUp size={19} /></ComposerPrimitive.Send>}
+                {!chatbotTarget && <ComposerMenu name="웹 검색 방식" icon={<Globe2 size={14} aria-hidden="true" />}
+                  value={thread.webSearchMode} options={WEB_MODES}
+                  disabled={isRunning || compareBusy || thread.purpose === "meeting-summary"} busy={controlsPending}
+                  onChoose={(mode) => void setSearchMode(mode)} />}
+                {!chatbotTarget && reasoning === "adjustable" && <ComposerMenu name="사고 강도"
+                  icon={<Brain size={14} aria-hidden="true" />} value={thread.reasoningMode} options={REASONING_MODES}
+                  disabled={isRunning} busy={controlsPending}
+                  onChoose={(mode) => void saveThreadControls(mode, thread.instruction, thread.advanced)} />}
+                {!chatbotTarget && reasoning === "native-required" && <span className="reasoning-unavailable"
+                  title="Claude 네이티브 Messages API 전환 후 조절할 수 있습니다.">사고 강도: 자동</span>}
+                {!chatbotTarget && reasoning === "model-managed" && <span className="reasoning-unavailable"
+                  title="이 모델은 사고 기능을 모델 내부에서 자동으로 관리합니다.">사고 가능 · 모델 자동</span>}
+                {!chatbotTarget && <button type="button" className="icon-button composer-settings" aria-label="대화 설정" title="대화 설정"
+                  disabled={isRunning || controlsPending}
+                  onClick={() => { setInstructionDraft(thread.instruction); setAdvancedDraft(thread.advanced); setChatSettingsOpen(true); }}>
+                  <Settings size={15} /></button>}
+                <span className="composer-hint" aria-hidden="true">↵ 전송 · ⇧↵ 줄바꿈</span>
+                {compareMode && compare?.busy
+                  ? <button type="button" className="send-button stop" title="비교 중단" aria-label="비교 중단"
+                    onClick={compare.onStop}><Square size={14} /></button>
+                  : isRunning
+                    ? <ComposerPrimitive.Cancel className="send-button stop" title="생성 중단" aria-label="생성 중단"><Square size={14} /></ComposerPrimitive.Cancel>
+                    : <ComposerPrimitive.Send className="send-button" title="전송" aria-label="메시지 전송"
+                      disabled={compareMode ? compareSendBlocked : Boolean(sonarRestriction) || !selectedModel && !chatbotTarget}><ArrowUp size={16} /></ComposerPrimitive.Send>}
               </div>
             </ComposerPrimitive.Root>
-            {!chatbotTarget && thread.webSearchMode !== "off" && <div className="chat-checkline">
-              <span>{thread.webSearchMode === "auto" ? `검색할 때: ${searchRouteLabel}` : searchRouteLabel}</span>
-              {thread.webSearchMode !== "deep" && <button type="button" className="secondary-button" disabled={isRunning || controlsPending || !selectedModel}
+            {compareMode && pending.length > 0 && <div className="compare-consent">
+              <label className="deid-check"><input type="checkbox" checked={compareConfirmed} disabled={compareBusy}
+                aria-describedby={!compareConfirmed ? "compare-consent-hint" : undefined}
+                onChange={(event) => setCompareConfirmed(event.target.checked)} />
+                <span>환자 식별정보나 개인정보를 제거했습니다. 자료는 선택한 모델 수만큼 외부 전송·과금될 수 있습니다.</span></label>
+              {!compareConfirmed && <p id="compare-consent-hint" className="notice-info" role="status">첨부 자료를 전송하려면 위 확인란을 체크해 주세요.</p>}
+            </div>}
+            {compareModelError && <div className="inline-error" role="status">Sonar는 검색 끄기가 확인되지 않아 비교 답변에 사용할 수 없습니다. Sonar 선택을 해제하고 다른 모델을 직접 선택해 주세요.</div>}
+            {routeVisible && <div className="composer-route"><Globe2 size={13} aria-hidden="true" />
+              <span role="status">{thread.webSearchMode === "auto" ? `검색할 때: ${searchRouteLabel}` : searchRouteLabel}</span>
+              {thread.webSearchMode !== "deep" && !compareMode && <button type="button" className="text-button" disabled={isRunning || controlsPending || !selectedModel}
                 onClick={async () => {
                   const id = modelId; const owner = thread.id; setControlsPending(true); setError("");
                   try {
@@ -742,23 +933,15 @@ export function ChatPanel({
             </div>}
             {selectedModel && nativeSearchProvider(selectedModel) === "sonar" && thread.webSearchMode === "auto" &&
               <div className="chat-checkline" role="status">Sonar 자동 모드는 일반 질문에서도 모델 자체 검색이 실행될 수 있습니다.</div>}
-            {sonarRestriction && <div className="inline-error" role="status">{sonarRestriction}</div>}
-            {searchSettingsError && <div className="inline-error" role="status">{searchSettingsError}</div>}
+            {sonarRestriction && !compareMode && <div className="inline-error" role="status">{sonarRestriction}</div>}
+            {searchSettingsError && !compareMode && <div className="inline-error" role="status">{searchSettingsError}</div>}
             {!selectedModel && !chatbotTarget && <div className="inline-error" role="status">현재 사용할 수 있는 모델을 직접 선택해 주세요.</div>}
-            <div className="chat-checkline"><span className="web-search-status"><Globe2 size={13} />
-              {chatbotTarget ? "Studio Chatbot · 원격 감사 로그가 저장될 수 있음" :
-                thread.purpose === "meeting-summary" ? "로컬 회의 요약 · 웹 검색 꺼짐" :
-                thread.webSearchMode === "off" ? "웹 검색을 사용하지 않음" : thread.webSearchMode === "auto"
-                ? selectedModel && nativeSearchProvider(selectedModel) === "sonar"
-                  ? "Sonar 모델 자체 검색 · 일반 질문에서도 검색 가능" : "최신 정보가 필요한 질문만 웹 검색" : thread.webSearchMode === "deep"
-                  ? "Sonar로 3~4개 검색을 교차 검증 · 총 최대 6회 API 호출" : searchRouteLabel}</span>
+            <p className="composer-notice">{footerPrefix && <>{footerPrefix} · </>}
               {needsConsent && !attachmentConsent
-                ? <button type="button" className="privacy-confirm-link"
-                    onClick={() => setPrivacyDialog("history")}>첨부 자료 전송 확인</button>
-                : <span>{needsConsent
-                  ? "이 대화의 첨부 자료는 API로 다시 전송될 수 있습니다"
-                  : "환자 식별정보는 입력 전에 제거해 주세요"}</span>}
-              <span>대화 기록은 기기 안에 저장됩니다</span></div>
+                ? <><button type="button" className="privacy-confirm-link"
+                    onClick={() => setPrivacyDialog("history")}>첨부 자료 전송 확인</button> · </>
+                : needsConsent ? "이 대화의 첨부 자료는 API로 다시 전송될 수 있습니다 · " : "환자 식별정보는 전송 전에 직접 제거해 주세요 · "}
+              대화 기록은 이 기기에 암호화 저장됩니다</p>
           </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>

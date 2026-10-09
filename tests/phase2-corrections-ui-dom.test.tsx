@@ -118,7 +118,8 @@ async function app(initial = llm, overrides: Record<string, unknown> = {}, stric
   return { counts, discarded, items };
 }
 async function research() {
-  if (!document.querySelector(".workspace-tools-dialog")) await click(button("모델 비교"));
+  // Stage 3: compare left the tools dialog; research is reached from its own rail item.
+  if (!document.querySelector(".workspace-tools-dialog")) await click(button("논문·법령 리서치"));
   if (!document.querySelector(".research-panel")) await click(button("논문·법령 검색"));
   await click(button("검색 도구 확인")); await select(document.querySelector<HTMLSelectElement>(".research-panel select")!, suite.slug);
   await click(button("선택한 묶음")); await select(document.querySelectorAll<HTMLSelectElement>(".research-panel select")[1], tool.token);
@@ -160,7 +161,7 @@ test("actual App selects evidence LLM/model from chatbot and restores the chatbo
   await input(composer(), "CHATBOT_QUESTION + LATE_TYPING");
   await act(async () => { items.set(target.id, target); finish(target); });
   assert.match(document.querySelector(".thread-item.selected")!.textContent!, /Evidence LLM/);
-  assert.match(document.querySelector(".model-trigger")!.textContent!, /GPT-5.6 Luna/i);
+  assert.match(document.querySelector(".composer-model-token.primary")!.textContent!, /@gpt-5\.6-luna/);
   assert.equal((composer().value.match(/SYNTHETIC_EVIDENCE_1/g) ?? []).length, 2); assert.equal(counts.paid, 0);
   await click(document.querySelector<HTMLButtonElement>('.thread-select[title="Synthetic chatbot"]')!);
   assert.equal(composer().value, "CHATBOT_QUESTION + LATE_TYPING"); assert.equal(counts.paid, 0);

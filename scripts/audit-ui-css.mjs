@@ -55,7 +55,7 @@ const TYPOGRAPHY_TOKENS = [
 ];
 const CONTRAST_PAIRS = [
   ["text", "bg", 4.5], ["text", "bg-sidebar", 4.5], ["text", "bg-subtle", 4.5],
-  ["text-body", "bg", 4.5], ["text-body", "bg-sidebar", 4.5],
+  ["text-body", "bg", 4.5], ["text-body", "bg-sidebar", 4.5], ["text-body", "bg-subtle", 4.5], ["text-body", "bg-hover", 4.5],
   ["text-secondary", "bg", 4.5], ["text-secondary", "bg-sidebar", 4.5], ["text-secondary", "bg-subtle", 4.5],
   ["text-tertiary", "bg", 4.5], ["text-tertiary", "bg-sidebar", 4.5], ["text-tertiary", "bg-subtle", 4.5],
   ["text-tertiary", "bg-selected", 4.5], ["text-tertiary", "bg-hover", 4.5],
@@ -68,20 +68,22 @@ const CONTRAST_PAIRS = [
   ["border-control", "bg", 3], ["border-control", "bg-sidebar", 3],
   ["accent-graphic", "bg", 3], ["accent-graphic", "bg-sidebar", 3], ["accent-graphic", "bg-subtle", 3],
   ["accent-graphic", "accent-subtle", 3], ["accent-graphic", "bg-selected", 3], ["progress-fill", "progress-track", 3],
-  ["focus-ring", "bg", 3]
+  ["focus-ring", "bg", 3], ["focus-ring", "bg-sidebar", 3], ["focus-ring", "bg-subtle", 3], ["focus-ring", "bg-hover", 3], ["focus-ring", "accent-subtle", 3]
 ];
 for (let index = 1; index <= 6; index++) {
   CONTRAST_PAIRS.push([`speaker-${index}`, "bg", 3], [`speaker-${index}`, "bg-hover", 3]);
 }
 // Rules whose border-color may repeat the amber face because the same rule fills its background with it.
 const AMBER_FACE_BORDER_SELECTORS = [".privacy-modal-actions .privacy-modal-primary", ".deid-check input:checked + .custom-check"];
+// Stage 3 (32 -> 29): the web/reasoning selects (.web-mode, .reasoning-mode) and the model trigger (.model-trigger)
+// became buttons inside the audited .composer-card boundary; their coverage moved to COMPOSER_BUTTON_STATES below.
+// The compare dialog's .compare-controls select became the composer comparison consent checkbox.
 const CONTROL_BOUNDARIES = [
-  ".login-card form input", ".composer-card", ".model-search", ".web-mode", ".reasoning-mode",
-  ".model-trigger", ".media-textarea", ".media-controls select", ".meeting-options input",
+  ".login-card form input", ".composer-card", ".model-search", ".media-textarea", ".media-controls select", ".meeting-options input",
   ".settings-field input", ".settings-field select", ".settings-field textarea", ".settings-inline select",
   ".advanced-grid input", ".advanced-grid select", ".advanced-section select", ".dialog-search-input", ".custom-check",
   ".advanced-section textarea", ".media-controls input", ".speaker-grid input", ".speaker-grid select",
-  ".music-options input", ".music-options textarea", ".compare-controls select", ".bookmark-form input",
+  ".music-options input", ".music-options textarea", ".compare-consent input[type=\"checkbox\"]", ".bookmark-form input",
   ".project-editor .settings-field input", "input[type=\"checkbox\"]", ".reference-button", ".file-drop",
   ".manual-tool-card textarea", ".voice-options select"
 ];
@@ -182,8 +184,7 @@ function selectorHas(root, selector, predicate) {
 const AUDITED_SELECTOR_EXCEPTIONS = new Map([
   [".login-card form input", new Set([".login-card form input:focus"])],
   [".composer-card", new Set([".composer-card.drop-active", ".composer-card:focus-within"])],
-  [".web-mode", new Set([".web-mode:has(select:disabled)"])],
-  [".reasoning-mode", new Set([".reasoning-mode:has(select:disabled)"])],
+  [".model-search", new Set([".model-search:focus-within"])],
   [".media-textarea", new Set([".media-textarea:focus"])],
   [".custom-check", new Set([".deid-check input:checked + .custom-check", ".deid-check input:focus-visible + .custom-check",
     ".deid-check input:disabled + .custom-check"])],
@@ -191,8 +192,23 @@ const AUDITED_SELECTOR_EXCEPTIONS = new Map([
   [".file-drop", new Set([".file-drop.drop-active"])],
   [".send-button.stop", new Set([".send-button.stop:disabled"])],
   ["button:disabled", new Set([".privacy-modal-actions button:disabled", ".workspace-tool-tabs button:disabled"])],
-  ["select:disabled", new Set([".web-mode select:disabled", ".reasoning-mode select:disabled"])]
 ]);
+
+// Composer buttons that replaced audited selects and the model trigger (contract D3.2). Each state names the token
+// pair it paints, which must be a registered 4.5:1 text pair; each button has a focus-ring outline that reaches 3:1
+// on every state background, and is 24px high with a 2px block margin for a 28px row.
+const COMPOSER_BUTTON_STATES = [
+  [".composer-toggle", "text-secondary", "bg-sidebar"],
+  [".composer-toggle:hover:not(:disabled)", "text", "bg-sidebar"],
+  ['.composer-toggle[aria-expanded="true"]', "text", "bg-subtle"],
+  [".composer-model-token", "text-body", "bg-subtle"],
+  [".composer-model-token:not(.primary):hover:not(:disabled)", "text-body", "bg-hover"],
+  [".composer-model-token.primary", "accent-text", "accent-subtle"],
+  [".composer-model-add", "text-secondary", "bg-sidebar"],
+  [".composer-model-add:hover:not(:disabled)", "text", "bg-sidebar"],
+  ['.composer-model-add[aria-expanded="true"]', "text", "bg-subtle"]
+];
+const COMPOSER_BUTTONS = [".composer-toggle", ".composer-model-token", ".composer-model-add"];
 
 const selectorBranchCache = new Map();
 
@@ -521,12 +537,13 @@ export function auditCss(css) {
     if (selector.includes(":disabled") && declarations(rule).has("opacity")) errors.push(`Opacity-based disabled style: ${selector}`);
   });
 
+  // Contract D3.3: the streaming stop button is the danger pair (danger/danger-bg is registered at 4.5:1).
   if (!selectorHas(root, ".send-button.stop", (values) =>
-    values.get("background") === "var(--color-text)" && values.get("color") === "var(--color-bg)")) {
-    errors.push(".send-button.stop must use --color-text on --color-bg");
+    values.get("background") === "var(--color-danger-bg)" && values.get("color") === "var(--color-danger)")) {
+    errors.push(".send-button.stop must use --color-danger on --color-danger-bg");
   }
   rejectStructuralOverrides(errors, root, ".send-button.stop", ["color", "background", "background-color"],
-    new Set(["var(--color-text)", "var(--color-bg)"]));
+    new Set(["var(--color-danger-bg)", "var(--color-danger)"]));
   // Stage 2 replaced the sidebar creation tiles with the rail; the active-navigation map moved with them.
   const ACTIVE_NAVIGATION = '.rail-item[aria-current="page"]';
   if (!selectorHas(root, ACTIVE_NAVIGATION, (values) =>
@@ -555,8 +572,33 @@ export function auditCss(css) {
     errors.push(".segment-speaker::before must render the categorical speaker dot");
   }
   if (!selectorHas(root, ".panel-header", (values) => values.get("min-height") === "52px")) errors.push("Panel header must be 52px");
-  for (const [selector, height] of [[".web-mode", "34px"], [".reasoning-mode", "34px"], [".model-trigger", "36px"]]) {
-    if (!selectorHas(root, selector, (values) => values.get("height") === height)) errors.push(`${selector} must be ${height} high`);
+  const registeredPairs = new Map(CONTRAST_PAIRS.map(([foreground, background, minimum]) => [`${foreground}/${background}`, minimum]));
+  for (const [selector, foreground, background] of COMPOSER_BUTTON_STATES) {
+    const values = effectiveDeclarations(root, selector);
+    const color = effectiveFamily(values, ["color"]);
+    const fill = effectiveFamily(values, ["background", "background-color"]);
+    if (color !== `var(--color-${foreground})` || fill !== `var(--color-${background})`) {
+      errors.push(`Composer button state ${selector} must paint --color-${foreground} on --color-${background}`);
+    }
+    if ((registeredPairs.get(`${foreground}/${background}`) ?? 0) < 4.5) {
+      errors.push(`Composer button state ${selector} needs a registered 4.5:1 pair ${foreground}/${background}`);
+    }
+    if ((registeredPairs.get(`focus-ring/${background}`) ?? 0) < 3) {
+      errors.push(`Composer button state ${selector} needs a registered 3:1 focus-ring/${background} pair`);
+    }
+  }
+  for (const selector of COMPOSER_BUTTONS) {
+    const states = COMPOSER_BUTTON_STATES.filter(([state]) => state.startsWith(selector));
+    rejectStructuralOverrides(errors, root, selector, ["color", "background", "background-color"],
+      new Set(states.flatMap(([, foreground, background]) => [`var(--color-${foreground})`, `var(--color-${background})`])));
+    const focus = effectiveDeclarations(root, `${selector}:focus-visible`);
+    if (!/var\(--color-focus-ring\)/.test(effectiveFamily(focus, ["outline", "outline-color"]) ?? "")) {
+      errors.push(`${selector}:focus-visible must draw a --color-focus-ring outline`);
+    }
+    const sizing = effectiveDeclarations(root, selector);
+    const blockMargin = /^(\d+(?:\.\d+)?)px\b/.exec(effectiveFamily(sizing, ["margin-block", "margin"]) ?? "");
+    if (effectiveFamily(sizing, ["height"]) !== "24px") errors.push(`${selector} must be 24px high`);
+    if (!blockMargin || 24 + 2 * Number(blockMargin[1]) < 28) errors.push(`${selector} needs a block margin for a 28px target row`);
   }
 
   for (const selector of ["button:focus-visible", "input:focus-visible", "textarea:focus-visible",

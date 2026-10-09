@@ -23,7 +23,7 @@ export const RAIL_ITEMS: readonly RailItem[] = [
   { id: "chatbot", label: "챗봇", icon: Bot }
 ];
 /** Only these destinations are rendered screens in stage 2; the others still open their existing dialogs. */
-const SCREEN_DESTINATIONS = new Set<SidebarScreen>(["chat", "media"]);
+const SCREEN_DESTINATIONS = new Set<SidebarScreen>(["chat", "compare", "media"]);
 
 function CreditMeter({ label, bucket }: {
   label: string; bucket: CreditBalance["total"] | CreditBalance["monthly_allocated"] | CreditBalance["purchased"];
