@@ -352,19 +352,23 @@ function registerHandlers(): void {
       text.assertCurrent();
       if (getActiveProfileId() !== profileId) throw new Error('계정이 변경되어 저장 결과를 적용하지 않았습니다.');
     };
-    let committed = false;
+    let committed = false; let written: Parameters<typeof snapshot>[0] | undefined;
     try {
       const result = await updateThread(target, (thread) => {
         assertCurrent();
         if (thread.target?.kind === 'chatbot') throw new Error('일반 대화에 음성 텍스트를 저장해 주세요.');
-        assertMessageCapacity(thread.messages.length, 1);
+        assertMessageCapacity(thread.messages.length, 1); written = thread;
         thread.messages.push({ id: randomUUID(), modelId: text.modelId, role: 'assistant', text: text.text,
           apiContent: text.text, createdAt: new Date().toISOString() });
       }, { profileId, assertCurrent, committed: () => { committed = true; text.commit(); } });
       // Once the encrypted replacement is committed the save happened; never report it as a failure (renderer checks its own epoch).
       if (!committed) assertCurrent();
       return result;
-    } catch (error) { if (!committed) text.rollback(); throw error; }
+    } catch (error) {
+      // A step after commit (e.g. directory fsync) failed: the encrypted replacement already holds this thread.
+      if (committed && written) return snapshot(written);
+      text.rollback(); throw error;
+    }
   });
   ipcMain.handle("projects:retrieval-status", (event, rawId: unknown) => {
     trustedInvoke(event); return runSessionBound((_controller, identity) => documentRetrieval.status(identity.profileId, shortString(rawId, 100, "프로젝트")));

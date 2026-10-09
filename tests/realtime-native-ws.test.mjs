@@ -9,8 +9,8 @@ const {RealtimeSessionManager,createVoiceSocket}=await import('../src/main/realt
 const ID='11111111-1111-4111-8111-111111111111';
 async function listen(server){server.listen(0,'127.0.0.1');await once(server,'listening');return `ws://127.0.0.1:${server.address().port}`;}
 async function close(server){server.closeAllConnections();await new Promise(r=>server.close(r));}
-function manager(origin,expiry=60000){let count=0,socket;const events=[];let identity={epoch:0,profileId:'synthetic',owner:1};
- const m=new RealtimeSessionManager({identity:()=>identity,models:()=>[{id:'gpt-realtime-2.1-mini',type:'realtime'}],emit:e=>events.push(e),
+function manager(origin,expiry=60000,setupTimeoutMs){let count=0,socket;const events=[];let identity={epoch:0,profileId:'synthetic',owner:1};
+ const m=new RealtimeSessionManager({...(setupTimeoutMs?{setupTimeoutMs}:{}),identity:()=>identity,models:()=>[{id:'gpt-realtime-2.1-mini',type:'realtime'}],emit:e=>events.push(e),
  fetch:async()=>{count++;return Response.json({object:'gateway.live_session',model:'gpt-realtime-2.1-mini',token:'synthetic_native_ws_one_use',expires_at:new Date(Date.now()+expiry).toISOString(),url:'/v1/gateway/realtime?model=gpt-realtime-2.1-mini'})},
  socket:url=>{const remote=new URL(url);socket=createVoiceSocket(origin+remote.pathname+remote.search);return socket;}});
  return {m,events,count:()=>count,socket:()=>socket,change:()=>{identity={epoch:1,profileId:'other',owner:1};m.abort()}};}
@@ -26,7 +26,7 @@ test('actual pinned ws never follows same/cross-origin 301/302/303/307/308 or ex
 });
 test('native connecting abort/account teardown/expiry timeout settles async error and close guards without retained listeners',async()=>{
  for(const mode of ['cancel','account','timeout']){
-  let requests=0;const sockets=new Set();const server=createServer((req,_res)=>{requests++});server.on('connection',s=>{sockets.add(s);s.on('close',()=>sockets.delete(s))});const origin=await listen(server);const f=manager(origin,mode==='timeout'?80:60000);
+  let requests=0;const sockets=new Set();const server=createServer((req,_res)=>{requests++});server.on('connection',s=>{sockets.add(s);s.on('close',()=>sockets.delete(s))});const origin=await listen(server);const f=manager(origin,mode==='timeout'?80:60000,mode==='timeout'?100:undefined);
   try{f.m.begin({id:ID,modelId:'gpt-realtime-2.1-mini',consent:true});await f.m.connect(ID,'synthetic');while(requests===0)await delay(2);
    if(mode==='cancel')f.m.stop(ID,true);if(mode==='account')f.change();await settle(f);assert.equal(f.m.size,0);assert.equal(f.count(),1);assert.equal(requests,1);assert.equal(f.socket().eventNames().length,0);assert.equal(JSON.stringify(f.events).includes('token='),false);
   }finally{f.m.abort();for(const s of sockets)s.destroy();await close(server)}

@@ -1,5 +1,6 @@
 // Static self-hosted AudioWorklet. No eval/blob/network or persistent audio storage.
 // Up to eight 100ms frames (800ms) may await main-thread acknowledgement before overflow.
+// Main's input credit (realtime-session.ts INPUT_CREDIT_MS) admits this whole backlog arriving at once.
 const MAX_PENDING = 8;
 class VoiceCapture extends AudioWorkletProcessor {
   constructor() {

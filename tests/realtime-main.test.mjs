@@ -174,7 +174,7 @@ test('actual save committed before a new session starts still reports success, a
 test('actual encrypted replacement already committed is never duplicated after a later directory sync failure',async()=>{
  await session();globalThis.fetch=async()=>Response.json(mint());const thread=await storage.createThread({modelId:'gpt-6-astra'});await completedText();
  globalThis.__voiceAtomicIO={...fs,open:async(path,...args)=>{const handle=await fs.open(path,...args);if(args[0]!=='r')return handle;return{close:()=>handle.close(),sync:async()=>{throw Object.assign(new Error('synthetic directory sync failure'),{code:'EIO'})}}}};
- try{await assert.rejects(()=>call('voice:save-text',ID,thread.id,true),/directory sync/);}finally{delete globalThis.__voiceAtomicIO;}
+ try{assert.equal((await call('voice:save-text',ID,thread.id,true)).messages.length,1);}finally{delete globalThis.__voiceAtomicIO;}
  await assert.rejects(()=>call('voice:save-text',ID,thread.id,true));assert.equal((await storage.getThread(thread.id)).messages.length,1);
 });
 
@@ -322,4 +322,11 @@ test('L9 account switch after commit still reports the save',async()=>{
   await storage.activateProfileForKey('synthetic-voice-profile');assert.equal((await storage.getThread(thread.id)).messages.length,1);
   await assert.rejects(()=>call('voice:save-text',ID,thread.id,true));
  }
+});
+test('F2 directory sync failure after commit still returns the saved thread and blocks a duplicate save',async()=>{
+ await session();globalThis.fetch=async()=>Response.json(mint());const thread=await storage.createThread({modelId:'gpt-6-astra'});await completedText();
+ globalThis.__voiceAtomicIO={...fs,open:async(path,...args)=>{const handle=await fs.open(path,...args);if(args[0]!=='r')return handle;return{close:()=>handle.close(),sync:async()=>{throw Object.assign(new Error('synthetic directory sync failure'),{code:'EIO'})}}}};
+ let saved;try{saved=await call('voice:save-text',ID,thread.id,true);}finally{delete globalThis.__voiceAtomicIO;}
+ assert.equal(saved.id,thread.id);assert.equal(saved.messages.length,1);assert.equal(saved.messages[0].text,'AI: SYNTHETIC_TRANSACTION_TEXT\n');
+ await assert.rejects(()=>call('voice:save-text',ID,thread.id,true));assert.equal((await storage.getThread(thread.id)).messages.length,1);
 });
