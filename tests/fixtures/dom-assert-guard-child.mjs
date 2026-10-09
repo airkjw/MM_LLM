@@ -22,7 +22,13 @@ const cases = {
   sameNodeHelper: () => assertSameNode(button, input),
   deepList: () => assert.deepEqual([...document.querySelectorAll("main > *")], [input, button]),
   windowCompare: () => assert.equal(browser, document),
-  matchOnNode: () => assert.match(button, /저장/)
+  matchOnNode: () => assert.match(button, /저장/),
+  // Forms that used to slip past a shallow DOM check and reach node:assert's deep inspect.
+  nestedObject: () => assert.deepEqual({ a: { b: button } }, { a: { b: null } }),
+  mapOfNodes: () => assert.deepEqual(new Map([[1, button]]), new Map()),
+  classList: () => assert.equal(button.classList, null),
+  computedStyle: () => assert.equal(browser.getComputedStyle(button), null),
+  nestedArray: () => assert.deepEqual([[button]], [[null]])
 };
 const results = {};
 const started = Date.now();
@@ -32,7 +38,10 @@ for (const [name, run] of Object.entries(cases)) {
     results[name] = { threw: true, name: error.name, code: error.code, message: error.message, hasActual: error.actual !== undefined };
   }
 }
-// Passing comparisons stay silent.
+// Passing comparisons stay silent (plain data keeps node:assert semantics).
+assert.deepEqual({ a: [1, { b: "x" }], c: new Map([[1, "y"]]) }, { a: [1, { b: "x" }], c: new Map([[1, "y"]]) });
+assert.equal(button.classList, button.classList);
+assert.deepEqual({ a: { b: button } }, { a: { b: button } });
 assert.equal(document.activeElement, button);
 assert.notEqual(document.activeElement, input);
 assert.equal(document.querySelector(".missing"), null);

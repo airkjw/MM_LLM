@@ -4,8 +4,9 @@
 // util.inspect (customInspect disabled, unbounded depth). With a happy-dom Node/Window/Event operand that walks
 // the whole object graph, and the process grew to 15-17 GB until the OOM killer took the Orca host down.
 // util.inspect.custom cannot help because AssertionError ignores it, so the comparison itself is guarded:
-// operands that involve DOM objects are compared by identity here and a failure reports a one-line description
-// without ever handing the objects to node:assert.
+// operands are only handed to node:assert when they are provably plain data (isAssertSafe, an allow-list);
+// anything else (DOM nodes, classList, computed styles, class instances, nested containers of those) is compared
+// by identity here and a failure reports a one-line description without ever handing the objects to node:assert.
 //
 // Usage: `import assert from "./dom-assert.ts"` instead of `node:assert/strict` (tests/dom-assert-guard.test.mjs
 // enforces this for every UI DOM test). assertFocused / assertAbsent / assertSameNode are readable shortcuts.
@@ -23,20 +24,39 @@ export function isDomObject(value: Operand): boolean {
   return "happyDOM" in candidate;
 }
 
-function isListLike(value: Operand): value is ArrayLike<Operand> {
-  return typeof value === "object" && value !== null
-    && (Array.isArray(value) || (typeof (value as { item?: unknown }).item === "function"
-      && typeof (value as { length?: unknown }).length === "number"));
-}
+const SAFE_DEPTH = 12;
+const SAFE_BUDGET = 20_000;
 
-/** True when the operand is, or directly holds, a DOM object (arrays, NodeLists and plain objects one level deep). */
-export function involvesDom(value: Operand): boolean {
-  if (isDomObject(value)) return true;
-  if (isListLike(value)) return Array.from(value as ArrayLike<Operand>).some(isDomObject);
-  if (typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype) {
-    return Object.values(value).some(isDomObject);
-  }
-  return false;
+/**
+ * Allow-list: true only when node:assert may format the value, i.e. it is made of primitives, functions and
+ * plain data (arrays, plain objects, Map/Set, Date, RegExp, Error, typed arrays) with no DOM object, accessor or
+ * exotic object anywhere inside. The walk is bounded (depth, size, visited set); running out of budget counts as
+ * unsafe. Everything else (DOM nodes, classList, getComputedStyle results, class instances, promises, ...) is
+ * compared by identity and described by describeValue, so a failure never deep-inspects its object graph.
+ */
+export function isAssertSafe(value: Operand): boolean {
+  const seen = new Set<object>();
+  let budget = SAFE_BUDGET;
+  const walk = (current: Operand, depth: number): boolean => {
+    if (current === null || (typeof current !== "object")) return true; // primitives and functions
+    if (seen.has(current)) return true;
+    seen.add(current);
+    if (depth > SAFE_DEPTH || --budget < 0 || isDomObject(current)) return false;
+    if (current instanceof Date || current instanceof RegExp || ArrayBuffer.isView(current) || current instanceof ArrayBuffer) return true;
+    if (current instanceof Map) return [...current].every(([key, item]) => walk(key, depth + 1) && walk(item, depth + 1));
+    if (current instanceof Set) return [...current].every((item) => walk(item, depth + 1));
+    const proto = Object.getPrototypeOf(current);
+    if (!Array.isArray(current) && proto !== Object.prototype && proto !== null && !(current instanceof Error)) return false;
+    // Errors: V8's own stack/message properties are engine-managed; only enumerable props and cause carry user data.
+    const keys = current instanceof Error ? [...Object.keys(current), ...("cause" in current ? ["cause"] : [])] : Reflect.ownKeys(current);
+    for (const key of keys) {
+      const descriptor = Object.getOwnPropertyDescriptor(current, key)!;
+      if (!("value" in descriptor)) return false; // accessors are never invoked, and are not plain data
+      if (!walk(descriptor.value, depth + 1)) return false;
+    }
+    return true;
+  };
+  return walk(value, 0);
 }
 
 function shorten(text: string, limit = 60) {
@@ -44,11 +64,16 @@ function shorten(text: string, limit = 60) {
   return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat;
 }
 
-/** One-line, bounded description of any value; never inspects a DOM object's property graph. */
+function isPlainObject(value: object) {
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/** One-line, bounded description of any value; never inspects an arbitrary object's property graph. */
 export function describeValue(value: Operand, depth = 0): string {
   if (value === null || value === undefined) return String(value);
   if (isDomObject(value)) {
-    const node = value as { nodeType?: number; nodeName?: string; textContent?: string | null; id?: string; className?: unknown;
+    const node = value as { nodeType?: number; nodeName?: string; textContent?: string | null; id?: string;
       getAttribute?: (name: string) => string | null; tagName?: string };
     if (node.nodeType === 9) return "#document";
     if (typeof node.nodeType !== "number") return "#window-or-event";
@@ -63,28 +88,44 @@ export function describeValue(value: Operand, depth = 0): string {
   if (typeof value === "string") return JSON.stringify(shorten(value, 80));
   if (typeof value === "function") return `[function ${value.name || "anonymous"}]`;
   if (typeof value !== "object") return String(value);
-  if (depth > 0) return Array.isArray(value) ? `[array(${value.length})]` : "[object]";
-  if (isListLike(value)) return `[${Array.from(value).slice(0, 8).map((item) => describeValue(item, 1)).join(", ")}${value.length > 8 ? ", …" : ""}]`;
-  const entries = Object.entries(value).slice(0, 6).map(([key, item]) => `${key}: ${describeValue(item, 1)}`);
-  return `{ ${entries.join(", ")} }`;
+  const name = (value as object).constructor?.name ?? "Object";
+  if (Array.isArray(value)) {
+    if (depth > 2) return `[array(${value.length})]`;
+    return `[${value.slice(0, 8).map((item) => describeValue(item, depth + 1)).join(", ")}${value.length > 8 ? ", …" : ""}]`;
+  }
+  if (value instanceof Map || value instanceof Set) return `[${name}(${value.size})]`;
+  if (isPlainObject(value)) {
+    if (depth > 2) return "[object]";
+    const keys = Object.keys(value);
+    const entries = keys.slice(0, 6).map((key) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return `${key}: ${descriptor && "value" in descriptor ? describeValue(descriptor.value, depth + 1) : "[accessor]"}`;
+    });
+    return `{ ${entries.join(", ")}${keys.length > 6 ? ", …" : ""} }`;
+  }
+  // Array-like host collections (NodeList, HTMLCollection, DOMTokenList) list their first items; other objects only their class.
+  const list = value as { item?: unknown; length?: unknown };
+  if (typeof list.item === "function" && typeof list.length === "number") {
+    const items = Array.from(value as ArrayLike<unknown>).slice(0, 8).map((item) => describeValue(item, depth + 1));
+    return `[${name}(${list.length}): ${items.join(", ")}${list.length > 8 ? ", …" : ""}]`;
+  }
+  return `[${name}]`;
 }
 
-/** Structural equality where DOM objects (and anything non-plain) compare by identity. */
+/** Structural equality where DOM objects and any non-plain object compare by identity. */
 function sameShape(actual: Operand, expected: Operand, deep: boolean, depth = 0): boolean {
   if (Object.is(actual, expected)) return true;
-  if (!deep || depth > 8) return false;
+  if (!deep || depth > 32 || typeof actual !== "object" || typeof expected !== "object" || actual === null || expected === null) return false;
   if (isDomObject(actual) || isDomObject(expected)) return false;
-  if (isListLike(actual) && isListLike(expected)) {
-    if (actual.length !== expected.length) return false;
-    return Array.from(actual).every((item, index) => sameShape(item, expected[index], deep, depth + 1));
+  if (actual instanceof Date && expected instanceof Date) return actual.getTime() === expected.getTime();
+  if (actual instanceof RegExp && expected instanceof RegExp) return String(actual) === String(expected);
+  if (Array.isArray(actual) && Array.isArray(expected)) {
+    return actual.length === expected.length && actual.every((item, index) => sameShape(item, expected[index], deep, depth + 1));
   }
-  const plain = (value: Operand) => typeof value === "object" && value !== null && !isListLike(value)
-    && Object.getPrototypeOf(value) === Object.prototype;
-  if (plain(actual) && plain(expected)) {
-    const left = Object.entries(actual as object);
-    const right = Object.keys(expected as object);
-    return left.length === right.length
-      && left.every(([key, item]) => key in (expected as object) && sameShape(item, (expected as Record<string, unknown>)[key], deep, depth + 1));
+  if (!Array.isArray(actual) && !Array.isArray(expected) && isPlainObject(actual) && isPlainObject(expected)) {
+    const left = Object.entries(actual);
+    return left.length === Object.keys(expected).length
+      && left.every(([key, item]) => Object.hasOwn(expected, key) && sameShape(item, (expected as Record<string, unknown>)[key], deep, depth + 1));
   }
   return false;
 }
@@ -102,7 +143,7 @@ type Comparison = (actual: Operand, expected: Operand, message?: string | Error)
 
 function guardComparison(operator: string, original: Comparison, deep: boolean, negated: boolean): Comparison {
   return (actual, expected, message) => {
-    if (!involvesDom(actual) && !involvesDom(expected)) return original(actual, expected, message);
+    if (isAssertSafe(actual) && isAssertSafe(expected)) return original(actual, expected, message);
     if (sameShape(actual, expected, deep) !== negated) return;
     return failure(operator, actual, expected, message, negated);
   };
@@ -110,7 +151,7 @@ function guardComparison(operator: string, original: Comparison, deep: boolean, 
 
 function guardMatch(operator: "match" | "doesNotMatch", original: (value: string, pattern: RegExp, message?: string | Error) => void) {
   return (value: string, pattern: RegExp, message?: string | Error) => {
-    if (typeof value === "string" || !involvesDom(value)) return original(value, pattern, message);
+    if (typeof value === "string" || isAssertSafe(value)) return original(value, pattern, message);
     return failure(operator, value, pattern, message);
   };
 }
