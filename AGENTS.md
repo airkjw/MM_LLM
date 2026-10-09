@@ -6,18 +6,16 @@ MM_LLM은 경희대학교 의료경영학과 학생을 위한 Electron·React·a
 ## Orca 오케스트레이션
 
 - 현행 절차는 [Orca 실행 규칙](docs/operations/orca-execution-policy.md)을 따른다.
-  계획·중요 설계 자문은 `gpt-6-astra` / `medium`, 구현과 별도 독립 검토는
-  `gpt-6.1-sol` / `xhigh`다. 현재 대화가 실행 책임자이며 세션 모델을 자동 변경하지 않는다.
-- 실제 Orca Run/Task/Dispatch와 worker lifecycle을 사용한다.
-  Codex 내부 subagent로 Orca 실행을 대신하지 않는다.
-- 기본 구현 1명, 실제 병렬 이득과 파일 소유권 분리가 있을 때만 2명,
-  독립 검토는 별도 1명으로 운영한다. 작은 문서 수정은 실행 책임자가 직접 처리할 수 있다.
-- 기능 작업은 Orca 관리 worktree·branch로 격리한다. 공통 계약·저장 형식·의존성·릴리즈
-  설정을 여러 worker가 동시에 수정하지 않는다. 본인 검증을 독립 검토라고 보고하지 않는다.
-- 완료 보고의 근거와 다음 소유권을 확인하고 ACK한다. 완료 worker는 정식 재사용 또는
-  release한다. 다른 프로젝트의 Run·terminal·전역 모델 설정은 수정하지 않는다.
-- 도입·재개 기준은 [도입 기록](docs/operations/orca-adoption-2026-10-08.md)에 있다.
-  이후에는 현재 작업의 최신 계획·검증 기록과 실제 Git/Orca 상태를 함께 확인한다.
+  Claude 전용 운영이며 현재 대화의 Opus 5.5(`high`)가 오케스트레이터로 Run을 소유한다.
+- 구현은 Sonnet 5.5(`high`, 단순 `medium`), 동시성·저장·과금 묶음은 Opus 5.5(`high`)다.
+  리뷰는 Opus 5.5(`high`), IPC·키·과금·암호화·음성 고위험 묶음은 Fable 5.1(`high`)이 대체한다.
+- Fable 5.1은 Run당 계약 설계 1회·고위험 리뷰 1회, 조건부 원인 분석 1회까지만 쓴다.
+  보조 작업은 Haiku 5.5(`low`)를 쓴다. 세션·전역 모델 설정을 자동 변경하지 않는다.
+- 실제 Orca Run/Task/Dispatch와 worker lifecycle을 사용하고 내장 subagent로 대신하지 않는다.
+  보정은 구현 terminal, 보정 확인은 리뷰 terminal을 재사용하고 대기는 백그라운드 `check --wait`로 한다.
+- 기능 작업은 Orca 관리 worktree·branch로 격리하고 공통 계약·저장 형식·의존성·릴리즈 설정은
+  wave마다 한 명이 수정한다. 본인 검증을 독립 리뷰라고 보고하지 않는다.
+- 전환 경위와 첫 Run 계획은 [Claude 전환 기록](docs/operations/orca-claude-transition-2026-10-09.md)에 있다.
 
 ## 제품·개인정보
 

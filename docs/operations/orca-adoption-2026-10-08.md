@@ -69,6 +69,9 @@ MM_LLM의 현재 대화와 이후 작업에도 적용하도록 요청했다.
 
 ## 다음 작업 재개
 
+2026-10-09부터 운영 모델은 Claude 전용으로 바뀌었다. 역할·모델은 이 문서가 아니라
+[Orca 실행 규칙](orca-execution-policy.md)과 [Claude 전환 기록](orca-claude-transition-2026-10-09.md)을 따른다.
+
 이 문서와 [실행 규칙](orca-execution-policy.md)을 읽고 실제 `run-current` 및
 작업트리 상태를 다시 확인한다. 과거 Task·Dispatch ID를 새 작업 권한으로 재사용하지 않는다.
 다음 제품 작업은 사용자가 지정한 범위로 시작한다.
