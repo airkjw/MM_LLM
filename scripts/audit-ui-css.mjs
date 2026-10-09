@@ -56,14 +56,14 @@ const TYPOGRAPHY_TOKENS = [
 const CONTRAST_PAIRS = [
   ["text", "bg", 4.5], ["text", "bg-sidebar", 4.5], ["text", "bg-subtle", 4.5],
   ["text-body", "bg", 4.5], ["text-body", "bg-sidebar", 4.5],
-  ["text-secondary", "bg", 4.5], ["text-secondary", "bg-sidebar", 4.5],
+  ["text-secondary", "bg", 4.5], ["text-secondary", "bg-sidebar", 4.5], ["text-secondary", "bg-subtle", 4.5],
   ["text-tertiary", "bg", 4.5], ["text-tertiary", "bg-sidebar", 4.5], ["text-tertiary", "bg-subtle", 4.5],
   ["text-tertiary", "bg-selected", 4.5], ["text-tertiary", "bg-hover", 4.5],
   ["accent-text", "bg", 4.5], ["accent-text", "bg-sidebar", 4.5], ["accent-text", "bg-selected", 4.5],
   ["accent-text", "accent-subtle", 4.5], ["accent-text", "bg-subtle", 4.5],
   // The amber face (--color-accent) is 1.84:1 against bg by design and is face-only; text on it is protected instead.
   ["on-accent", "accent", 4.5], ["on-accent", "accent-hover", 4.5],
-  ["danger", "danger-bg", 4.5], ["danger", "bg-subtle", 4.5], ["warning", "warning-bg", 4.5], ["info", "info-bg", 4.5],
+  ["danger", "danger-bg", 4.5], ["danger", "bg-subtle", 4.5], ["danger", "bg-sidebar", 4.5], ["warning", "warning-bg", 4.5], ["info", "info-bg", 4.5],
   ["new", "new-bg", 4.5], ["success", "success-bg", 4.5], ["success", "bg-sidebar", 4.5],
   ["border-control", "bg", 3], ["border-control", "bg-sidebar", 3],
   ["accent-graphic", "bg", 3], ["accent-graphic", "bg-sidebar", 3], ["accent-graphic", "bg-subtle", 3],

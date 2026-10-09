@@ -21,13 +21,16 @@ import { useDialogFocus } from "./use-focus-layer";
 import { ChatPanel, type ComposerHandle, type EvidenceAppend } from "./ChatPanel";
 import { VoicePanel } from './VoicePanel';
 import { Login } from "./Login";
-import { MediaPanel } from "./MediaPanel";
+import { MediaPanel, type MediaJobRequest } from "./MediaPanel";
 import { errorText, templates } from "./ui-shared";
 /** Rendered screens in stage 2; the other rail destinations still open their existing dialogs. */
 type Screen = Extract<SidebarScreen, "chat" | "media">;
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
 const MEDIA_KINDS: ReadonlyArray<readonly [MediaKind, string]> = [["image", "이미지"], ["audio", "오디오"], ["video", "비디오"]];
 const SHORTCUT_LABEL = navigator.platform.includes("Mac") ? "⌘K" : "Ctrl K";
+const MEDIA_KIND_PANEL_ID = "media-kind-panel";
+const mediaKindTabId = (kind: MediaKind) => `media-kind-tab-${kind}`;
+const VOICE_UNAVAILABLE = "음성은 대화 화면에서 사용할 수 있습니다. 모델 목록을 불러온 뒤 다시 시도해 주세요.";
 
 async function checkStoredThreadModel(snapshot: ThreadSnapshot, models: GatewayModel[]): Promise<{
   snapshot: ThreadSnapshot; removedModelId?: string;
@@ -44,6 +47,9 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("chat");
   const [mediaKind, setMediaKind] = useState<MediaKind>("image");
   const [voiceRequest, setVoiceRequest] = useState(0);
+  // MediaPanel reports generation/estimate work so the kind tabs and media rows cannot discard it.
+  const [mediaBusy, setMediaBusy] = useState(false);
+  const [openedMediaJob, setOpenedMediaJob] = useState<MediaJobRequest | null>(null);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [thread, setThread] = useState<ThreadSnapshot | null>(null);
   const [modelId, setModelId] = useState("");
@@ -192,12 +198,12 @@ export default function App() {
     if (!voiceRequest) return;
     const frame = window.requestAnimationFrame(() => {
       const voice = document.querySelector<HTMLDetailsElement>(".chat-panel details.voice-panel");
-      if (!voice) return;
+      if (!voice) { setError(VOICE_UNAVAILABLE); return; }
       voice.open = true;
       voice.querySelector<HTMLElement>(":scope > summary")?.focus();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [voiceRequest]);
+  }, [voiceRequest, setError]);
 
   useEffect(() => {
     const preventFileNavigation = (event: DragEvent) => {
@@ -346,7 +352,7 @@ export default function App() {
     compareSynthesisStopRef.current?.(); compareSynthesisStopRef.current = null;
     setProjectDraft({ name: "", instruction: "" }); setToolsOpen(false); setResearchOpen(false); setCompareBusy(false);
     setCompareSynthesisBusy(false); setCompareRun(null);
-    setCompareAttachments([]); setBookmarks([]); setThread(null); setModelId(""); setScreen("chat"); setMediaKind("image");
+    setCompareAttachments([]); setBookmarks([]); setThread(null); setModelId(""); setScreen("chat"); setMediaKind("image"); setOpenedMediaJob(null);
     setAppSettings(null); setSettingsDraft(null); setSettingsOpen(false); setSettingsSaving(false);
     setSearchOpen(false); setSearchQuery(""); setSearchResults([]); setRenameDialog(null);
     setKeyReplaceOpen(false); setReplacementKey(""); setKeyReplacing(false);
@@ -928,7 +934,10 @@ export default function App() {
 
   const credits = session.credits;
   const navigate = (destination: SidebarScreen, returnFocus: FocusReturnTarget) => {
-    if (destination === "chat" || destination === "media") { setScreen(destination); return; }
+    if (destination === "chat" || destination === "media") {
+      if (destination === "media") setOpenedMediaJob(null);
+      setScreen(destination); return;
+    }
     if (destination === "voice") { setScreen("chat"); setVoiceRequest((value) => value + 1); return; }
     if (destination === "projects") { openProjectsPanel(returnFocus); return; }
     if (destination === "settings") { setSettingsDraft(appSettings); openSettings(returnFocus); return; }
@@ -936,16 +945,21 @@ export default function App() {
     setResearchOpen(destination === "research");
     void openWorkspaceTools(destination === "chatbot" ? "chatbot" : "compare", returnFocus);
   };
-  const selectMediaKind = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+  // Manual activation: arrows/Home/End only move focus; Enter, Space or a click selects. Switching kinds
+  // resets MediaPanel, so it is refused while a generation or estimate is in flight.
+  const selectMediaKind = (kind: MediaKind) => {
+    if (kind === mediaKind || mediaBusy) return;
+    setOpenedMediaJob(null); setMediaKind(kind);
+  };
+  const moveMediaKindFocus = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
     if (!keys.includes(event.key)) return;
     event.preventDefault();
-    const current = MEDIA_KINDS.findIndex(([kind]) => kind === mediaKind);
-    const next = event.key === "Home" ? 0 : event.key === "End" ? MEDIA_KINDS.length - 1
-      : (current + (event.key === "ArrowRight" ? 1 : -1) + MEDIA_KINDS.length) % MEDIA_KINDS.length;
-    setMediaKind(MEDIA_KINDS[next][0]);
-    const tablist = event.currentTarget.parentElement;
-    window.requestAnimationFrame(() => tablist?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus());
+    const tabs = [...(event.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
+    const current = tabs.indexOf(event.currentTarget);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+      : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    tabs[next]?.focus();
   };
   const headerSearch = <button type="button" className="header-search" aria-keyshortcuts="Meta+K Control+K"
     title={`대화 검색 (${SHORTCUT_LABEL})`} onClick={(event) => {
@@ -955,8 +969,10 @@ export default function App() {
     <kbd aria-hidden="true">{SHORTCUT_LABEL}</kbd></button>;
   const mediaHeader = <div className="header-center">
     <div className="media-kind-tabs" role="tablist" aria-label="미디어 종류">{MEDIA_KINDS.map(([kind, label]) =>
-      <button type="button" role="tab" key={kind} aria-selected={mediaKind === kind} tabIndex={mediaKind === kind ? 0 : -1}
-        onClick={() => setMediaKind(kind)} onKeyDown={selectMediaKind}>{label}</button>)}</div>
+      <button type="button" role="tab" key={kind} id={mediaKindTabId(kind)} aria-controls={MEDIA_KIND_PANEL_ID}
+        aria-selected={mediaKind === kind} aria-disabled={mediaBusy && mediaKind !== kind ? true : undefined}
+        tabIndex={mediaKind === kind ? 0 : -1}
+        onClick={() => selectMediaKind(kind)} onKeyDown={moveMediaKindFocus}>{label}</button>)}</div>
     {headerSearch}</div>;
   const compareSynthesisReady = !compareBusy && canSynthesizeCompare(compareRun);
   const compareSynthesisModelAvailable = session.models.some((item) =>
@@ -980,7 +996,12 @@ export default function App() {
           setCompareRun(run); setResearchOpen(false); void openWorkspaceTools("compare", returnFocus);
         },
         loadMediaJobs: () => window.mmllm.listMediaJobs(),
-        onOpenMediaJob: (job) => { setMediaKind(job.kind === "stt" ? "audio" : job.kind); setScreen("media"); }
+        onOpenMediaJob: (job) => {
+          // The clicked job opens in its own kind (STT in the STT lane); a busy media screen keeps its work.
+          if (screen === "media" && mediaBusy) return;
+          setMediaKind(job.kind === "stt" ? "audio" : job.kind); setScreen("media");
+          setOpenedMediaJob({ id: job.id, kind: job.kind });
+        }
       }}
       account={{ credits, updateState }}
       accountActions={{
@@ -1101,7 +1122,8 @@ export default function App() {
           onDraftApplied={() => setTemplateDraft(null)}
           headerSearch={<div className="header-center">{headerSearch}</div>} />
         : screen === "media" && <MediaPanel screen={mediaKind} models={session.models} workspaceEpochRef={uiEpochRef}
-          headerSearch={mediaHeader}
+          headerSearch={mediaHeader} openJob={openedMediaJob} onBusyChange={setMediaBusy}
+          tabPanel={{ id: MEDIA_KIND_PANEL_ID, labelledBy: mediaKindTabId(mediaKind) }}
           onUsageChanged={handleUsageChanged}
           onSummarizeTranscript={summarizeTranscript} />}
       {screen === "chat" && (!thread || !llmModels.length) && <div className="no-models">

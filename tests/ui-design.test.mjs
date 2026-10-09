@@ -149,6 +149,16 @@ expectMutationError("an active navigation surface off the audited pair", (source
 ), /rail-item\[aria-current="page"\] must use/);
 expectMutationError("a panel header that is not 52px", (source) => source.replace(
   "flex: none; min-height: 52px; gap: 16px;", "flex: none; min-height: 66px; gap: 16px;"), /Panel header must be 52px/);
+// Stage 2 shell pairs: credit-card danger text and labels on bg-subtle, the rail error badge on bg-sidebar,
+// and the selected list row indicator on bg-selected.
+expectMutationError("credit card danger text contrast failures", (source) => source.replace(
+  /(--color-danger:\s*)#B3261E/, "$1#E5675F"), /light: danger\/bg-subtle/);
+expectMutationError("rail error badge contrast failures", (source) => source.replace(
+  /(--color-danger:\s*)#F08A7E/, "$1#8A3B33"), /dark: danger\/bg-sidebar/);
+expectMutationError("selected list row indicator contrast failures", (source) => source.replace(
+  /(--color-bg-selected:\s*)#EDEFF2/, "$1#C08A20"), /light: accent-graphic\/bg-selected/);
+expectMutationError("secondary text on subtle surface contrast failures", (source) => source.replace(
+  /(--color-text-secondary:\s*)#4F5660/, "$1#8A9099"), /light: text-secondary\/bg-subtle/);
 expectMutationError("speaker token contrast failures", (source) => source.replace(
   /(--color-speaker-3:\s*)#14745B/, "$1#EEF0F3"
 ), /speaker-3\/bg/);

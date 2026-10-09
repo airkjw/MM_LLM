@@ -198,6 +198,21 @@ async function key(key: string, shiftKey = false, modifiers: { ctrlKey?: boolean
   return event;
 }
 
+/** Keyboard activation: keydown on the focused control, then the browser's default click unless prevented. */
+async function activateWithKey(target: HTMLElement, name = "Enter") {
+  target.focus();
+  const event = await key(name);
+  if (!event.defaultPrevented) await click(target);
+}
+
+async function typeInto(element: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  await act(async () => {
+    const proto = element.tagName === "TEXTAREA" ? browser.HTMLTextAreaElement.prototype : browser.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(element, value);
+    element.dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+}
+
 const FOCUSABLE = "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
 async function browserTabWithin(container: HTMLElement, shiftKey = false) {
@@ -777,6 +792,15 @@ for (const label of ["프로젝트", "모델 비교", "앱 설정"]) {
     await key("Escape");
     assertFocused(trigger);
   });
+  test(`collapsed rail ${label} activated with Enter restores its visible trigger`, async () => {
+    await render(<Harness modalHandoff />);
+    await click(byLabel("사이드바 닫기"));
+    const trigger = railItem(label);
+    await activateWithKey(trigger);
+    assert.ok(document.querySelector(`[aria-label="${modal} modal"]`));
+    await key("Escape");
+    assertFocused(trigger);
+  });
 }
 
 test("dialog focus skips controls inside a closed disclosure", async () => {
@@ -803,7 +827,7 @@ const appThread = { id: "app-thread", title: "합성 대화", modelId: "gpt-6-as
   webSearchMode: "off" as const, reasoningMode: "auto" as const, instruction: "", advanced: {},
   attachmentConsent: false, messages: [], messageCount: 0 };
 
-function appFixture() {
+function appFixture(overrides: Record<string, unknown> = {}) {
   Object.assign(browser, { mmllm: {
     getSession: async () => ({ authenticated: true, credits: { total: { quota: 1000, used: 120, remaining: 880 } },
       models: [{ id: "gpt-6-astra", type: "llm" }, { id: "synthetic-image", type: "image" }] }),
@@ -814,12 +838,12 @@ function appFixture() {
     onUpdateChanged: () => () => {}, discardAttachments: async () => {},
     getCredits: async () => ({ total: { quota: 1000, used: 120, remaining: 880 } }),
     searchThreads: async () => [], listMediaJobs: async () => [], listChatbotBookmarks: async () => [],
-    cancelResearch: async () => {}, onVoiceEvent: () => () => {}
+    cancelResearch: async () => {}, onVoiceEvent: () => () => {}, ...overrides
   } });
 }
 
-async function renderApp() {
-  appFixture();
+async function renderApp(overrides: Record<string, unknown> = {}) {
+  appFixture(overrides);
   await render(<ConfirmProvider><App /></ConfirmProvider>);
   await flushFocus();
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
@@ -885,10 +909,109 @@ test("real App: the media rail item switches to one media screen with a kind sel
   const tabs = [...document.querySelectorAll<HTMLButtonElement>('.panel-header [role="tablist"] [role="tab"]')];
   assert.deepEqual(tabs.map((tab) => tab.textContent?.trim()), ["이미지", "오디오", "비디오"]);
   assert.equal(tabs[0].getAttribute("aria-selected"), "true");
+  const panel = document.getElementById(tabs[0].getAttribute("aria-controls") ?? "");
+  assert.ok(panel, "every kind tab controls the media body");
+  assert.equal(panel.getAttribute("role"), "tabpanel");
+  assert.equal(panel.getAttribute("aria-labelledby"), tabs[0].id);
+  // Manual activation: arrows, Home and End move focus only; Enter, Space or a click selects.
   tabs[0].focus();
   await key("ArrowRight");
+  assertFocused(tabs[1]);
+  assert.equal(tabs[0].getAttribute("aria-selected"), "true", "arrow keys do not switch the media kind");
+  await key("End");
+  assertFocused(tabs[2]);
+  await key("Home");
+  assertFocused(tabs[0]);
+  await key("ArrowLeft");
+  assertFocused(tabs[2]);
+  await activateWithKey(tabs[1]);
   const next = [...document.querySelectorAll<HTMLButtonElement>('.panel-header [role="tab"]')];
   assert.equal(next[1].getAttribute("aria-selected"), "true");
-  assertFocused(next[1]);
+  assert.equal(document.getElementById("media-kind-panel")?.getAttribute("aria-labelledby"), next[1].id);
   assert.match(document.querySelector(".media-panel .panel-header h2")?.textContent ?? "", /오디오|음성/);
+});
+
+const mediaFilter = () => [...document.querySelectorAll<HTMLButtonElement>(".list-filters .filter-chip")]
+  .find((chip) => chip.textContent === "미디어")!;
+const mediaTabs = () => [...document.querySelectorAll<HTMLButtonElement>('.panel-header [role="tablist"] [role="tab"]')];
+const mediaPrompt = () => document.querySelector<HTMLTextAreaElement>(".media-form textarea")!;
+const imageModels = { getSession: async () => ({ authenticated: true, credits: { total: { quota: 1000, used: 120, remaining: 880 } },
+  models: [{ id: "gpt-6-astra", type: "llm" }, { id: "gpt-image-2", type: "image" }] }) };
+
+test("real App: media kind arrow navigation keeps the prompt", async () => {
+  await renderApp(imageModels);
+  await click(railItem("미디어"));
+  await typeInto(mediaPrompt(), "합성 프롬프트");
+  mediaTabs()[0].focus();
+  await key("ArrowRight");
+  await key("ArrowLeft");
+  assertFocused(mediaTabs()[0]);
+  assert.equal(mediaTabs()[0].getAttribute("aria-selected"), "true");
+  assert.equal(mediaPrompt().value, "합성 프롬프트", "moving focus between kind tabs never resets the media form");
+});
+
+test("real App: media kind switching and media rows are refused while an estimate is in flight", async () => {
+  let estimates = 0;
+  const videoJob = { ...syntheticJob, id: "video-busy", label: "합성 진행 영상" };
+  await renderApp({ ...imageModels, listMediaJobs: async () => [videoJob],
+    estimateMedia: () => { estimates++; return new Promise(() => {}); }, cancelMediaEstimate: async () => {} });
+  await click(railItem("미디어"));
+  await typeInto(mediaPrompt(), "합성 프롬프트");
+  const cost = [...document.querySelectorAll<HTMLButtonElement>(".media-panel button")].find((item) => item.textContent === "비용 확인")!;
+  await click(cost);
+  assert.equal(estimates, 1);
+  const tabs = mediaTabs();
+  assert.equal(tabs[0].hasAttribute("aria-disabled"), false, "the selected kind stays available");
+  assert.equal(tabs[1].getAttribute("aria-disabled"), "true");
+  assert.equal(tabs[2].getAttribute("aria-disabled"), "true");
+  await activateWithKey(tabs[2]);
+  await click(tabs[1]);
+  assert.equal(mediaTabs()[0].getAttribute("aria-selected"), "true", "the kind does not change while busy");
+  assert.equal(mediaPrompt().value, "합성 프롬프트");
+  await click(mediaFilter());
+  const row = document.querySelector<HTMLElement>(".media-job-row")!;
+  assert.ok(row, "the media filter lists the synthetic job");
+  await click(row);
+  assert.equal(mediaTabs()[0].getAttribute("aria-selected"), "true", "a media row cannot interrupt a busy screen");
+  assert.equal(mediaPrompt().value, "합성 프롬프트");
+});
+
+test("real App: a media row opens the clicked job, STT jobs in the STT lane", async () => {
+  const failed = (id: string, kind: PendingMediaJob["kind"], label: string, error: string) =>
+    ({ ...syntheticJob, id, kind, label, status: "failed", result: { status: "failed", error } }) as PendingMediaJob;
+  const jobs = [failed("stt-1", "stt", "합성 받아쓰기", "합성 받아쓰기 오류"),
+    failed("video-1", "video", "합성 영상 1", "합성 영상 오류 1"), failed("video-2", "video", "합성 영상 2", "합성 영상 오류 2")];
+  await renderApp({ listMediaJobs: async () => jobs, releaseMediaJobSource: async () => {}, releaseMedia: async () => {},
+    acknowledgeMediaJob: async () => {} });
+  const resultText = () => document.querySelector(".media-result")?.textContent ?? "";
+  const row = (label: string) => [...document.querySelectorAll<HTMLElement>(".media-job-row")]
+    .find((item) => item.textContent?.includes(label))!;
+  const settle = async () => { await flushFocus(); await flushFocus(); };
+  await click(mediaFilter());
+  await click(row("합성 받아쓰기"));
+  await settle();
+  assert.equal(document.querySelector('[data-audio-lane="stt"]')?.getAttribute("aria-selected"), "true", "STT opens its lane");
+  assert.match(resultText(), /합성 받아쓰기 오류/);
+
+  await click(row("합성 영상 2"));
+  await settle();
+  assert.equal(mediaTabs()[2].getAttribute("aria-selected"), "true");
+  assert.match(resultText(), /합성 영상 오류 2/, "the clicked job is shown, not the first of its kind");
+  assert.match(document.querySelector('.job-list [aria-current="true"]')?.textContent ?? "", /합성 영상 2/);
+
+  await click(row("합성 영상 1"));
+  await settle();
+  assert.match(resultText(), /합성 영상 오류 1/, "a second job of the same kind opens on the same screen");
+  await click(row("합성 영상 2"));
+  await settle();
+  assert.match(resultText(), /합성 영상 오류 2/);
+});
+
+test("real App: rail voice explains why it cannot open without a conversation panel", async () => {
+  await renderApp({ getSession: async () => ({ authenticated: true, credits: { total: { quota: 1000, used: 120, remaining: 880 } },
+    models: [{ id: "synthetic-image", type: "image" }] }) });
+  assert.equal(document.querySelector("details.voice-panel"), null, "no LLM models means no conversation panel");
+  await click(railItem("음성"));
+  await flushFocus();
+  assert.match(document.querySelector('[role="alert"]')?.textContent ?? "", /음성은 대화 화면에서 사용할 수 있습니다/);
 });
