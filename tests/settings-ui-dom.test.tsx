@@ -137,13 +137,14 @@ const thread = { id: "settings-thread", title: "합성 대화", modelId: "gpt-6-
   messages: [], messageCount: 0 };
 type Calls = { settings: AppSettings[]; logout: number; models: number; check: number; install: number; credits: boolean[]; keyReplace: string[] };
 
-function appApi(options: { settings?: Partial<AppSettings>; update?: UpdateState; updateSettings?: (value: AppSettings) => Promise<AppSettings> } = {}) {
+function appApi(options: { settings?: Partial<AppSettings>; update?: UpdateState; updateSettings?: (value: AppSettings) => Promise<AppSettings>; keyReplaceOk?: boolean } = {}) {
   const calls: Calls = { settings: [], logout: 0, models: 0, check: 0, install: 0, credits: [], keyReplace: [] };
   let stored: AppSettings = { theme: "light", fontSize: "medium", defaultInstruction: "합성 기본 지침", ...options.settings };
+  const sessionState = { authenticated: true, credits: { total: { quota: 1000, used: 120, remaining: 880 },
+    monthly_allocated: { quota: 500, used: 100, remaining: 400, renewal_date: "2026-11-01T00:00:00Z" } },
+    models: [{ id: "gpt-6-astra", type: "llm" }] };
   Object.assign(browser, { mmllm: {
-    getSession: async () => ({ authenticated: true, credits: { total: { quota: 1000, used: 120, remaining: 880 },
-      monthly_allocated: { quota: 500, used: 100, remaining: 400, renewal_date: "2026-11-01T00:00:00Z" } },
-      models: [{ id: "gpt-6-astra", type: "llm" }] }),
+    getSession: async () => sessionState, login: async () => sessionState,
     getSettings: async () => stored,
     updateSettings: async (value: AppSettings) => {
       calls.settings.push(value);
@@ -159,7 +160,11 @@ function appApi(options: { settings?: Partial<AppSettings>; update?: UpdateState
     cancelResearch: async () => {}, onVoiceEvent: () => () => {},
     logout: async () => { calls.logout++; }, refreshModels: async () => { calls.models++; return [{ id: "gpt-6-astra", type: "llm" }]; },
     checkForUpdates: async () => { calls.check++; }, installUpdate: async () => { calls.install++; },
-    replaceApiKey: async (value: string) => { calls.keyReplace.push(value); throw new Error("합성 키 검증 실패"); },
+    replaceApiKey: async (value: string) => { 
+      calls.keyReplace.push(value);
+      if (options.keyReplaceOk) return sessionState;
+      throw new Error("합성 키 검증 실패");
+    },
     getDiagnostics: async () => "synthetic diagnostics"
   } });
   return calls;
@@ -416,6 +421,63 @@ test("returning to the settings screen while an instruction waits shows the wait
   await act(async () => releases[0]());
   await settle();
   assert.equal(calls.settings.at(-1)?.defaultInstruction, "돌아와서 확인할 합성 지침");
+});
+
+const heldValue = "세션이 바뀌면 버려질 합성 지침";
+// A default instruction is refused by the settingsSaving guard while a density save is still in flight; returns the
+// releases of the pending updateSettings calls (the density save is releases[0]).
+async function holdInstructionBehindSave() {
+  const releases: Array<() => void> = [];
+  const calls = await renderApp({ keyReplaceOk: true, updateSettings: (value) => new Promise((resolve) => { releases.push(() => resolve(value)); }) });
+  await openSettings("화면");
+  await click(radios("밀도")[1]);
+  assert.equal(calls.settings.length, 1, "the density save is in flight");
+  await click(category("응답 기본값"));
+  const field = document.querySelector<HTMLTextAreaElement>(".settings-screen .settings-field textarea")!;
+  field.focus();
+  await typeInto(field, heldValue);
+  await blur(field);
+  assert.equal(calls.settings.length, 1, "refused while the first save runs");
+  assert.match(document.querySelector(".settings-field-pending")?.textContent ?? "", /저장 대기 중/);
+  await click(category("계정 · API 키"));
+  return { calls, releases };
+}
+async function assertHeldValueDropped(calls: Calls, releases: Array<() => void>) {
+  await act(async () => releases[0]());
+  await settle();
+  await openSettings("응답 기본값");
+  const field = document.querySelector<HTMLTextAreaElement>(".settings-screen .settings-field textarea")!;
+  assert.notEqual(field.value, heldValue, "the dropped value is not shown in the next session");
+  assert.equal(document.querySelector(".settings-field-pending")?.textContent, "", "the settings screen does not show it as pending");
+  assert.equal(calls.settings.some((value) => value.defaultInstruction === heldValue), false, "no updateSettings call carries the held value");
+  assert.equal(calls.settings.length, 1, "only the original in-flight save was ever sent");
+}
+
+test("logout while a default instruction waits behind a save drops it: never saved in the next session", async () => {
+  const { calls, releases } = await holdInstructionBehindSave();
+  await click(button("로그아웃"));
+  assert.equal(calls.logout, 1);
+  assert.ok(document.querySelector(".login-page"));
+  await act(async () => releases[0]());
+  await settle();
+  assert.equal(calls.settings.length, 1, "nothing is saved while logged out");
+  await typeInto(document.querySelector<HTMLInputElement>("#api-key")!, "synthetic-key");
+  await act(async () => { document.querySelector("form")!.dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true })); });
+  await settle();
+  assert.ok(document.querySelector("nav.rail"), "logged back in");
+  await assertHeldValueDropped(calls, [() => {}]);
+});
+
+test("replacing the API key while a default instruction waits behind a save drops it: never saved in the next session", async () => {
+  const { calls, releases } = await holdInstructionBehindSave();
+  await click(button("API 키 교체"));
+  const input = document.querySelector<HTMLInputElement>('.key-replace-dialog input[type="password"]')!;
+  await typeInto(input, "synthetic-replacement-key");
+  await click(button("검증하고 교체"));
+  assert.deepEqual(calls.keyReplace, ["synthetic-replacement-key"]);
+  assert.equal(document.querySelector(".key-replace-dialog"), null);
+  assert.ok(document.querySelector("nav.rail"), "the new session is running");
+  await assertHeldValueDropped(calls, releases);
 });
 
 test("general: app info, update check/install and model refresh live on the settings screen", async () => {
