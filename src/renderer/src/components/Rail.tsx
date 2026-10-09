@@ -18,8 +18,6 @@ export const RAIL_ITEMS: readonly RailItem[] = [
   { id: "projects", label: "프로젝트", icon: Folder },
   { id: "chatbot", label: "챗봇", icon: Bot }
 ];
-/** Rendered screens (stage 4); projects and voice keep their existing dialog/disclosure until their screens are wired. */
-const SCREEN_DESTINATIONS = new Set<SidebarScreen>(["chat", "compare", "research", "media", "chatbot", "settings"]);
 
 /**
  * The rail avatar (README): credit and update state in its label and a text badge, one polite live region for
@@ -72,7 +70,7 @@ export function Rail({ screen, compact, listOpen, listAvailable, openerRef, onOp
       onClick={onOpenList} aria-label={openerLabel} title={openerLabel}>
       {compact ? <Menu size={18} /> : <PanelLeftOpen size={18} />}</button>
     {RAIL_ITEMS.map(({ id, label, icon: Icon }) => <button key={id} type="button" className="rail-item" title={label}
-      aria-current={SCREEN_DESTINATIONS.has(id) && screen === id ? "page" : undefined}
+      aria-current={screen === id ? "page" : undefined}
       onClick={(event) => navigate(id, event.currentTarget)}>
       <Icon size={18} strokeWidth={1.75} aria-hidden="true" /><span className="sr-only">{label}</span></button>)}
     <span className="rail-spacer" />

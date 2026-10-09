@@ -560,3 +560,75 @@ test("conversation keep-alive: focus never stays inside the hidden conversation"
   const active = document.activeElement as HTMLElement | null;
   assert.equal(active?.closest(".chat-slot"), null, "focus left the hidden conversation");
 });
+
+// W4b screens wired by App (D4.5-D4.7)
+const syntheticProject = { id: "p1", name: "합성 프로젝트", instruction: "합성 지침", threadCount: 0, createdAt: now, updatedAt: now, documents: [] };
+const projectApi = (overrides: Record<string, unknown> = {}) => ({
+  listProjects: async () => [syntheticProject],
+  getProjectRetrieval: async () => ({ settings: { mode: "local", queryConsent: false, rerankConsent: false }, documents: [], uncertain: 0, running: false }),
+  ...overrides
+});
+
+test("projects is a screen: its list replaces the chat list and a project conversation opens on the chat screen", async () => {
+  const creates: unknown[] = [];
+  await renderApp(projectApi({ createThread: async (request: unknown) => {
+    creates.push(request); return { ...chatThread("project-thread", "프로젝트 합성 대화"), projectId: "p1" };
+  } }));
+  const rail = railItem("프로젝트");
+  rail.focus();
+  await click(rail);
+  assert.deepEqual(currentPage(), ["프로젝트"]);
+  assert.ok(document.querySelector('.project-screen[aria-label="프로젝트"]'));
+  assert.equal(document.querySelector(".sidebar"), null);
+  assert.equal(document.querySelector('[role="dialog"]'), null, "projects is no longer a dialog");
+  assert.match(document.querySelector(".project-title-row h2")?.textContent ?? "", /합성 프로젝트/, "the first project is selected");
+  assertFocused(rail);
+  await click(button("이 프로젝트에서 새 대화"));
+  await settle();
+  assert.deepEqual(creates, [{ modelId: "gpt-6-astra", projectId: "p1" }]);
+  assert.deepEqual(currentPage(), ["대화"]);
+});
+
+test("projects: each dropped document passes the de-identification confirm before it is added; a refusal discards it", async () => {
+  const added: unknown[] = []; const discarded: string[] = [];
+  await renderApp(projectApi({
+    addDroppedAttachments: async (files: Array<{ name: string }>, kinds: string[]) => {
+      assert.deepEqual(kinds, ["document"]);
+      return files.map((file, index) => ({ id: `drop-${index}`, name: file.name, kind: "document", size: 1 }));
+    },
+    addProjectDocument: async (projectId: string, id: string, confirmed: boolean) => { added.push([projectId, id, confirmed]); return syntheticProject; },
+    discardAttachments: async (ids: string[]) => { discarded.push(...ids); }
+  }));
+  await click(railItem("프로젝트"));
+  const files = [new browser.File(["x"], "합성1.pdf", { type: "application/pdf" }), new browser.File(["y"], "합성2.pdf", { type: "application/pdf" })];
+  await act(async () => {
+    const event = new browser.Event("drop", { bubbles: true, cancelable: true });
+    Object.assign(event, { dataTransfer: { files, types: ["Files"] } });
+    document.querySelector(".project-dropzone")!.dispatchEvent(event);
+  });
+  await settle();
+  const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]');
+  assert.match(dialog()?.textContent ?? "", /개인정보 제거 확인/);
+  assert.match(dialog()?.textContent ?? "", /환자 식별정보나 개인정보를 제거하셨습니까/);
+  assert.deepEqual(added, [], "nothing is added before the confirmation");
+  await click(button("제거했습니다", dialog()!));
+  await settle();
+  assert.deepEqual(added, [["p1", "drop-0", true]]);
+  assert.match(dialog()?.textContent ?? "", /개인정보 제거 확인/, "the second file asks again");
+  await click(button("취소", dialog()!));
+  await settle();
+  assert.deepEqual(added, [["p1", "drop-0", true]]);
+  assert.deepEqual(discarded, ["drop-1"]);
+});
+
+test("media: the kind segment lives in the media column and the project chip shows the conversation's project", async () => {
+  const projectThread = { ...mainThread, projectId: "p1" };
+  await renderApp(projectApi({ listThreads: async () => [projectThread], loadThread: async () => projectThread }));
+  await click(railItem("미디어"));
+  const tabs = [...document.querySelectorAll<HTMLElement>('.media-panel .media-form [role="tablist"][aria-label="미디어 종류"] [role="tab"]')];
+  assert.deepEqual(tabs.map((tab) => tab.textContent?.trim()), ["이미지", "오디오", "비디오"]);
+  assert.equal(document.querySelectorAll('[role="tablist"][aria-label="미디어 종류"]').length, 1, "no second header tablist (duplicate ids)");
+  assert.match(document.querySelector(".media-project-chip")?.textContent ?? "", /합성 프로젝트/);
+  await click(tabs[2]);
+  assert.equal(document.querySelectorAll<HTMLElement>('.media-panel [role="tablist"][aria-label="미디어 종류"] [role="tab"]')[2].getAttribute("aria-selected"), "true");
+});

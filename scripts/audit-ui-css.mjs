@@ -81,16 +81,17 @@ const AMBER_FACE_BORDER_SELECTORS = [".privacy-modal-actions .privacy-modal-prim
 // (.composer-compare-consent; R-3 F3 renamed it from .compare-consent, which project retrieval labels use), and the search
 // dialog's .dialog-search-input became the command palette field (.command-palette-input, underline boundary).
 // Stage 4 (contract D4.9): the settings dialog's ".settings-inline select" became the settings screen's switch track
-// (".settings-switch"), and the theme cards' radio dot (".theme-radio") is a new control boundary. The removed tools
-// dialog's ".workspace-tool-tabs button:disabled" exception became the research screen's ".research-tool:disabled".
+// (".settings-switch"), the projects dialog's ".project-editor .settings-field input" became the projects screen's
+// drop zone (".project-dropzone"), and the theme radio dot, media/voice model selects and voice control circles are new
+// boundaries. The removed tools dialog's ".workspace-tool-tabs button:disabled" exception became ".research-tool:disabled".
 const CONTROL_BOUNDARIES = [
   ".login-card form input", ".composer-card", ".model-search", ".media-textarea", ".media-controls select", ".meeting-options input",
   ".settings-field input", ".settings-field select", ".settings-field textarea", ".settings-switch", ".theme-radio",
   ".advanced-grid input", ".advanced-grid select", ".advanced-section select", ".command-palette-input", ".custom-check",
   ".advanced-section textarea", ".media-controls input", ".speaker-grid input", ".speaker-grid select",
   ".music-options input", ".music-options textarea", ".composer-compare-consent input[type=\"checkbox\"]", ".bookmark-form input",
-  ".project-editor .settings-field input", "input[type=\"checkbox\"]", ".reference-button", ".file-drop",
-  ".manual-tool-card textarea", ".voice-options select"
+  ".project-dropzone", "input[type=\"checkbox\"]", ".reference-button", ".file-drop",
+  ".manual-tool-card textarea", ".voice-options select", ".media-model-field select", ".voice-model select", ".voice-circle"
 ];
 
 function cssUnescape(value) {
@@ -195,6 +196,9 @@ const AUDITED_SELECTOR_EXCEPTIONS = new Map([
     ".deid-check input:disabled + .custom-check"])],
   [".reference-button", new Set([".reference-button.drop-active"])],
   [".file-drop", new Set([".file-drop.drop-active"])],
+  [".project-dropzone", new Set([".project-dropzone.drop-active"])],
+  // The pressed (muted) voice circle repaints its boundary with the 3:1 accent graphic; forced colors outline it.
+  [".voice-circle", new Set(['.voice-circle[aria-pressed="true"]'])],
   [".send-button.stop", new Set([".send-button.stop:disabled"])],
   ["button:disabled", new Set([".privacy-modal-actions button:disabled", ".research-tool:disabled"])],
 ]);

@@ -80,10 +80,11 @@ let calls: string[] = [];
 let order: string[] = [];
 
 const RAIL_ITEMS = ["대화", "모델 비교", "논문·법령 리서치", "미디어", "음성", "프로젝트", "챗봇"] as const;
-// Stage 4: research, chatbot and settings are screens (D4.1/D4.3/D4.4); projects keeps its dialog until the
-// W4b projects screen is wired, and voice its disclosure.
-const DIALOG_DESTINATIONS = new Set(["projects"]);
-const SCREEN_RAIL_ITEMS = [["논문·법령 리서치", "research"], ["챗봇", "chatbot"], ["앱 설정", "settings"]] as const;
+// Stage 4: every rail destination is a screen (D4.1/D4.3-D4.7); the harness keeps one modal route for the rename
+// dialog focus tests only.
+const DIALOG_DESTINATIONS = new Set<string>();
+const SCREEN_RAIL_ITEMS = [["논문·법령 리서치", "research"], ["음성", "voice"], ["프로젝트", "projects"], ["챗봇", "chatbot"],
+  ["앱 설정", "settings"]] as const;
 
 function setCompact(next: boolean) {
   compact = next;
@@ -116,7 +117,7 @@ function Harness({ responsive = false, initialOpen = true, modalHandoff = false,
   updateStatus = "error", creditStatus = "default", screen = "chat" }: {
   responsive?: boolean; initialOpen?: boolean; modalHandoff?: boolean; removeOnDelete?: boolean;
   updateStatus?: "error" | "ready" | "latest"; creditStatus?: CreditStatus;
-  screen?: "chat" | "compare" | "media" | "research" | "chatbot" | "settings";
+  screen?: "chat" | "compare" | "media" | "research" | "voice" | "projects" | "chatbot" | "settings";
 }) {
   const responsiveState = useResponsiveSidebarState();
   const manualState = useState(initialOpen);
@@ -338,7 +339,7 @@ test("aria-current marks exactly one rail item and only for real screens", async
   assert.equal(current.length, 1);
   assert.equal(accessibleName(current[0]), "모델 비교", "compare is a real screen since stage 3");
 
-  // Stage 4: research, chatbot and settings are real screens too; their screens own the second column.
+  // Stage 4: research, voice, projects, chatbot and settings are real screens too; they own the second column.
   for (const [label, screen] of SCREEN_RAIL_ITEMS) {
     await act(async () => root!.render(<Harness screen={screen} />));
     await flushFocus();
@@ -347,12 +348,6 @@ test("aria-current marks exactly one rail item and only for real screens", async
     assert.equal(accessibleName(current[0]), label);
     assert.equal(document.querySelector(".sidebar"), null, `${label} does not show the chat list column`);
     assert.equal(byLabel(/^설정·계정/).hasAttribute("aria-current"), false, "the avatar is never the current page");
-  }
-
-  await act(async () => root!.render(<Harness />));
-  await flushFocus();
-  for (const label of ["음성", "프로젝트"]) {
-    assert.equal(railItem(label).hasAttribute("aria-current"), false, `${label} still opens its existing flow`);
   }
 });
 
@@ -374,7 +369,7 @@ test("compact rail navigation closes the open sheet before the action runs", asy
   order = [];
   await click(byLabel("사이드바 열기"));
   await click(railItem("프로젝트"));
-  assert.deepEqual(order, ["sheet-open", "sheet-close", "projects"]);
+  assert.deepEqual(order, ["sheet-open", "sheet-close", "projects"], "projects is a screen (Stage 4) and still closes the sheet first");
   assert.ok(document.querySelector(".sidebar")?.classList.contains("collapsed"));
 });
 
@@ -574,30 +569,14 @@ for (const [route, launchOnDesktop, launch] of compactDialogRoutes) {
   });
 }
 
-// Rail launchers stay visible at every width, so rule 1 (the original trigger) applies before the opener.
-// Stage 4: only projects still opens a dialog; settings, research, chatbot and the avatar navigate to screens.
-const compactRailDialogRoutes = [
-  ["projects", () => railItem("프로젝트"), async () => { await click(railItem("프로젝트")); }]
-] as const;
-
-for (const [route, trigger, launch] of compactRailDialogRoutes) {
-  test(`compact ${route} dialog returns to its visible rail trigger`, async () => {
-    setCompact(true);
-    await render(<Harness initialOpen modalHandoff />);
-    const expected = trigger();
-    await launch();
-    assert.ok(document.querySelector('[role="dialog"][aria-modal="true"]:not(.sidebar)'), `${route} modal opened`);
-    assert.ok(document.querySelector(".sidebar")?.classList.contains("collapsed"), "the sheet closed first");
-    await key("Escape");
-    assertFocused(expected);
-  });
-}
-
 for (const [route, trigger, expected] of [
   ["settings", () => railItem("앱 설정"), "settings"],
   ["account settings", () => byLabel(/설정·계정/), "account"],
   ["research", () => railItem("논문·법령 리서치"), "research"],
-  ["chatbot", () => railItem("챗봇"), "chatbot"]
+  ["chatbot", () => railItem("챗봇"), "chatbot"],
+  // Stage 4 (D4.6/D4.7): projects and voice left their dialog/disclosure for screens too.
+  ["projects", () => railItem("프로젝트"), "projects"],
+  ["voice", () => railItem("음성"), "voice"]
 ] as const) {
   test(`compact ${route} screen closes the sheet first and keeps focus on its visible rail trigger`, async () => {
     setCompact(true);
@@ -773,7 +752,7 @@ test("thread rows show the model id and a relative time as metadata", async () =
   assert.match(row.querySelector(".thread-meta")?.textContent ?? "", /^gpt-5\.6-luna · \d+d$/);
 });
 
-// Stage 4: projects still opens a dialog; research and settings are screens (focus stays on the trigger).
+// Stage 4: every rail destination is a screen, so focus stays on the trigger (was: projects/research/settings dialogs).
 for (const [label, screen] of SCREEN_RAIL_ITEMS) {
   test(`collapsed rail ${label} opens its screen and keeps focus on the visible trigger`, async () => {
     await render(<Harness />);
@@ -784,31 +763,6 @@ for (const [label, screen] of SCREEN_RAIL_ITEMS) {
     assertFocused(trigger);
   });
 }
-for (const label of ["프로젝트"]) {
-  const modal = "projects";
-  test(`collapsed rail ${label} opens a dialog and restores its visible trigger`, async () => {
-    await render(<Harness modalHandoff />);
-    await click(byLabel("사이드바 닫기"));
-    const trigger = railItem(label);
-    // Collapsing hands focus to the expand control; a pointer click in Chromium then focuses the
-    // rail button, which happy-dom's click() does not, so model that focus move explicitly.
-    trigger.focus();
-    await click(trigger);
-    assert.ok(document.querySelector(`[aria-label="${modal} modal"]`));
-    await key("Escape");
-    assertFocused(trigger);
-  });
-  test(`collapsed rail ${label} activated with Enter restores its visible trigger`, async () => {
-    await render(<Harness modalHandoff />);
-    await click(byLabel("사이드바 닫기"));
-    const trigger = railItem(label);
-    await activateWithKey(trigger);
-    assert.ok(document.querySelector(`[aria-label="${modal} modal"]`));
-    await key("Escape");
-    assertFocused(trigger);
-  });
-}
-
 test("dialog focus skips controls inside a closed disclosure", async () => {
   function DisclosureHarness() {
     const ref = useDialogFocus(true, () => {});
@@ -909,19 +863,23 @@ test("real App: rail research, compare and voice reach their flows", async () =>
   assert.equal(document.querySelector(".workspace-tools-dialog"), null);
   assertFocused(compare);
 
+  // Stage 4 (D4.6): voice is its own screen for the current conversation (it replaced the in-conversation disclosure).
   await click(railItem("음성"));
   await flushFocus();
-  const voice = document.querySelector<HTMLDetailsElement>("details.voice-panel")!;
-  assert.ok(voice?.open, "the voice disclosure opens in the current conversation");
+  assert.ok(document.querySelector('.voice-screen[aria-label="실시간 음성"]'), "the voice screen opens");
+  assert.equal(document.querySelector("details.voice-panel"), null, "no second, inline voice panel remains");
   assert.equal(document.querySelectorAll('[aria-current="page"]').length, 1);
-  assert.equal(accessibleName(document.querySelector('[aria-current="page"]')!), "대화");
+  assert.equal(accessibleName(document.querySelector('[aria-current="page"]')!), "음성");
 });
+
+const mediaTabs = () => [...document.querySelectorAll<HTMLButtonElement>('.media-panel [role="tablist"][aria-label="미디어 종류"] [role="tab"]')];
 
 test("real App: the media rail item switches to one media screen with a kind selector", async () => {
   await renderApp();
   await click(railItem("미디어"));
   assert.equal(accessibleName(document.querySelector('[aria-current="page"]')!), "미디어");
-  const tabs = [...document.querySelectorAll<HTMLButtonElement>('.panel-header [role="tablist"] [role="tab"]')];
+  // Stage 4 (D4.5): the kind segment moved from the body header into the media screen's own column.
+  const tabs = mediaTabs();
   assert.deepEqual(tabs.map((tab) => tab.textContent?.trim()), ["이미지", "오디오", "비디오"]);
   assert.equal(tabs[0].getAttribute("aria-selected"), "true");
   const panel = document.getElementById(tabs[0].getAttribute("aria-controls") ?? "");
@@ -940,7 +898,7 @@ test("real App: the media rail item switches to one media screen with a kind sel
   await key("ArrowLeft");
   assertFocused(tabs[2]);
   await activateWithKey(tabs[1]);
-  const next = [...document.querySelectorAll<HTMLButtonElement>('.panel-header [role="tab"]')];
+  const next = mediaTabs();
   assert.equal(next[1].getAttribute("aria-selected"), "true");
   assert.equal(document.getElementById("media-kind-panel")?.getAttribute("aria-labelledby"), next[1].id);
   assert.match(document.querySelector(".media-panel .panel-header h2")?.textContent ?? "", /오디오|음성/);
@@ -948,7 +906,7 @@ test("real App: the media rail item switches to one media screen with a kind sel
 
 const mediaFilter = () => [...document.querySelectorAll<HTMLButtonElement>(".list-filters .filter-chip")]
   .find((chip) => chip.textContent === "미디어")!;
-const mediaTabs = () => [...document.querySelectorAll<HTMLButtonElement>('.panel-header [role="tablist"] [role="tab"]')];
+
 const mediaPrompt = () => document.querySelector<HTMLTextAreaElement>(".media-form textarea")!;
 const imageModels = { getSession: async () => ({ authenticated: true, credits: { total: { quota: 1000, used: 120, remaining: 880 } },
   models: [{ id: "gpt-6-astra", type: "llm" }, { id: "gpt-image-2", type: "image" }] }) };
@@ -1032,11 +990,13 @@ test("real App: a media row opens the clicked job, STT jobs in the STT lane", as
   assert.match(resultText(), /합성 영상 오류 2/);
 });
 
-test("real App: rail voice explains why it cannot open without a conversation panel", async () => {
+test("real App: rail voice explains why it cannot start without a conversation", async () => {
+  // Stage 4 (D4.6): the voice screen opens and states the reason in its empty state (was an alert from the disclosure).
   await renderApp({ getSession: async () => ({ authenticated: true, credits: { total: { quota: 1000, used: 120, remaining: 880 } },
-    models: [{ id: "synthetic-image", type: "image" }] }) });
+    models: [{ id: "synthetic-image", type: "image" }] }), listThreads: async () => [] });
   assert.equal(document.querySelector("details.voice-panel"), null, "no LLM models means no conversation panel");
   await click(railItem("음성"));
   await flushFocus();
-  assert.match(document.querySelector('[role="alert"]')?.textContent ?? "", /음성은 대화 화면에서 사용할 수 있습니다/);
+  assert.equal(accessibleName(document.querySelector('[aria-current="page"]')!), "음성");
+  assert.match(document.querySelector(".voice-screen .voice-empty")?.textContent ?? "", /대화를 먼저 선택하세요/);
 });

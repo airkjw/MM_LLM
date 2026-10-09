@@ -1,5 +1,5 @@
 import { ArrowLeftRight, CircleHelp, LoaderCircle, Search } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { canSynthesizeCompare, COMPARE_SYNTHESIS_MODEL_ID } from "../../shared/compare-synthesis";
 import type { AppSettings, ChatbotBookmark, ChatbotUsageReport, CompareEvent, CompareRequest, CompareRun, CompareSynthesisEvent, GatewayModel, MediaResult, PickedAttachment, ProjectSummary, SessionState, ThreadSnapshot, ThreadSummary, UpdateState } from "../../shared/contracts";
 import { CreditRefreshQueue } from "../../shared/credit-refresh";
@@ -27,12 +27,12 @@ import { CompareScreen } from "./CompareInline";
 import { VoicePanel } from './VoicePanel';
 import { Login } from "./Login";
 import { MediaPanel, type MediaJobRequest } from "./MediaPanel";
-import { errorText, templates } from "./ui-shared";
-/** Rendered screens in stage 4; projects and voice still open their existing dialog/disclosure. */
-type Screen = Extract<SidebarScreen, "chat" | "compare" | "media" | "research" | "chatbot" | "settings">;
+import { ProjectsScreen } from "./ProjectsScreen";
+import { errorText, readDroppedFiles, templates } from "./ui-shared";
+/** Every rail destination is a rendered screen (stage 4). */
+type Screen = SidebarScreen;
 const MEDIA_BUSY_NOTICE = "진행 중인 미디어 작업이 끝난 뒤 다시 선택해 주세요.";
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
-const MEDIA_KINDS: ReadonlyArray<readonly [MediaKind, string]> = [["image", "이미지"], ["audio", "오디오"], ["video", "비디오"]];
 const MAC = navigator.platform.includes("Mac");
 const SHORTCUT_LABEL = MAC ? "⌘K" : "Ctrl K";
 /** Palette commands (contract D3.7). "⌘↵ 새 창" is out of scope: the app has one window. */
@@ -44,9 +44,6 @@ const PALETTE_COMMANDS: readonly PaletteCommand[] = [
   { id: "theme-dark", label: "다크", group: "화면 모드" },
   { id: "credits", label: "크레딧 새로고침" }
 ];
-const MEDIA_KIND_PANEL_ID = "media-kind-panel";
-const mediaKindTabId = (kind: MediaKind) => `media-kind-tab-${kind}`;
-const VOICE_UNAVAILABLE = "음성은 대화 화면에서 사용할 수 있습니다. 모델 목록을 불러온 뒤 다시 시도해 주세요.";
 
 async function checkStoredThreadModel(snapshot: ThreadSnapshot, models: GatewayModel[]): Promise<{
   snapshot: ThreadSnapshot; removedModelId?: string;
@@ -62,7 +59,6 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [screen, setScreen] = useState<Screen>("chat");
   const [mediaKind, setMediaKind] = useState<MediaKind>("image");
-  const [voiceRequest, setVoiceRequest] = useState(0);
   // MediaPanel reports generation/estimate work so the kind tabs and media rows cannot discard it.
   const [mediaBusy, setMediaBusy] = useState(false);
   const [openedMediaJob, setOpenedMediaJob] = useState<MediaJobRequest | null>(null);
@@ -94,9 +90,7 @@ export default function App() {
   const displacedChatbotDraftsRef = useRef(new Map<string, string>());
   const evidenceCreationRef = useRef<{ owner: object; texts: string[]; owned: () => boolean } | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [projectsOpen, setProjectsOpen] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [projectDraft, setProjectDraft] = useState({ name: "", instruction: "" });
   const [projectBusy, setProjectBusy] = useState(false);
   // The live inline comparison (contract D3.4) and the conversation that started it; saved runs open read-only.
   const [compareRun, setCompareRun] = useState<CompareRun | null>(null);
@@ -139,7 +133,7 @@ export default function App() {
   }>({ lastAt: 0, timer: null, inFlight: null });
   const creditQueueRef = useRef(new CreditRefreshQueue());
   visibleThreadIdRef.current = thread?.id ?? null;
-  const evidenceOwner = useMemo(() => ({}), [screen, projectsOpen, selectedProjectId]);
+  const evidenceOwner = useMemo(() => ({}), [screen, selectedProjectId]);
   const evidenceOwnerRef = useRef<object | null>(evidenceOwner);
   evidenceOwnerRef.current = evidenceOwner;
   const evidenceEpoch = uiEpochRef.current;
@@ -162,11 +156,9 @@ export default function App() {
     setRenameDialog((current) => current?.busy ? current : null);
   }, []);
   const closeKeyReplace = useCallback(() => { setKeyReplaceOpen(false); setReplacementKey(""); }, []);
-  const closeProjects = useCallback(() => { if (!projectBusy) setProjectsOpen(false); }, [projectBusy]);
   const renameRef = useDialogFocus<HTMLFormElement>(
     Boolean(renameDialog), closeRename, !renameDialog?.busy, dialogRestoreFallback);
   const keyReplaceRef = useDialogFocus(keyReplaceOpen, closeKeyReplace, !keyReplacing, dialogRestoreFallback);
-  const projectsRef = useDialogFocus(projectsOpen, closeProjects, !projectBusy, dialogRestoreFallback);
   // The palette restores focus to whatever had it when it opened (its trigger, or the field where Cmd/Ctrl+K was pressed).
   const openPalette = useCallback(() => {
     setKeyReplaceOpen(false); setReplacementKey(""); setRenameDialog(null); setPaletteOpen(true);
@@ -229,18 +221,6 @@ export default function App() {
     return () => window.cancelAnimationFrame(frame);
   }, [screen, thread?.target?.kind]);
 
-  // The voice rail item opens the existing per-conversation voice disclosure until stage 4 gives it a screen.
-  useEffect(() => {
-    if (!voiceRequest) return;
-    const frame = window.requestAnimationFrame(() => {
-      const voice = document.querySelector<HTMLDetailsElement>(".chat-panel details.voice-panel");
-      if (!voice) { setError(VOICE_UNAVAILABLE); return; }
-      voice.open = true;
-      voice.querySelector<HTMLElement>(":scope > summary")?.focus();
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [voiceRequest, setError]);
-
   useEffect(() => {
     const preventFileNavigation = (event: DragEvent) => {
       if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
@@ -296,14 +276,6 @@ export default function App() {
     if (epoch === uiEpochRef.current) setProjects(next);
     return epoch === uiEpochRef.current ? next : [];
   }, []);
-
-  const openProjectsPanel = useCallback((returnFocus?: FocusReturnTarget) => {
-    rememberDialogReturn(returnFocus);
-    const first = projects.find((item) => item.id === selectedProjectId) ?? projects[0];
-    setSelectedProjectId(first?.id ?? null);
-    setProjectDraft(first ? { name: first.name, instruction: first.instruction } : { name: "", instruction: "" });
-    setProjectsOpen(true);
-  }, [projects, selectedProjectId, rememberDialogReturn]);
 
   const performCreditRefresh = useCallback((manual: boolean) => {
     const state = creditRefreshRef.current;
@@ -387,11 +359,11 @@ export default function App() {
     creditQueueRef.current.reset(); setBackgroundNotice("");
     if (credit.timer !== null) window.clearTimeout(credit.timer);
     credit.timer = null; credit.lastAt = 0; credit.inFlight = null;
-    setSession(null); setThreads([]); setProjects([]); setProjectsOpen(false); setSelectedProjectId(null);
+    setSession(null); setThreads([]); setProjects([]); setSelectedProjectId(null);
     setProjectBusy(false);
     compareStopRef.current?.(); compareStopRef.current = null;
     compareSynthesisStopRef.current?.(); compareSynthesisStopRef.current = null;
-    setProjectDraft({ name: "", instruction: "" }); setCompareBusy(false);
+    setCompareBusy(false);
     setCompareSynthesisBusy(false); setCompareRun(null); setCompareOriginId(null); setViewedCompareRun(null); setCompareShortcut(0);
     setBookmarks([]); setThread(null); setModelId(""); setScreen("chat"); setMediaKind("image"); setOpenedMediaJob(null);
     setMediaVisited(false); setChatbotSelectedId(null); setChatbotStatus({}); setChatbotUsage(null);
@@ -488,18 +460,17 @@ export default function App() {
     }
   }
 
-  async function saveProject() {
-    if (!projectDraft.name.trim()) { setError("프로젝트 이름을 입력해 주세요."); return; }
+  /** ProjectsScreen keeps its own drafts (W4b); a null projectId creates a project. */
+  async function saveProject(input: { name: string; instruction: string }, projectId: string | null) {
+    if (!input.name.trim()) { setError("프로젝트 이름을 입력해 주세요."); return; }
     const epoch = uiEpochRef.current;
     setProjectBusy(true);
     try {
-      const saved = selectedProjectId
-        ? await window.mmllm.updateProject(selectedProjectId, projectDraft)
-        : await window.mmllm.createProject(projectDraft);
+      const saved = projectId
+        ? await window.mmllm.updateProject(projectId, input)
+        : await window.mmllm.createProject(input);
       if (epoch !== uiEpochRef.current) return;
-      const next = await refreshProjects(); if (epoch !== uiEpochRef.current) return; setSelectedProjectId(saved.id);
-      const current = next.find((item) => item.id === saved.id) ?? saved;
-      setProjectDraft({ name: current.name, instruction: current.instruction });
+      await refreshProjects(); if (epoch !== uiEpochRef.current) return; setSelectedProjectId(saved.id);
     } catch (error) { if (epoch === uiEpochRef.current) setError(errorText(error)); }
     finally { if (epoch === uiEpochRef.current) setProjectBusy(false); }
   }
@@ -523,7 +494,7 @@ export default function App() {
     try {
       const created = await window.mmllm.createThread({ modelId, projectId });
       if (epoch !== uiEpochRef.current) return;
-      setProjectsOpen(false); setThread(created); setScreen("chat");
+      setThread(created); setScreen("chat");
       await Promise.all([refreshThreads(), refreshProjects()]);
     } catch (error) { if (epoch === uiEpochRef.current) setError(errorText(error)); }
     finally { if (epoch === uiEpochRef.current) setProjectBusy(false); }
@@ -548,12 +519,37 @@ export default function App() {
     finally { if (epoch === uiEpochRef.current) setProjectBusy(false); }
   }
 
+  /** Dropped files take the same flow as the picker: de-identification confirm per file, then addProjectDocument. */
+  async function addDroppedDocumentsToProject(projectId: string, files: File[]) {
+    const epoch = uiEpochRef.current;
+    setProjectBusy(true); let pending: PickedAttachment[] = [];
+    try {
+      pending = await window.mmllm.addDroppedAttachments(await readDroppedFiles(files), ["document"]);
+      if (epoch !== uiEpochRef.current) { if (pending.length) await window.mmllm.discardAttachments(pending.map((item) => item.id)); return; }
+      while (pending.length) {
+        const attachment = pending[0];
+        if (!(await confirm({ title: "개인정보 제거 확인", message: "환자 식별정보나 개인정보를 제거하셨습니까? 사용은 가능하지만 책임은 본인에게 있습니다.", confirmLabel: "제거했습니다" }))) {
+          await window.mmllm.discardAttachments([attachment.id]); pending = pending.slice(1); continue;
+        }
+        await window.mmllm.addProjectDocument(projectId, attachment.id, true);
+        pending = pending.slice(1);
+        if (epoch !== uiEpochRef.current) break;
+      }
+      if (epoch !== uiEpochRef.current) return;
+      await refreshProjects();
+      if (thread?.projectId === projectId) applyThreadUpdate(await window.mmllm.loadThread(thread.id));
+    } catch (error) {
+      if (pending.length) void window.mmllm.discardAttachments(pending.map((item) => item.id));
+      if (epoch === uiEpochRef.current) setError(errorText(error));
+    } finally { if (epoch === uiEpochRef.current) setProjectBusy(false); }
+  }
+
   async function removeProject(projectId: string) {
     if (!(await confirm({ title: "프로젝트 삭제", message: "연결된 대화는 미분류로 이동하고 문서 보관함은 삭제됩니다.", confirmLabel: "프로젝트 삭제", danger: true }))) return;
     const epoch = uiEpochRef.current; setProjectBusy(true);
     try {
       await window.mmllm.deleteProject(projectId); if (epoch !== uiEpochRef.current) return; setSelectedProjectId(null);
-      setProjectDraft({ name: "", instruction: "" }); await Promise.all([refreshProjects(), refreshThreads()]);
+      await Promise.all([refreshProjects(), refreshThreads()]);
       if (thread?.projectId === projectId) applyThreadUpdate(await window.mmllm.loadThread(thread.id));
     } catch (error) { if (epoch === uiEpochRef.current) setError(errorText(error)); }
     finally { if (epoch === uiEpochRef.current) setProjectBusy(false); }
@@ -565,9 +561,7 @@ export default function App() {
     try {
       await window.mmllm.removeProjectDocument(projectId, documentId);
       if (epoch !== uiEpochRef.current) return;
-      const next = await refreshProjects();
-      const current = next.find((item) => item.id === projectId);
-      if (current) setProjectDraft({ name: current.name, instruction: current.instruction });
+      await refreshProjects();
       if (thread?.projectId === projectId) applyThreadUpdate(await window.mmllm.loadThread(thread.id));
     } catch (error) { if (epoch === uiEpochRef.current) setError(errorText(error)); }
     finally { if (epoch === uiEpochRef.current) setProjectBusy(false); }
@@ -840,13 +834,13 @@ export default function App() {
     const originId = thread?.id ?? null;
     const owned = () => epoch === uiEpochRef.current && evidenceOwnerRef.current === owner &&
       visibleThreadIdRef.current === originId && ownsSource();
-    if (!owned() || screen !== "research" && !projectsOpen) return;
+    if (!owned() || screen !== "research" && screen !== "projects") return;
     const enqueue = (targetId: string, texts: string[]) => {
       setEvidenceAppends((current) => [...current, ...texts.map((value) => ({
         id: crypto.randomUUID(), threadId: targetId, text: value
       }))]);
       pendingComposerFocusRef.current = {};
-      setProjectsOpen(false); setScreen("chat");
+      setScreen("chat");
     };
     if (thread && thread.target?.kind !== "chatbot") { enqueue(thread.id, [text]); return; }
     if (evidenceCreationRef.current?.owner === owner && evidenceCreationRef.current.owned()) {
@@ -1043,9 +1037,11 @@ export default function App() {
   }} />;
 
   const credits = session.credits;
-  const navigate = (destination: SidebarScreen, returnFocus: FocusReturnTarget) => {
-    if (destination === "voice") { setScreen("chat"); setVoiceRequest((value) => value + 1); return; }
-    if (destination === "projects") { openProjectsPanel(returnFocus); return; }
+  // Every rail destination is a screen; focus stays on the rail trigger, so the return target is not needed.
+  const navigate = (destination: SidebarScreen, _returnFocus: FocusReturnTarget) => {
+    if (destination === "projects") {
+      setSelectedProjectId((current) => current && projects.some((item) => item.id === current) ? current : projects[0]?.id ?? null);
+    }
     if (destination === "media") setOpenedMediaJob(null);
     if (destination === "chatbot") void loadBookmarks();
     if (destination === "settings") { setSettingsDraft(appSettings); setSettingsError(""); }
@@ -1054,33 +1050,10 @@ export default function App() {
   const openAccountSettings = () => {
     setSettingsDraft(appSettings); setSettingsError(""); setSettingsCategory("account"); setScreen("settings");
   };
-  // Manual activation: arrows/Home/End only move focus; Enter, Space or a click selects. Switching kinds
-  // resets MediaPanel, so it is refused while a generation or estimate is in flight.
-  const selectMediaKind = (kind: MediaKind) => {
-    if (kind === mediaKind || mediaBusy) return;
-    setOpenedMediaJob(null); setMediaKind(kind);
-  };
-  const moveMediaKindFocus = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
-    if (!keys.includes(event.key)) return;
-    event.preventDefault();
-    const tabs = [...(event.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
-    const current = tabs.indexOf(event.currentTarget);
-    const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
-      : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
-    tabs[next]?.focus();
-  };
   const headerSearch = <button type="button" className="header-search" aria-keyshortcuts="Meta+K Control+K"
     title={`명령 또는 대화 검색 (${SHORTCUT_LABEL})`} onClick={openPalette}>
     <Search size={15} aria-hidden="true" /><span className="header-search-label">명령 또는 대화 검색</span>
     <kbd aria-hidden="true">{SHORTCUT_LABEL}</kbd></button>;
-  const mediaHeader = <div className="header-center">
-    <div className="media-kind-tabs" role="tablist" aria-label="미디어 종류">{MEDIA_KINDS.map(([kind, label]) =>
-      <button type="button" role="tab" key={kind} id={mediaKindTabId(kind)} aria-controls={MEDIA_KIND_PANEL_ID}
-        aria-selected={mediaKind === kind} aria-disabled={mediaBusy && mediaKind !== kind ? true : undefined}
-        tabIndex={mediaKind === kind ? 0 : -1}
-        onClick={() => selectMediaKind(kind)} onKeyDown={moveMediaKindFocus}>{label}</button>)}</div>
-    {headerSearch}</div>;
   const compareSynthesisReady = !compareBusy && canSynthesizeCompare(compareRun);
   const compareSynthesisModelAvailable = session.models.some((item) =>
     item.type === "llm" && item.id === COMPARE_SYNTHESIS_MODEL_ID);
@@ -1141,30 +1114,12 @@ export default function App() {
       account={{ credits, updateState }} />
     <main className="main-area">
       <AppDialogs
-        retrievalModels={session.models}
-        onResearchEvidence={appendEvidence}
         renameDialog={renameDialog}
         closeRename={closeRename}
         renameRef={renameRef}
         saveRenamedConversation={saveRenamedConversation}
         renameInputRef={renameInputRef}
         setRenameDialog={setRenameDialog}
-        projectsOpen={projectsOpen}
-        projectBusy={projectBusy}
-        closeProjects={closeProjects}
-        projectsRef={projectsRef}
-        selectedProjectId={selectedProjectId}
-        setSelectedProjectId={setSelectedProjectId}
-        setProjectDraft={setProjectDraft}
-        projects={projects}
-        projectDraft={projectDraft}
-        saveProject={saveProject}
-        removeProjectDocument={removeProjectDocument}
-        addDocumentToProject={addDocumentToProject}
-        thread={thread}
-        assignCurrentThreadToProject={assignCurrentThreadToProject}
-        createProjectThread={createProjectThread}
-        removeProject={removeProject}
         keyReplaceOpen={keyReplaceOpen}
         keyReplacing={keyReplacing}
         closeKeyReplace={closeKeyReplace}
@@ -1186,6 +1141,17 @@ export default function App() {
         onContinue={(runId, selected) => void continueCompare(runId, selected)} onError={setError}
         onStartNew={startCompareShortcut} />}
       {screen === "research" && <ResearchScreen onEvidence={appendEvidence} headerCenter={headerCenter} />}
+      {screen === "projects" && <ProjectsScreen projects={projects} selectedProjectId={selectedProjectId}
+        onSelectProject={setSelectedProjectId} threads={threads} currentThread={thread} models={session.models} busy={projectBusy}
+        onSaveProject={saveProject} onDeleteProject={removeProject} onAddDocument={addDocumentToProject}
+        onDropDocuments={addDroppedDocumentsToProject} onRemoveDocument={removeProjectDocument}
+        onAssignCurrentThread={assignCurrentThreadToProject} onNewThread={createProjectThread}
+        onOpenThread={(id) => void selectThread(id)} onEvidence={appendEvidence} />}
+      {screen === "voice" && <VoicePanel variant="screen" key={`voice-${uiEpochRef.current}-${thread?.id ?? "none"}`}
+        models={session.models} threadId={thread?.id ?? null} threadTitle={thread?.title}
+        canApply={thread?.target?.kind !== "chatbot"}
+        onApply={(text) => { if (thread) setEvidenceAppends((current) => [...current, { id: crypto.randomUUID(), threadId: thread.id, text }]); }}
+        onSaved={applyThreadUpdate} onUsageChanged={handleUsageChanged} headerSearch={headerCenter} />}
       {screen === "settings" && settingsDraft && <SettingsScreen category={settingsCategory} onCategoryChange={setSettingsCategory}
         settings={settingsDraft} saving={settingsSaving} error={settingsError} onChange={(patch) => applySettings(patch)}
         updateState={updateState} credits={credits} modelId={modelId}
@@ -1205,10 +1171,6 @@ export default function App() {
         <div className="chat-slot" hidden={!chatVisible} inert={!chatVisible || undefined}>
           {thread && llmModels.length > 0
             ? <ChatPanel key={thread.id} thread={thread} modelId={modelId} active={chatVisible}
-              voicePanel={<VoicePanel key={`voice-${uiEpochRef.current}-${thread.id}`} models={session.models}
-                threadId={thread.id} canApply={thread.target?.kind !== 'chatbot'}
-                onApply={(text) => setEvidenceAppends(current => [...current, { id: crypto.randomUUID(), threadId: thread.id, text }])}
-                onSaved={applyThreadUpdate} onUsageChanged={handleUsageChanged} />}
               models={llmModels} onModelChange={setModelId}
               onThreadUpdated={applyThreadUpdate} onRefreshThreads={() => void refreshThreads()}
               onUsageChanged={handleUsageChanged} onTemplateStart={startTemplate}
@@ -1232,8 +1194,9 @@ export default function App() {
       </div>
       {mediaMounted && <div className="media-keepalive" hidden={screen !== "media"} inert={screen !== "media" || undefined}>
         <MediaPanel screen={mediaKind} models={session.models} workspaceEpochRef={uiEpochRef}
-          headerSearch={mediaHeader} openJob={openedMediaJob} onBusyChange={setMediaBusy}
-          tabPanel={{ id: MEDIA_KIND_PANEL_ID, labelledBy: mediaKindTabId(mediaKind) }}
+          headerSearch={headerCenter} openJob={openedMediaJob} onBusyChange={setMediaBusy}
+          onKindChange={(kind) => { setOpenedMediaJob(null); setMediaKind(kind); }}
+          project={thread?.projectId ? { id: thread.projectId, name: projects.find((item) => item.id === thread.projectId)?.name ?? "" } : null}
           onUsageChanged={handleUsageChanged}
           onSummarizeTranscript={summarizeTranscript} /></div>}
     </main>

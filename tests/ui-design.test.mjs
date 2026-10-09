@@ -170,6 +170,19 @@ expectMutationError("a theme radio without the control boundary", (source) => so
 ), /Control boundary.*theme-radio/);
 expectMutationError("a checked theme radio that repaints its boundary", (source) =>
   `${source}\n[aria-checked="true"] > .theme-card-caption .theme-radio { border-color: var(--color-accent); }`, /theme-radio/);
+// Stage 4 (D4.9, W4b controls): the projects drop zone replaced ".project-editor .settings-field input"; media/voice
+// model selects and voice circles are new control boundaries.
+for (const [selector, before] of [
+  [".media-model-field select", ".media-model-field select { width: 100%; min-height: 36px; border: 1px solid var(--color-border-control);"],
+  [".voice-model select", ".voice-model select { width: 100%; min-height: 36px; border: 1px solid var(--color-border-control);"],
+  [".voice-circle", ".voice-circle { display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; border: 1px solid var(--color-border-control);"],
+  [".project-dropzone", ".project-dropzone { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; border: 1px dashed var(--color-border-control);"]
+]) {
+  expectMutationError(`${selector} without the control boundary`, (source) => source.replace(before,
+    before.replace("var(--color-border-control)", "var(--color-border)")), new RegExp(`Control boundary.*${selector.replace(".", "\\.")}`));
+}
+expectMutationError("a later drop-zone hover that repaints the boundary", (source) =>
+  `${source}\n.project-dropzone:hover { border-color: var(--color-border); }`, /project-dropzone/);
 for (const pair of ["text-body/bg-subtle", "text-body/bg-hover"]) {
   expectMutationError(`the ${pair} composer token pair`, (source) => source.replace(
     "--color-text-body: #C9CDD2;", "--color-text-body: #5F6670;"), new RegExp(`dark: ${pair} is`));
