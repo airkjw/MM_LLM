@@ -10,11 +10,11 @@ import selectorParser from "postcss-selector-parser";
 const CSS_PATH = resolve(fileURLToPath(new URL("..", import.meta.url)), "src/renderer/src/styles.css");
 const REQUIRED_THEME_TOKENS = [
   "bg", "bg-clear", "bg-sidebar", "bg-subtle", "bg-hover", "bg-selected",
-  "text", "text-secondary", "text-tertiary", "border", "border-strong", "border-control",
+  "text", "text-body", "text-secondary", "text-tertiary", "border", "border-strong", "border-control",
   "accent", "accent-hover", "accent-subtle", "accent-text", "accent-graphic", "on-accent",
   "progress-fill", "progress-track", "focus-ring", "focus-halo", "danger", "danger-bg",
-  "warning", "warning-bg", "info", "info-bg", "new", "new-bg", "overlay", "media-canvas", "shadow"
-  , "speaker-1", "speaker-2", "speaker-3", "speaker-4", "speaker-5", "speaker-6"
+  "warning", "warning-bg", "info", "info-bg", "new", "new-bg", "success", "success-bg", "overlay", "media-canvas",
+  "shadow", "shadow-strong", "speaker-1", "speaker-2", "speaker-3", "speaker-4", "speaker-5", "speaker-6"
 ];
 const LEGACY_ALIASES = [
   "app-bg", "sidebar-bg", "surface", "surface-strong", "surface-subtle", "surface-hover", "surface-selected",
@@ -50,20 +50,25 @@ const RAW_COLOR_FUNCTIONS = new Set([
   "device-cmyk", "light-dark"
 ]);
 const TYPOGRAPHY_TOKENS = [
-  "--text-xs", "--text-sm", "--text-base", "--text-lg", "--text-xl", "--text-2xl", "--text-display",
+  "--text-xs", "--text-sm", "--text-base", "--text-md", "--text-lg", "--text-xl", "--text-2xl", "--text-display",
   "--body-font-size"
 ];
 const CONTRAST_PAIRS = [
   ["text", "bg", 4.5], ["text", "bg-sidebar", 4.5], ["text", "bg-subtle", 4.5],
+  ["text-body", "bg", 4.5], ["text-body", "bg-sidebar", 4.5],
   ["text-secondary", "bg", 4.5], ["text-secondary", "bg-sidebar", 4.5],
-  ["text-tertiary", "bg", 4.5], ["text-tertiary", "bg-sidebar", 4.5],
+  ["text-tertiary", "bg", 4.5], ["text-tertiary", "bg-sidebar", 4.5], ["text-tertiary", "bg-subtle", 4.5],
+  ["text-tertiary", "bg-selected", 4.5], ["text-tertiary", "bg-hover", 4.5],
   ["accent-text", "bg", 4.5], ["accent-text", "bg-sidebar", 4.5], ["accent-text", "bg-selected", 4.5],
-  ["accent-text", "accent-subtle", 4.5],
-  ["on-accent", "accent", 4.5],
+  ["accent-text", "accent-subtle", 4.5], ["accent-text", "bg-subtle", 4.5],
+  // The amber face (--color-accent) is 1.84:1 against bg by design and is face-only; text on it is protected instead.
+  ["on-accent", "accent", 4.5], ["on-accent", "accent-hover", 4.5],
   ["danger", "danger-bg", 4.5], ["warning", "warning-bg", 4.5], ["info", "info-bg", 4.5],
-  ["new", "new-bg", 4.5], ["border-control", "bg", 3], ["border-control", "bg-sidebar", 3],
+  ["new", "new-bg", 4.5], ["success", "success-bg", 4.5], ["success", "bg-sidebar", 4.5],
+  ["border-control", "bg", 3], ["border-control", "bg-sidebar", 3],
+  ["accent-graphic", "bg", 3], ["accent-graphic", "bg-sidebar", 3], ["accent-graphic", "bg-subtle", 3],
   ["accent-graphic", "accent-subtle", 3], ["progress-fill", "progress-track", 3],
-  ["focus-ring", "bg", 3], ["accent", "bg", 3]
+  ["focus-ring", "bg", 3]
 ];
 for (let index = 1; index <= 6; index++) {
   CONTRAST_PAIRS.push([`speaker-${index}`, "bg", 3], [`speaker-${index}`, "bg-hover", 3]);
@@ -302,7 +307,7 @@ function rejectStructuralOverrides(errors, root, target, properties, allowedValu
 
 function minimumFontPixels(value, smallRootPixels, typography = new Map(), stack = new Set()) {
   const normalized = value.trim().toLowerCase();
-  const variable = normalized.match(/^var\((--(?:text-(?:xs|sm|base|lg|xl|2xl|display)|body-font-size))\)$/);
+  const variable = normalized.match(/^var\((--(?:text-(?:xs|sm|base|md|lg|xl|2xl|display)|body-font-size))\)$/);
   if (variable) {
     if (stack.has(variable[1])) return null;
     const tokenValue = typography.get(variable[1]);
@@ -558,6 +563,34 @@ export function auditCss(css) {
   for (const media of ["prefers-reduced-motion: reduce", "forced-colors: active"]) {
     if (!mediaText.includes(media)) errors.push(`Missing ${media} safeguard`);
   }
+
+  root.walkAtRules("import", () => { errors.push("CSS @import is forbidden; fonts are bundled locally"); });
+  const fontFaces = [];
+  root.walkAtRules("font-face", (atRule) => fontFaces.push(declarations(atRule)));
+  if (!fontFaces.length) errors.push("Missing @font-face for the bundled fonts");
+  for (const face of fontFaces) {
+    const urls = [];
+    valueParser(face.get("src") ?? "").walk((node) => { if (node.type === "function" && node.value === "url") urls.push(node.nodes[0]?.value ?? ""); });
+    if (!urls.length || urls.some((url) => !/^\/fonts\/[\w./-]+\.woff2$/.test(url))) {
+      // Vite rewrites public-root URLs to a path relative to the built CSS (../fonts/...); a literal ./fonts/ stays unresolved.
+      errors.push(`@font-face source must be a bundled public /fonts/ woff2 path (rewritten to relative at build): ${face.get("src")}`);
+    }
+    if (face.get("font-display") !== "swap") errors.push("@font-face must set font-display: swap");
+  }
+  const THEME_TRANSITION_SELECTORS = ["html", "body", ".sidebar", ".rail", ".panel", ".composer-card", ".dialog-card"];
+  const themeTransition = matchingRootRules(root, "html").some((rule) =>
+    THEME_TRANSITION_SELECTORS.every((selector) => rule.selectors.some((candidate) => canonicalSelector(candidate) === selector)) &&
+    rule.nodes.some((node) => node.type === "decl" && canonicalProperty(node.prop) === "transition" &&
+      ["background-color", "color", "border-color"].every((property) => new RegExp(`${property} \\.25s ease`).test(canonicalValue(node.value)))));
+  if (!themeTransition) errors.push("Missing theme transition rule for background-color, color and border-color");
+  const reduceMotionRules = [];
+  root.walkRules((rule) => {
+    if (rule.selectors?.some((candidate) => canonicalSelector(candidate).startsWith(':root[data-reduce-motion="true"]'))) reduceMotionRules.push(rule);
+  });
+  const reduceMotionZeroed = ["transition-duration", "animation-duration"].every((property) => reduceMotionRules.some((rule) =>
+    rule.nodes.some((node) => node.type === "decl" && canonicalProperty(node.prop) === property && node.important &&
+      /^0?\.01ms$/.test(canonicalValue(node.value)))));
+  if (!reduceMotionZeroed) errors.push('Missing :root[data-reduce-motion="true"] rule that zeroes transition and animation durations');
 
   return {
     errors,
