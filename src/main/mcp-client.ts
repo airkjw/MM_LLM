@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { MCP_LIMIT_NOTICE, researchRecord, reviewedSearchSchema, validateResearchArguments, researchSources,
+import { MCP_LIMIT_NOTICE, MCP_READ_ONLY_NOTICE, researchRecord, reviewedSearchSchema, validateResearchArguments, researchSources,
   type ResearchResult, type ResearchSuite, type ResearchTool } from "../shared/research";
 import { researchJson, researchRequest, researchText } from "./research-transport";
 
@@ -72,10 +72,11 @@ export class McpClient {
       if (!researchRecord(item) || typeof item.name !== "string" || item.name.length > 200) throw new Error("MCP 도구 정보가 올바르지 않습니다.");
       const review = reviewedSearchSchema(item);
       const schema = JSON.stringify(item.inputSchema ?? {});
+      const executable = !review.reason && schema.length <= 16000 && !raw.nextCursor;
       const tool: ResearchTool = { token: randomUUID(), name: item.name,
         description: typeof item.description === "string" ? item.description.slice(0, 1500) : "",
-        schema: schema.slice(0, 16000), executable: !review.reason && schema.length <= 16000 && !raw.nextCursor,
-        reason: raw.nextCursor ? "목록이 일부만 반환되어 실행 검토를 완료하지 못했습니다." : review.reason,
+        schema: schema.slice(0, 16000), executable,
+        reason: raw.nextCursor ? "목록이 일부만 반환되어 실행 검토를 완료하지 못했습니다." : review.reason ?? (executable ? MCP_READ_ONLY_NOTICE : undefined),
         fields: review.fields };
       this.tools.set(tool.token, { suite, tool }); return tool;
     });

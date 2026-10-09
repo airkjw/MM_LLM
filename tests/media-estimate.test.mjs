@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { estimatePayload, estimateFingerprint, normalizeEstimateRequest, parseMediaQuote } from '../src/shared/media-estimate.ts';
+import { quoteBoundWithContext, estimatePayload, estimateFingerprint, normalizeEstimateRequest, parseMediaQuote } from '../src/shared/media-estimate.ts';
 import { imageRequestPayload, videoRequestPayload, musicRequestPayload } from '../src/shared/media-capabilities.ts';
 const image={kind:'image',modelId:'gpt-image-2',numberOfImages:1,quality:'high',imageSize:'1536x1024',background:'opaque'};
 const video={kind:'video',modelId:'fal-ai/vidu/q3',durationSeconds:8,resolution:'1080p',aspectRatio:'16:9',audio:true};
@@ -46,4 +46,13 @@ test('quote input allowlist excludes STT/TTS/search/code and rejects prompts, by
   for(const kind of ['stt','tts','llm','code','search']) assert.throws(()=>normalizeEstimateRequest({kind,modelId:'synthetic'}));
   for(const extra of ['prompt','lyrics','input_images','input_urls','imageAttachmentIds','bytes','endpoint','apiKey']) assert.throws(()=>normalizeEstimateRequest({...image,[extra]:'synthetic'}));
   assert.throws(()=>normalizeEstimateRequest({...image,numberOfImages:2}));assert.throws(()=>normalizeEstimateRequest({...video,durationSeconds:99}));
+});
+
+test('L10: reference images downgrade certainty because they are not sent to the estimate API',()=>{
+  const quote=parseMediaQuote(wire(image),image);
+  assert.deepEqual(quoteBoundWithContext(quote,{referenceImages:0}),{bound:'exact',label:'확정'});
+  assert.deepEqual(quoteBoundWithContext(quote,{referenceImages:1}),{bound:'minimum',label:'참고 이미지 제외 · 최소'});
+  const approx=parseMediaQuote(wire(image,'approximate'),image);
+  assert.deepEqual(quoteBoundWithContext(approx,{referenceImages:2}),{bound:'approximate',label:'참고 이미지 제외 · 대략'});
+  assert.equal(quoteBoundWithContext(parseMediaQuote(wire(image,'maximum'),image),{referenceImages:1}).bound,'maximum');
 });

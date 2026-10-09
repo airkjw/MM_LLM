@@ -638,6 +638,7 @@ export async function* streamChat(
     const normalizer = new ProviderEventNormalizer(request.provider);
     evidence = nativeSearch ? new SearchEvidenceNormalizer(nativeSearch) : undefined;
     let lastSearch = JSON.stringify(search);
+    let omittedCode = 0;
     const events = generation.advanced.serverCode && response.headers.get("content-type")?.includes("application/json")
       ? (async function* () { yield await readJsonObjectLimited(response, controller, "코드 도구 응답"); })()
       : parseSse(response);
@@ -647,7 +648,12 @@ export async function* streamChat(
         search = evidence.accept(event); const fingerprint = JSON.stringify(search);
         if (fingerprint !== lastSearch) { lastSearch = fingerprint; yield { type: "web_search", search }; }
       }
-      for (const normalized of normalizer.accept(event)) {
+      const normalizedEvents = normalizer.accept(event);
+      if (normalizer.omittedServerCode !== omittedCode) {
+        omittedCode = normalizer.omittedServerCode;
+        yield { type: "progress", message: `서버 코드 실행 결과 8개 초과 ${omittedCode}건은 저장하지 않았습니다.` };
+      }
+      for (const normalized of normalizedEvents) {
         if (normalized.type === "text") { answered ||= normalized.text.length > 0; yield { type: "delta", text: acceptDelta(normalized.text) }; }
         else if (normalized.type === "error") throw new Error(normalized.message);
         else if (normalized.type === "usage") yield normalized;
