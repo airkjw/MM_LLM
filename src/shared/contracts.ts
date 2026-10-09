@@ -435,6 +435,7 @@ export type DesktopApi = {
   getSettings(): Promise<AppSettings>;
   updateSettings(settings: AppSettings): Promise<AppSettings>;
   setThemePreference(theme: AppSettings["theme"]): Promise<void>;
+  onThemeResolved(listener: (theme: "light" | "dark") => void): () => void;
   listThreads(): Promise<ThreadSummary[]>;
   createThread(request: CreateThreadRequest): Promise<ThreadSnapshot>;
   loadThread(id: string): Promise<ThreadSnapshot>;

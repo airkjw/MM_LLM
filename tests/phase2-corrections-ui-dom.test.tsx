@@ -105,7 +105,7 @@ async function app(initial = llm, overrides: Record<string, unknown> = {}, stric
     listThreads: async () => [...items.values()], loadThread: async (id: string) => items.get(id),
     createThread: async () => { counts.creates++; items.set(target.id, target); return target; },
     listProjects: async () => [], listBackgroundResponses: async () => [],
-    getUpdateState: async () => ({ status: "idle", currentVersion: "0.5.1" }), onUpdateChanged: () => () => {},
+    getUpdateState: async () => ({ status: "idle", currentVersion: "0.5.1" }), onUpdateChanged: () => () => {}, onThemeResolved: () => () => {},
     pickAttachment: async () => ({ id: "synthetic-attachment", name: "synthetic.pdf", kind: "document", size: 100 }),
     discardAttachments: async (ids: string[]) => { discarded.push(...ids); },
     streamChat: () => { counts.paid++; return () => {}; }, streamChatbot: () => { counts.paid++; return () => {}; },

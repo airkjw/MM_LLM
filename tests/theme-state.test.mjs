@@ -6,7 +6,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isThemePreference, readThemePreference, writeThemePreference } from "../src/main/theme-state.ts";
-import { applyWindowTheme, resolveThemePreference } from "../src/main/theme-application.ts";
+import { applyWindowTheme, backgroundColorForTheme, resolveThemePreference } from "../src/main/theme-application.ts";
 import { ThemePersistence } from "../src/renderer/src/theme-persistence.ts";
 
 test("appearance state accepts the three theme preferences", () => {
@@ -64,36 +64,72 @@ test("theme preferences resolve against the current OS theme", () => {
   assert.equal(resolveThemePreference("light", true), "light");
 });
 
+test("window background colors follow the Console theme surfaces", () => {
+  assert.equal(backgroundColorForTheme("dark"), "#0D0E10");
+  assert.equal(backgroundColorForTheme("light"), "#F6F7F8");
+});
+
+test("live window theme applies the native theme source before the background", () => {
+  const calls = [];
+  assert.equal(applyWindowTheme("dark", false, null, {
+    setThemeSource: (preference) => calls.push(["source", preference]),
+    setBackgroundColor: (color) => calls.push(["background", color]),
+    persist: (preference) => calls.push(["persist", preference])
+  }), "dark");
+  assert.deepEqual(calls, [["source", "dark"], ["background", "#0D0E10"], ["persist", "dark"]]);
+});
+
+test("live window theme resolves the system preference after the native source changes", () => {
+  // Electron reports shouldUseDarkColors for the current themeSource, so a stale "dark" source
+  // must not leak into the background chosen for a new "system" preference on a light OS.
+  let source = "dark";
+  const backgrounds = [];
+  applyWindowTheme("system", () => source === "dark", "dark", {
+    setThemeSource: (preference) => { source = preference; },
+    setBackgroundColor: (color) => backgrounds.push(color),
+    persist() {}
+  });
+  assert.deepEqual(backgrounds, ["#F6F7F8"]);
+});
+
 test("live window theme changes even when preference persistence fails, and the same preference can retry", () => {
   const backgrounds = [];
+  const sources = [];
   let writes = 0;
   const failing = {
+    setThemeSource: (preference) => sources.push(preference),
     setBackgroundColor: (color) => backgrounds.push(color),
     persist() { writes++; throw new Error("disk unavailable"); }
   };
   assert.throws(() => applyWindowTheme("system", true, null, failing), /disk unavailable/);
-  assert.deepEqual(backgrounds, ["#12161D"]);
+  assert.deepEqual(sources, ["system"]);
+  assert.deepEqual(backgrounds, ["#0D0E10"]);
   assert.equal(writes, 1);
 
   let persisted = null;
   const recovered = applyWindowTheme("system", true, persisted, {
+    setThemeSource: (preference) => sources.push(preference),
     setBackgroundColor: (color) => backgrounds.push(color),
     persist(theme) { writes++; persisted = theme; }
   });
   assert.equal(recovered, "system");
   assert.equal(persisted, "system");
   assert.equal(writes, 2);
-  assert.deepEqual(backgrounds, ["#12161D", "#12161D"]);
+  assert.deepEqual(sources, ["system", "system"]);
+  assert.deepEqual(backgrounds, ["#0D0E10", "#0D0E10"]);
 });
 
 test("live window background still updates for an already persisted preference without rewriting it", () => {
   const backgrounds = [];
+  const sources = [];
   let writes = 0;
   assert.equal(applyWindowTheme("system", false, "system", {
+    setThemeSource: (preference) => sources.push(preference),
     setBackgroundColor: (color) => backgrounds.push(color),
     persist() { writes++; }
   }), "system");
-  assert.deepEqual(backgrounds, ["#FFFFFF"]);
+  assert.deepEqual(sources, ["system"]);
+  assert.deepEqual(backgrounds, ["#F6F7F8"]);
   assert.equal(writes, 0);
 });
 

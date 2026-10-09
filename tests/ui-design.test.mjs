@@ -364,7 +364,7 @@ expectStartupMutation("function-decoy preload bridge", (sources) => ({
 }), /expose the isolated/);
 expectStartupMutation("missing BrowserWindow background", (sources) => ({
   ...sources,
-  main: sources.main.replace('    backgroundColor: initialTheme === "dark" ? "#12161D" : "#FFFFFF",\n', "")
+  main: sources.main.replace('    backgroundColor: initialTheme === "dark" ? "#0D0E10" : "#F6F7F8",\n', "")
 }), /initial background/);
 expectStartupMutation("unreachable BrowserWindow construction", (sources) => ({
   ...sources,
