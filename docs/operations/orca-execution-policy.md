@@ -78,6 +78,17 @@ Fable 5.1은 질 대비 효과가 큰 지점에만 제한적으로 투입한다.
   실행 중 worker의 화면 tail에서 API 오류·10분 이상 무변화를 알리는 저비용 감시를 함께 둔다.
   정지가 확인되면 같은 terminal에 재개 지시를 보내 맥락을 보존하고, 이 terminal은 user-owned가 되어
   정식 release 대신 사용자 수동 종료가 필요함을 보고한다.
+
+## 테스트 실행 안전
+
+- 오케스트레이터와 worker 모두 테스트·typecheck·빌드를 메모리·시간 제한 scope 안에서만 실행한다.
+  `systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0 --quiet -- env NODE_OPTIONS=--max-old-space-size=3072 timeout 300 <명령>`.
+  의심 테스트 하나는 `--test-name-pattern`과 `timeout 60`으로 실행한다. 이 규칙을 모든 worker spec에 넣는다.
+- 제한 없이 실행한 UI DOM 테스트의 실패 단언이 2026-10-09에 Orca terminal 호스트를 OOM으로 세 번 종료시켰다
+  ([UI 리디자인 Run 기록](ui-redesign-run-2026-10-09.md)). V8 heap 상한만으로는 막지 못한다.
+- worker가 조용히 사라지면 `journalctl --user`의 `oom-kill`을 먼저 확인한다. 강제 종료(137/143)가 나면 같은 명령을
+  재시도하지 않고 로그로 멈춘 단계를 특정한다. 테스트를 skip·삭제해 통과시키지 않는다.
+- UI DOM 테스트는 `tests/dom-assert.ts` 가드를 import하고 DOM 노드는 그 가드로만 비교한다.
 - wave 공통 계약·금지사항은 Git 제외 `.orca/briefs/<wave>.md`에 한 번 쓰고 Task spec은 목표, 소유 파일,
   완료 조건, 지적 ID 위주로 3KB 이내로 쓴다.
 - worker 결과는 `--report-path` 파일과 세 문장 `worker_done`으로 받는다. transcript(`worker-read`)는
