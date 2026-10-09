@@ -235,3 +235,21 @@ test("L13: invalidate keeps the in-flight detail GET alive but never caches its 
   let finishOld; const old = cache.get("old", async () => new Promise((resolve) => { finishOld = resolve; }));
   cache.clear(); finishOld({ status: "supported", reason: "x" }); await assert.rejects(old, /계정이 변경/);
 });
+
+test("call counts stay exact when one call id is delivered repeatedly beyond the old 32-id window", () => {
+  const responses = new SearchEvidenceNormalizer("responses");
+  for (let i = 0; i < 40; i++) {
+    const item = { id: `ws_${i}`, type: "web_search_call", status: "completed", action: { query: `q${i % 16}` } };
+    responses.accept({ type: "response.web_search_call.completed", item_id: item.id });
+    responses.accept({ type: "response.output_item.done", item });
+    responses.accept({ type: "response.completed", response: { output: [item] } });
+  }
+  const search = responses.snapshot(true);
+  assert.equal(search.requestCount, 40); assert.equal(Object.hasOwn(search, "truncated"), false);
+  const failed = new SearchEvidenceNormalizer("responses");
+  for (let i = 0; i < 34; i++) {
+    failed.accept({ type: "response.web_search_call.failed", item_id: `bad_${i}` });
+    failed.accept({ type: "response.output_item.done", item: { id: `bad_${i}`, type: "web_search_call", status: "failed" } });
+  }
+  assert.equal(failed.snapshot(true).failedCount, 34); assert.equal(failed.snapshot(true).status, "failed");
+});

@@ -740,3 +740,26 @@ test("H2: deep research merging more than 64 sources truncates after the paid se
     assert.equal(search.citations.length, 64); assert.equal(search.truncated, true); assert.equal(search.status, "executed");
   } finally { globalThis.fetch = searchOriginalFetch; }
 });
+
+test("M2: cancelling while the paid POST is in flight records an unconfirmed search, with one POST and no retry", async () => {
+  searchSession(); const controller = new AbortController();
+  const run = await runChat("claude-sonnet-5", "always", () => {
+    controller.abort(new Error("synthetic user cancellation")); throw controller.signal.reason;
+  }, { controller });
+  assert.match(run.error.message, /synthetic user cancellation/);
+  assert.equal(run.search.status, "missing"); assert.equal(run.posts.length, 1);
+  // A failure that is not a cancellation, before any response, is still a plain failure.
+  searchSession();
+  const refused = await runChat("claude-sonnet-5", "always", () => new Response("{}", { status: 503 }));
+  assert.ok(refused.error); assert.equal(refused.search.status, "failed"); assert.equal(refused.posts.length, 1);
+});
+
+test("H1: every native search failed with no answer text at all is an error (no retry); with text it is kept", async () => {
+  searchSession();
+  const noText = claudeAllFailedEvents.filter((event) => !(event.type === "content_block_delta" && event.delta?.type === "text_delta"));
+  const run = await runChat("claude-sonnet-5", "always", () => sseResponse(noText));
+  assert.match(run.error.message, /모델 자체 검색 도구가 실패/); assert.equal(run.search.status, "failed"); assert.equal(run.posts.length, 1);
+  searchSession();
+  const withText = await runChat("claude-sonnet-5", "always", () => sseResponse(claudeAllFailedEvents));
+  assert.equal(withText.error, undefined); assert.equal(withText.text, "Complete answer.");
+});
