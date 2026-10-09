@@ -593,7 +593,7 @@ function registerHandlers(): void {
     try {
       lastThemePreference = applyThemePreference(rawTheme, nativeTheme, lastThemePreference, {
         setThemeSource: (preference) => { nativeTheme.themeSource = preference; },
-        setBackgroundColor: (color) => mainWindow?.setBackgroundColor(color),
+        setBackgroundColor: (color) => liveThemeWindow()?.setBackgroundColor(color),
         persist: (preference) => writeThemePreference(app.getPath("userData"), preference)
       }, liveThemeWindow());
     } catch (error) {
