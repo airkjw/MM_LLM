@@ -120,14 +120,14 @@ const field=(text:string)=>[...document.querySelectorAll('label')].find(l=>l.tex
 const quoteFor=(r:any,bound='exact')=>({kind:r.kind,modelId:r.modelId,credits:3.5,bound,exact:bound==='exact',quotedAt:now,
   fingerprint:estimateFingerprint(r),lines:[{item:r.kind,credits:3,bound,exact:bound==='exact',basis:'synthetic'},{item:'content_filter',credits:.5,bound:'exact',exact:true,basis:'per_request',note:'SYNTHETIC_FILTER_NOTE'}],note:'SYNTHETIC_QUOTE_NOTE'});
 import { estimateFingerprint, estimatePayload } from '../src/shared/media-estimate';
-async function media(screen:'image'|'video'|'audio'='image',overrides:Record<string,unknown>={}) {
+async function media(screen:'image'|'video'|'audio'='image',overrides:Record<string,unknown>={},props:Record<string,unknown>={},extraModels:any[]=[]) {
   const counts={estimate:0,generation:0,cancel:0,uploads:0};const estimates:any[]=[];const generations:any[]=[];const epoch={current:1};
   Object.assign(browser,{mmllm:{listMediaJobs:async()=>[],estimateMedia:async(_id:string,r:any)=>{counts.estimate++;estimates.push(r);return quoteFor(r);},
     cancelMediaEstimate:async()=>{counts.cancel++;},generateImage:async(r:any)=>{counts.generation++;generations.push(r);return {status:'completed',actualCredits:3,creditDisplay:'실제 차감 3 크레딧'};},
     generateVideo:async(r:any)=>{counts.generation++;generations.push(r);return {status:'completed'};},runAudio:async(r:any)=>{counts.generation++;generations.push(r);return {status:'completed'};},
     discardAttachments:async()=>{},releaseMedia:async()=>{},...overrides}});
-  const models=[{id:'gpt-image-2',type:'image' as const},{id:'fal-ai/vidu/q3',type:'video' as const},{id:'elevenlabs-music',type:'audio' as const,audio_client:'elevenlabs'}];
-  const ui=()=> <ConfirmProvider><MediaPanel screen={screen} models={models} workspaceEpochRef={epoch} onUsageChanged={()=>{}} onSummarizeTranscript={async()=>{}} /></ConfirmProvider>;
+  const models=[{id:'gpt-image-2',type:'image' as const},{id:'fal-ai/vidu/q3',type:'video' as const},{id:'elevenlabs-music',type:'audio' as const,audio_client:'elevenlabs'},...extraModels];
+  const ui=()=> <ConfirmProvider><MediaPanel screen={screen} models={models} workspaceEpochRef={epoch} onUsageChanged={()=>{}} onSummarizeTranscript={async()=>{}} {...props as any} /></ConfirmProvider>;
   await render(ui()); if(screen==='audio') await click(button('음악'));
   return {counts,estimates,generations,epoch,ui};
 }
@@ -231,4 +231,61 @@ test('L10: MediaPanel with a reference image shows a minimum quote, never a conf
   await click(button('비용 확인'));assert.equal(m.counts.estimate,1);
   const text=document.querySelector('[aria-label="공식 생성 견적"]')!.textContent!;
   assert.match(text,/참고 이미지 제외 · 최소 견적/);assert.doesNotMatch(text,/확정 견적|생성 · 확정/);
+});
+
+// ---- Stage 4 (D4.5): media screen -------------------------------------------------------------------------
+import { QUOTE_NOTICE } from '../src/shared/media-estimate';
+let MEDIA_BUSY_NOTICE:string;
+before(async()=>{({ MEDIA_BUSY_NOTICE } = await import('../src/renderer/src/MediaPanel'));});
+const kindTabs=()=>[...document.querySelectorAll<HTMLButtonElement>('[role="tablist"][aria-label="미디어 종류"] [role="tab"]')];
+async function arrow(name:string){await act(async()=>{document.activeElement?.dispatchEvent(new browser.KeyboardEvent('keydown',{key:name,bubbles:true,cancelable:true}))});}
+test('D4.5 media kind segment is a tablist owned by the panel; arrows move focus, Enter/click select through onKindChange',async()=>{
+  const picked:string[]=[];await media('image',{},{onKindChange:(kind:string)=>picked.push(kind)});
+  assert.deepEqual(kindTabs().map(tab=>tab.textContent),['이미지','오디오','비디오']);
+  assert.deepEqual(kindTabs().map(tab=>tab.getAttribute('aria-selected')),['true','false','false']);
+  assert.deepEqual(kindTabs().map(tab=>tab.tabIndex),[0,-1,-1]);
+  const panel=document.getElementById(kindTabs()[0].getAttribute('aria-controls')!)!;assert.equal(panel.getAttribute('role'),'tabpanel');
+  assert.equal(panel.getAttribute('aria-labelledby'),kindTabs()[0].id);
+  kindTabs()[0].focus();await arrow('ArrowRight');assertFocused(kindTabs()[1]);assert.deepEqual(picked,[]);
+  await arrow('End');assertFocused(kindTabs()[2]);await arrow('ArrowRight');assertFocused(kindTabs()[0]);await arrow('ArrowLeft');assertFocused(kindTabs()[2]);
+  await click(kindTabs()[2]);assert.deepEqual(picked,['video']);
+});
+test('D4.5/N1 busy media work marks the other kinds disabled visibly and explains a refused click; it works again afterwards',async()=>{
+  const picked:string[]=[];let done!:(v:any)=>void;let request:any;
+  await media('image',{estimateMedia:async(_id:string,r:any)=>{request=r;return new Promise(resolve=>{done=resolve})}},{onKindChange:(kind:string)=>picked.push(kind)});
+  assert.equal(kindTabs()[1].getAttribute('aria-disabled'),null);
+  await click(button('비용 확인'));
+  assert.deepEqual(kindTabs().map(tab=>tab.getAttribute('aria-disabled')),[null,'true','true']);
+  assert.equal(kindTabs()[0].getAttribute('aria-selected'),'true');
+  await click(kindTabs()[1]);assert.deepEqual(picked,[]);
+  assert.equal(document.querySelector('.notice-info')?.textContent?.includes(MEDIA_BUSY_NOTICE),true);
+  await click(button('비용 확인 취소'));assert.equal(kindTabs()[1].getAttribute('aria-disabled'),null);
+  await click(kindTabs()[1]);assert.deepEqual(picked,['audio']);
+  await act(async()=>done(quoteFor(request)));
+});
+test('N1 a refused media job row is announced in the panel through busyRefusal and never on first render',async()=>{
+  const m=await media('image',{},{busyRefusal:0});assert.equal(document.querySelector('.notice-info'),null);
+  await render(<ConfirmProvider><MediaPanel screen="image" models={[{id:'gpt-image-2',type:'image'}]} workspaceEpochRef={m.epoch}
+    onUsageChanged={()=>{}} onSummarizeTranscript={async()=>{}} busyRefusal={1} /></ConfirmProvider>);
+  assert.equal(document.querySelector('.notice-info')?.textContent?.includes(MEDIA_BUSY_NOTICE),true);
+});
+test('D4.5 bottom bar shows the approximate cost only for an actual quote, otherwise the official notice, with the bound label',async()=>{
+  const m=await media('image');const bar=()=>document.querySelector('.media-bar')!;
+  assert.doesNotMatch(bar().textContent!,/≈/);assert.match(bar().textContent!,new RegExp(QUOTE_NOTICE.slice(0,20)));
+  assert.equal(bar().contains(button('견적 없이 생성')),true);
+  await click(button('비용 확인'));assert.equal(m.counts.estimate,1);assert.equal(bar().contains(button('생성하기')),true);
+  assert.match(bar().querySelector('.media-bar-cost')!.textContent!,/≈\s*3\.5\s*cr/);assert.match(bar().textContent!,/확정/);
+  await select(field('품질').querySelector('select')!,'high');
+  assert.doesNotMatch(bar().textContent!,/≈/);assert.match(bar().textContent!,new RegExp(QUOTE_NOTICE.slice(0,20)));
+});
+test('D4.5 media project chip renders only for a project and carries no state',async()=>{
+  await media('image');assert.equal(document.querySelector('.media-project-chip'),null);await render(<></>);
+  await media('image',{},{project:{id:'p1',name:'졸업논문 합성'}});assert.equal(document.querySelector('.media-project-chip')!.textContent,'졸업논문 합성');
+});
+test('D4.5 the media model is chosen with a real select that lists the media models (the llm-only picker could not)',async()=>{
+  const m=await media('image',{},{},[{id:'gpt-image-3',type:'image' as const}]);
+  const model=field('모델').querySelector('select')!;assert.deepEqual([...model.options].map(option=>option.value),['gpt-image-2','gpt-image-3']);
+  await select(model,'gpt-image-3');await input(document.querySelector('.media-form textarea')!,'SYNTHETIC');
+  await click(field('환자 식별정보').querySelector('input')!);await click(button('견적 없이 생성'));
+  assert.equal(m.counts.generation,1);assert.equal(m.generations[0].modelId,'gpt-image-3');assert.equal(m.generations[0].deidentifiedConfirmed,true);
 });
