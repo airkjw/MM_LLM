@@ -275,6 +275,9 @@ test("D1.2 new tokens exist in both themes and the audit pairs cover them", () =
   for (const radius of ["xs", "sm", "md", "lg", "xl", "2xl"]) assert.ok(lightTokens[`--radius-${radius}`], `--radius-${radius}`);
   assert.match(lightTokens["--font-sans"], /^"Pretendard Variable"/);
   assert.match(lightTokens["--font-mono"], /^"JetBrains Mono"/);
+  assert.match(lightTokens["--font-mono"], /^"JetBrains Mono", "Pretendard Variable"/,
+    "Hangul in monospace contexts falls back to Pretendard before any system monospace font");
+  assert.ok(lightTokens["--font-mono"].indexOf("Pretendard Variable") < lightTokens["--font-mono"].indexOf("ui-monospace"));
   const result = auditUiCssFile();
   for (const pair of ["text-body/bg", "text-body/bg-sidebar", "text-tertiary/bg-subtle", "text-tertiary/bg-selected",
     "text-tertiary/bg-hover", "accent-text/bg-subtle", "success/success-bg", "success/bg-sidebar",
@@ -507,3 +510,58 @@ expectStartupMutation("unreachable createWindow call", (sources) => ({
   ...sources,
   main: sources.main.replace("  await createWindow();", "  if (false) await createWindow();")
 }), /reachable from the top-level/);
+
+// ---- Stage 5: component state layer, 52px header at every width, dev-only smoke script ----------------------------------
+function rulesFor(selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...css.matchAll(new RegExp(`(?:^|\\n|,\\s*)${escaped}\\s*(?:,[^{]*)?\\{([^}]*)\\}`, "g"))].map((match) => match[1]);
+}
+
+test("Stage 5 state sheet: buttons are flat and every kind has hover, pressed and disabled states", () => {
+  const primary = rulesFor(".primary-button").join(";");
+  assert.doesNotMatch(primary, /box-shadow/, "the primary button face is flat like the state sheet");
+  assert.match(css, /\.secondary-button:hover:not\(:disabled\)[^{]*\{[^}]*background: var\(--color-bg-hover\)/);
+  assert.match(css, /\.danger-button:hover:not\(:disabled\)[^{]*\{[^}]*box-shadow: inset 0 0 0 1px var\(--color-danger\)/);
+  assert.match(css, /\.text-button:hover:not\(:disabled\)[^{]*\{[^}]*background: var\(--color-bg-hover\)/);
+  assert.match(css, /input\[aria-invalid="true"\][^{]*\{[^}]*border-color: var\(--color-danger\)/, "an invalid field uses the danger border");
+  assert.match(css, /input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\):hover:not\(:disabled\)[^{]*\{[^}]*border-color: var\(--color-text-tertiary\)/);
+  assert.match(css, /button:disabled, \.primary-button:disabled/, "the disabled state layer is kept");
+  assert.match(css, /outline: 2px solid var\(--color-focus-ring\);[^}]*box-shadow: inset 0 0 0 1px var\(--color-focus-ring\), 0 0 0 3px var\(--color-focus-halo\)/,
+    "focus keeps the outline and adds the README ring");
+});
+
+test("Stage 5 header: padding never grows the body header past the 52px contract at any width or font size", () => {
+  assert.match(css, /\.panel-header \{[^}]*min-height: 52px/);
+  const headerRules = [...css.matchAll(/\.panel-header \{([^}]*)\}/g)].map((match) => match[1]).join(" ");
+  assert.doesNotMatch(headerRules, /padding: 1[2-9]px/, "no 12px+ block padding on the header at the narrow breakpoints");
+  assert.match(css, /:root\[data-font-size="large"\] \.panel-header \{[^}]*padding-block: 8px/);
+  // 8px + the 32px search/action controls + 8px = 48px, so min-height 52px always decides the height.
+  assert.match(css, /\.header-search \{[^}]*height: 32px/);
+});
+
+test("Stage 5 Hangul in monospace contexts: Hangul-sentence meta lines use the sans stack, placeholders always do", () => {
+  for (const selector of [".composer-hint", ".model-picker-footer", ".command-palette-footer", ".project-nav-meta", ".settings-footer-status"]) {
+    assert.match(rulesFor(selector).join(";"), /font-family: var\(--font-sans\)/, `${selector} renders Hangul text without mono-width spaces`);
+  }
+  assert.match(css, /::placeholder \{ font-family: var\(--font-sans\); \}/);
+  assert.match(rulesFor(".voice-model select.voice-model-empty, select.voice-model-empty").join(";"), /font-family: var\(--font-sans\)/);
+  // Code and IDs keep JetBrains Mono.
+  assert.match(rulesFor(".model-option-id").join(";"), /font-family: var\(--font-mono\)/);
+});
+
+test("Stage 5 smoke script is dev-only, mock-only and ships nowhere", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  assert.deepEqual(pkg.build.files.filter((entry) => !entry.startsWith("!")), ["out/**/*", "package.json"], "only out/** ships; scripts/ is excluded");
+  assert.equal(pkg.scripts["ui:smoke"], "node scripts/ui-smoke.mjs");
+  const script = readFileSync(join(root, "scripts/ui-smoke.mjs"), "utf8");
+  assert.match(script, /from "ws"/, "uses the existing ws dependency");
+  assert.match(script, /MM_LLM_MOCK: "1"/, "mock mode only");
+  assert.match(script, /--remote-debugging-port=/);
+  assert.match(script, /refusing to continue/, "stops when the mock gateway is not detected");
+  assert.doesNotMatch(script, /api\.chat|chat\.khu\.ac\.kr|https?:\/\/(?!127\.0\.0\.1)/, "no real endpoint");
+  // No product test hook: the product reads no smoke/CDP switch.
+  for (const file of ["src/main/index.ts", "src/preload/index.ts", "src/renderer/src/App.tsx"]) {
+    assert.ok(!/remote-debugging|__smoke|SMOKE_|scripts\/ui-smoke/.test(readFileSync(join(root, file), "utf8")), `${file} has no smoke hook`);
+  }
+});

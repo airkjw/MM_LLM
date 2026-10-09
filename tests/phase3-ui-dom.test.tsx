@@ -1,6 +1,7 @@
 import assert, { assertFocused } from "./dom-assert.ts";
 import test, { afterEach, before } from "node:test";
 import { Window } from "happy-dom";
+import { readFileSync } from "node:fs";
 import type { ThreadSnapshot } from "../src/shared/contracts";
 import type { ResearchResult } from "../src/shared/research";
 import * as React from "react";
@@ -263,11 +264,12 @@ test('D4.5/N1 busy media work marks the other kinds disabled visibly and explain
   await click(kindTabs()[1]);assert.deepEqual(picked,['audio']);
   await act(async()=>done(quoteFor(request)));
 });
-test('N1 a refused media job row is announced in the panel through busyRefusal and never on first render',async()=>{
-  const m=await media('image',{},{busyRefusal:0});assert.equal(document.querySelector('.notice-info'),null);
-  await render(<ConfirmProvider><MediaPanel screen="image" models={[{id:'gpt-image-2',type:'image'}]} workspaceEpochRef={m.epoch}
-    onUsageChanged={()=>{}} onSummarizeTranscript={async()=>{}} busyRefusal={1} /></ConfirmProvider>);
-  assert.equal(document.querySelector('.notice-info')?.textContent?.includes(MEDIA_BUSY_NOTICE),true);
+test('L4 a refused kind tab and a refused media job row share one busy wording, and no dead refusal prop remains',async()=>{
+  const readSource=(name:string)=>readFileSync(new URL(`../src/renderer/src/${name}`,import.meta.url),'utf8');
+  assert.equal(MEDIA_BUSY_NOTICE,'진행 중인 미디어 작업이 끝난 뒤 다시 선택해 주세요.');
+  assert.match(readSource('App.tsx'),/import \{[^}]*\bMEDIA_BUSY_NOTICE\b[^}]*\} from "\.\/MediaPanel"/,'App refuses a media row with the panel constant');
+  assert.doesNotMatch(readSource('App.tsx'),/const MEDIA_BUSY_NOTICE/);
+  assert.doesNotMatch(readSource('MediaPanel.tsx'),/busyRefusal/);
 });
 test('D4.5 bottom bar shows the approximate cost only for an actual quote, otherwise the official notice, with the bound label',async()=>{
   const m=await media('image');const bar=()=>document.querySelector('.media-bar')!;

@@ -26,12 +26,11 @@ import { SettingsScreen, type SettingsCategory } from "./SettingsScreen";
 import { CompareScreen } from "./CompareInline";
 import { VoicePanel } from './VoicePanel';
 import { Login } from "./Login";
-import { MediaPanel, type MediaJobRequest } from "./MediaPanel";
+import { MEDIA_BUSY_NOTICE, MediaPanel, type MediaJobRequest } from "./MediaPanel";
 import { ProjectsScreen } from "./ProjectsScreen";
 import { errorText, readDroppedFiles, templates } from "./ui-shared";
 /** Every rail destination is a rendered screen (stage 4). */
 type Screen = SidebarScreen;
-const MEDIA_BUSY_NOTICE = "진행 중인 미디어 작업이 끝난 뒤 다시 선택해 주세요.";
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
 const MAC = navigator.platform.includes("Mac");
 const SHORTCUT_LABEL = MAC ? "⌘K" : "Ctrl K";
@@ -533,7 +532,11 @@ export default function App() {
         }
         await window.mmllm.addProjectDocument(projectId, attachment.id, true);
         pending = pending.slice(1);
-        if (epoch !== uiEpochRef.current) break;
+        if (epoch !== uiEpochRef.current) {
+          // The session ended mid-loop: files still waiting for confirmation must not stay behind in main.
+          if (pending.length) await window.mmllm.discardAttachments(pending.map((item) => item.id));
+          return;
+        }
       }
       if (epoch !== uiEpochRef.current) return;
       await refreshProjects();
@@ -1141,7 +1144,7 @@ export default function App() {
         onContinue={(runId, selected) => void continueCompare(runId, selected)} onError={setError}
         onStartNew={startCompareShortcut} />}
       {screen === "research" && <ResearchScreen onEvidence={appendEvidence} headerCenter={headerCenter} />}
-      {screen === "projects" && <ProjectsScreen projects={projects} selectedProjectId={selectedProjectId}
+      {screen === "projects" && <ProjectsScreen headerSearch={headerCenter} projects={projects} selectedProjectId={selectedProjectId}
         onSelectProject={setSelectedProjectId} threads={threads} currentThread={thread} models={session.models} busy={projectBusy}
         onSaveProject={saveProject} onDeleteProject={removeProject} onAddDocument={addDocumentToProject}
         onDropDocuments={addDroppedDocumentsToProject} onRemoveDocument={removeProjectDocument}

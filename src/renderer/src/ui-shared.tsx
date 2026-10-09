@@ -1,4 +1,4 @@
-import { Check, Copy, FileText, FlaskConical, HeartPulse, Landmark, ShieldCheck } from "lucide-react";
+import { Copy, FileText, FlaskConical, HeartPulse, Landmark, ShieldCheck } from "lucide-react";
 import { isValidElement, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -29,7 +29,6 @@ export async function readDroppedFiles(files: File[]): Promise<DroppedAttachment
 export function DeidCheck({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) {
   return <label className="deid-check">
     <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
-    <span className="custom-check">{checked && <Check size={12} />}</span>
     <span>환자 식별정보를 제거한 자료만 전송합니다</span>
     <ShieldCheck size={15} />
   </label>;

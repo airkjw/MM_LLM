@@ -25,14 +25,30 @@ const CATEGORIES: readonly CategoryEntry[] = [
 ];
 const ACCOUNT_GROUP_START: SettingsCategory = "account";
 
+/** Status label for every UpdateState status (the footer and the 앱 버전 row; contract D4.1). */
 export function updateStatusLabel(state: UpdateState | null): string {
   switch (state?.status) {
+    case "disabled": return "자동 업데이트 꺼짐";
+    case "idle": return "업데이트 확인 전";
     case "latest": return "최신";
     case "ready": return "업데이트 준비됨";
     case "downloading": return `다운로드 ${state.progress ?? 0}%`;
     case "checking": return "확인 중";
     case "error": return "확인 실패";
     default: return "";
+  }
+}
+
+function updateDescription(state: UpdateState | null): string {
+  switch (state?.status) {
+    case "disabled": return "이 실행 환경에서는 자동 업데이트를 사용하지 않습니다.";
+    case "idle": return "아직 업데이트를 확인하지 않았습니다.";
+    case "checking": return "새 버전을 확인하는 중입니다.";
+    case "downloading": return `${state.availableVersion ? `${state.availableVersion} 버전을 ` : "새 버전을 "}내려받는 중입니다.`;
+    case "ready": return `${state.availableVersion ? `${state.availableVersion} 버전을 ` : "새 버전을 "}설치할 수 있습니다.`;
+    case "latest": return "현재 최신 버전입니다.";
+    case "error": return "업데이트 확인에 실패했습니다. 다시 시도해 주세요.";
+    default: return "업데이트 상태를 확인하는 중입니다.";
   }
 }
 
@@ -137,25 +153,37 @@ export function SettingsScreen({ category, onCategoryChange, settings, saving, e
   const updateButton = updateState?.status === "ready" ? `업데이트 설치 ${updateState.availableVersion ?? ""}`.trim()
     : updateState?.status === "downloading" ? `업데이트 다운로드 ${updateState.progress ?? 0}%`
       : updateState?.status === "checking" ? "업데이트 확인 중" : "업데이트 확인";
+  // A blur save refused because another save was running is kept and retried when that save ends (never dropped).
+  const [instructionPending, setPending] = useState(false);
+  const pendingRef = useRef(false);
+  const markPending = (value: boolean) => { pendingRef.current = value; setPending(value); };
   const saveInstruction = async () => {
-    if (saving || instruction === savedInstruction) return;
+    if (instruction === savedInstruction) { markPending(false); return; }
+    if (saving) { markPending(true); return; }
     // Only a failed save restores the saved text; a refused overlapping save keeps what the student typed.
-    if (await onChange({ defaultInstruction: instruction }) === false) setInstruction(savedInstructionRef.current);
+    const saved = await onChange({ defaultInstruction: instruction });
+    if (saved === false) setInstruction(savedInstructionRef.current);
+    markPending(saved === null);
   };
+  const retryInstruction = useRef(saveInstruction);
+  retryInstruction.current = saveInstruction;
+  useEffect(() => {
+    if (saving || !pendingRef.current) return;
+    markPending(false);
+    void retryInstruction.current();
+  }, [saving]);
   let body: ReactNode;
   if (entry.id === "general") {
     body = <div className="settings-list">
       <div className="settings-row"><div className="settings-row-text"><strong>앱 버전</strong>
         <small>MM_LLM {version ? `v${version}` : "버전 확인 중"}{status ? ` · ${status}` : ""}</small></div></div>
-      {updateState?.status !== "disabled" && <div className="settings-row">
-        <div className="settings-row-text"><strong>업데이트</strong>
-          <small>{updateState?.status === "error" ? "업데이트 확인에 실패했습니다. 다시 시도해 주세요."
-            : "새 버전이 있으면 내려받은 뒤 설치할 수 있습니다."}</small></div>
+      <div className="settings-row">
+        <div className="settings-row-text"><strong>업데이트</strong><small>{updateDescription(updateState)}</small></div>
         <button type="button" className={updateState?.status === "ready" ? "primary-button" : "secondary-button"} onClick={onUpdateAction}
-          disabled={updateState?.status === "checking" || updateState?.status === "downloading"}>
+          disabled={!updateState || updateState.status === "disabled" || updateState.status === "checking" || updateState.status === "downloading"}>
           {updateState?.status === "ready" ? <Download size={15} aria-hidden="true" /> : <RefreshCw size={15} aria-hidden="true" />}
           {updateButton}</button>
-      </div>}
+      </div>
       <div className="settings-row"><div className="settings-row-text"><strong>모델 목록</strong>
         <small>Gateway에서 사용할 수 있는 모델을 다시 불러옵니다.</small></div>
         <button type="button" className="secondary-button" onClick={onRefreshModels}><RefreshCw size={15} aria-hidden="true" />모델 목록 새로고침</button>
@@ -189,6 +217,7 @@ export function SettingsScreen({ category, onCategoryChange, settings, saving, e
       <textarea value={instruction} maxLength={12000} aria-disabled={saving || undefined}
         onChange={(event) => setInstruction(event.target.value)} onBlur={() => void saveInstruction()} />
       <small>모든 대화에 적용됩니다. 대화별 지침은 더 구체적인 경우 우선합니다. 입력란을 벗어나면 저장됩니다.</small>
+      {instructionPending && <small className="settings-field-pending" role="status">저장 대기 중 — 진행 중인 저장이 끝나면 자동으로 저장합니다.</small>}
     </label>;
   } else if (entry.id === "account") {
     body = <div className="settings-list">

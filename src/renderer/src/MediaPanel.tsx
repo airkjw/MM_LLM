@@ -17,12 +17,13 @@ const KIND_TABS: ReadonlyArray<readonly [Exclude<MediaKind, "chat">, string]> = 
 const kindTabId = (kind: string) => `media-kind-tab-${kind}`;
 const KIND_PANEL_ID = "media-kind-panel";
 /** Shown when a kind change or a job row is refused because generation or a cost check is still running. */
-export const MEDIA_BUSY_NOTICE = "생성 또는 비용 확인이 진행 중입니다. 끝나거나 취소한 뒤에 바꿔 주세요.";
+/** One wording for every refused media switch: the kind tabs here and the media job rows in the list column. */
+export const MEDIA_BUSY_NOTICE = "진행 중인 미디어 작업이 끝난 뒤 다시 선택해 주세요.";
 /** A job opened from the list column. A new object per click, so the same row can be opened again. */
 export type MediaJobRequest = { id: string; kind: PendingMediaJob["kind"] };
 export function MediaPanel({
   screen, models, workspaceEpochRef, onUsageChanged, onSummarizeTranscript, headerSearch, openJob, onBusyChange, tabPanel,
-  onKindChange, busyRefusal, project
+  onKindChange, project
 }: { screen: Exclude<Screen, "chat">; models: GatewayModel[]; onUsageChanged: () => void; headerSearch?: import("react").ReactNode;
   workspaceEpochRef: { current: number };
   onSummarizeTranscript: (result: MediaResult) => Promise<void>;
@@ -32,7 +33,6 @@ export function MediaPanel({
   /** Set to let the panel render its own kind segment (image | audio | video); the parent owns the kind. */
   onKindChange?: (kind: Exclude<MediaKind, "chat">) => void;
   /** The parent bumps this each time it refuses to open a media job because work is in flight. */
-  busyRefusal?: number;
   /** The current conversation's project, shown as a display-only chip. */
   project?: { id: string; name: string } | null }) {
   const confirm = useConfirm();
@@ -74,12 +74,6 @@ export function MediaPanel({
   const quoteIdRef = useRef<string | null>(null);
   const quoteBusyRef = useRef(false);
   const { notice, setError, setInfo, clear: clearNotice } = useNotice();
-  const busyRefusalSeen = useRef(busyRefusal ?? 0);
-  useEffect(() => {
-    if ((busyRefusal ?? 0) === busyRefusalSeen.current) return;
-    busyRefusalSeen.current = busyRefusal ?? 0;
-    setInfo(MEDIA_BUSY_NOTICE);
-  }, [busyRefusal, setInfo]);
   const [result, setResult] = useState<MediaResult | null>(null);
   const [jobs, setJobs] = useState<PendingMediaJob[]>([]);
   const [visibleSegments, setVisibleSegments] = useState(250);

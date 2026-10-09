@@ -50,6 +50,7 @@ let ConfirmProvider: typeof import("../src/renderer/src/components/ConfirmDialog
 let useConfirm: typeof import("../src/renderer/src/components/ConfirmDialog")["useConfirm"];
 let ModelPreferences: typeof import("../src/renderer/src/model-preferences")["ModelPreferences"];
 let MarkdownText: typeof import("../src/renderer/src/ui-shared")["MarkdownText"];
+let DeidCheck: typeof import("../src/renderer/src/ui-shared")["DeidCheck"];
 let Notice: typeof import("../src/renderer/src/components/Notice")["Notice"];
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -64,7 +65,7 @@ before(async () => {
   ({ ChatPanel } = await import("../src/renderer/src/ChatPanel"));
   ({ ConfirmProvider, useConfirm } = await import("../src/renderer/src/components/ConfirmDialog"));
   ({ ModelPreferences } = await import("../src/renderer/src/model-preferences"));
-  ({ MarkdownText } = await import("../src/renderer/src/ui-shared"));
+  ({ MarkdownText, DeidCheck } = await import("../src/renderer/src/ui-shared"));
   ({ Notice } = await import("../src/renderer/src/components/Notice"));
 });
 async function render(ui: React.ReactNode) {
@@ -225,6 +226,50 @@ test("model picker Alt+Enter toggles the active favorite and every row star is a
   stars[1].focus(); assertFocused(stars[1]);
   await key("Tab");
   assertFocused(input);
+});
+
+test("model picker listbox holds only options and groups; each favorite star is a sibling aligned to its row", async () => {
+  await render(<ModelPicker models={["a", "b", "c"].map((id) => ({ id, type: "llm" }))} selected="a" onSelect={() => {}} />);
+  await click(document.querySelector(".composer-model-token")!);
+  const listbox = document.querySelector('[role="listbox"]')!;
+  assert.equal(listbox.querySelectorAll("button, input, a, [tabindex]").length, 0, "no interactive child inside the listbox");
+  const allowed = new Set(["option", "group"]);
+  for (const child of listbox.querySelectorAll("[role]")) assert.ok(allowed.has(child.getAttribute("role")!), `unexpected role ${child.getAttribute("role")}`);
+  const options = [...listbox.querySelectorAll<HTMLElement>('[role="option"]')];
+  const stars = [...document.querySelectorAll<HTMLElement>(".model-favorite-action")];
+  assert.equal(options.length, 3);
+  assert.equal(stars.length, 3);
+  for (const star of stars) assert.equal(star.closest('[role="listbox"]'), null, "stars live outside the listbox");
+  options.forEach((option, index) => {
+    assert.ok(option.style.gridRow, "option carries its grid row");
+    assert.equal(stars[index].style.gridRow, option.style.gridRow, "the star shares its option's grid row");
+  });
+});
+
+test("the media de-identification consent row is one native checkbox with the existing wording and no extra square", async () => {
+  const changes: boolean[] = [];
+  await render(<DeidCheck checked={false} onChange={(value) => changes.push(value)} />);
+  const row = document.querySelector(".deid-check")!;
+  assert.equal(row.querySelectorAll('input[type="checkbox"]').length, 1);
+  assert.equal(row.querySelector(".custom-check"), null, "no second drawn box beside the native checkbox");
+  assert.match(row.textContent!, /^환자 식별정보를 제거한 자료만 전송합니다$/);
+  await click(row.querySelector("input")!);
+  assert.deepEqual(changes, [true]);
+  // Every consent checkbox row in the app is a label holding exactly one checkbox.
+  const source = ["ChatPanel", "MediaPanel", "VoicePanel", "ProjectRetrievalSettings", "ui-shared"].map((name) =>
+    readFileSync(new URL(`../src/renderer/src/${name}.tsx`, import.meta.url), "utf8")).join("\n");
+  assert.doesNotMatch(source, /className="custom-check"/);
+});
+
+test("inline comparison synthesis notice lists only the answer letters that exist", async () => {
+  const { requests, emit } = await openRealComparison();
+  await click(sendButton());
+  const base = { id: "run-3", prompt: requests[0].prompt, webSearchMode: "off" as const, createdAt: new Date().toISOString(), attachmentNames: [] };
+  await emit({ type: "done", run: { ...base, modelIds: compareModels.slice(0, 2),
+    results: compareModels.slice(0, 2).map((modelId) => ({ modelId, status: "completed" as const, text: "합성" })) } });
+  assert.match(document.querySelector(".compare-synthesis-bar")!.textContent!,
+    /^GPT-5.6 Sol이 답변 A·B의 차이와 근거를 검토합니다. 실행 시 추가 크레딧이 사용됩니다./);
+  assert.doesNotMatch(document.querySelector(".compare-synthesis-bar")!.textContent!, /A·B·C/);
 });
 
 test("blocked links retain readable content and an explanation", async () => {
