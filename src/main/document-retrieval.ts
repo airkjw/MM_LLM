@@ -1,7 +1,7 @@
 import type { GatewayModel } from "../shared/contracts";
-import { chunkKey, hybridCandidates, LOCAL_RETRIEVAL, MAX_SEMANTIC_CHUNKS, parseEmbeddingResponse, parseRerankResponse,
-  RETRIEVAL_FINAL, retrievalResult, TEXT_EMBEDDING_DIMENSIONS,
-  type RetrievalResult, type RetrievalSettings, type RetrievalStatus, type SemanticIndex } from "../shared/document-retrieval";
+import { chunkKey, EMBED_BATCH, EMBED_BATCH_CHARS, estimateSemanticIndexBytes, hybridCandidates, LOCAL_RETRIEVAL, MAX_SEMANTIC_CHUNKS,
+  MAX_SEMANTIC_INDEX_BYTES, parseEmbeddingResponse, parseRerankResponse, RETRIEVAL_FINAL, retrievalResult, TEXT_EMBEDDING_DIMENSIONS,
+  type RetrievalChunk, type RetrievalResult, type RetrievalSettings, type RetrievalStatus, type SemanticIndex } from "../shared/document-retrieval";
 import { configureRetrieval, retrievalSnapshot, saveSemanticIndex, type RetrievalSnapshot } from "./project-vault";
 import { researchJson, researchRequest } from "./research-transport";
 
@@ -10,7 +10,16 @@ function assertModels(settings: RetrievalSettings, models: GatewayModel[]): void
     model.type === "embedding" && model.id === settings.embeddingModelId && Object.hasOwn(TEXT_EMBEDDING_DIMENSIONS, model.id))) throw new Error("현재 계정 목록에서 임베딩 모델과 질의 전송 동의를 확인해 주세요. 로컬 검색을 직접 선택할 수 있습니다.");
   if (settings.rerankConsent && !models.some((model) => model.type === "rerank" && model.id === settings.rerankModelId)) throw new Error("현재 계정에서 선택한 재정렬 모델을 확인할 수 없습니다. 설정을 직접 변경해 주세요.");
 }
-function status(snapshot: RetrievalSnapshot, running: boolean): RetrievalStatus {
+function batches(chunks: RetrievalChunk[]): RetrievalChunk[][] {
+  const result: RetrievalChunk[][] = []; let current: RetrievalChunk[] = []; let chars = 0;
+  for (const chunk of chunks) {
+    if (current.length && (current.length >= EMBED_BATCH || chars + chunk.text.length > EMBED_BATCH_CHARS)) { result.push(current); current = []; chars = 0; }
+    current.push(chunk); chars += chunk.text.length;
+  }
+  if (current.length) result.push(current);
+  return result;
+}
+function status(snapshot: Pick<RetrievalSnapshot, "settings" | "chunks" | "index">, running: boolean): RetrievalStatus {
   const completed = new Set(snapshot.index?.chunks.map(chunkKey));
   const documents = new Map<string, RetrievalStatus["documents"][number]>();
   for (const chunk of snapshot.chunks) {
@@ -54,24 +63,27 @@ export class DocumentRetrieval {
       const snapshot = await retrievalSnapshot(profileId, projectId); bounded.throwIfAborted();
       assertModels(snapshot.settings, models);
       if (!snapshot.chunks.length || snapshot.chunks.length > MAX_SEMANTIC_CHUNKS) throw new Error(`앱 의미 색인은 텍스트 청크 1~${MAX_SEMANTIC_CHUNKS}개를 지원합니다. 문서를 나누거나 로컬 검색을 직접 선택해 주세요.`);
-      const modelId = snapshot.settings.embeddingModelId!;
-      if (snapshot.index && (snapshot.index.modelId !== modelId || snapshot.index.dimension !== TEXT_EMBEDDING_DIMENSIONS[modelId])) throw new Error("모델·차원 변경 후에는 새 색인이 필요합니다.");
-      const index: SemanticIndex = snapshot.index ?? { version: 1, modelId, dimension: TEXT_EMBEDDING_DIMENSIONS[modelId], chunks: [], uncertain: [], updatedAt: new Date().toISOString() };
+      const modelId = snapshot.settings.embeddingModelId!; const dimension = TEXT_EMBEDDING_DIMENSIONS[modelId];
+      if (estimateSemanticIndexBytes(snapshot.chunks.length, dimension) > MAX_SEMANTIC_INDEX_BYTES) throw new Error(`예상 의미 색인 크기가 ${MAX_SEMANTIC_INDEX_BYTES / 1024 / 1024}MB 저장 한도를 넘어 원격 처리를 시작하지 않았습니다. 문서를 나누거나 더 작은 차원의 모델·로컬 검색을 직접 선택해 주세요.`);
+      if (snapshot.index && (snapshot.index.modelId !== modelId || snapshot.index.dimension !== dimension)) throw new Error("모델·차원 변경 후에는 새 색인이 필요합니다.");
+      const index: SemanticIndex = snapshot.index ?? { version: 1, modelId, dimension, chunks: [], uncertain: [], updatedAt: new Date().toISOString() };
       if (index.uncertain.length && !resumeConsent) throw new Error("이전 중단 요청의 과금 여부가 미확정입니다. 재개하면 해당 청크가 중복 과금될 수 있으므로 재개 동의가 필요합니다.");
-      const completed = new Set(index.chunks.map(chunkKey));
-      for (const chunk of snapshot.chunks) {
-        bounded.throwIfAborted(); const id = chunkKey(chunk); if (completed.has(id)) continue;
-        if (!index.uncertain.includes(id)) index.uncertain.push(id);
+      const completed = new Set(index.chunks.map(chunkKey)); let settings = snapshot.settings;
+      const expected = { fingerprint: snapshot.fingerprint, chunkKeys: snapshot.chunks.map(chunkKey) };
+      for (const batch of batches(snapshot.chunks.filter((chunk) => !completed.has(chunkKey(chunk))))) {
+        bounded.throwIfAborted(); const ids = batch.map(chunkKey);
+        for (const id of ids) if (!index.uncertain.includes(id)) index.uncertain.push(id);
         index.updatedAt = new Date().toISOString();
-        // Persist uncertainty BEFORE transmitting; completion is persisted after one valid response.
-        await saveSemanticIndex(profileId, projectId, index, bounded);
-        const [vector] = await this.embed(key, modelId, [chunk.text], bounded, false);
+        // Persist the whole batch as uncertain BEFORE transmitting; completion is persisted after one valid response.
+        await saveSemanticIndex(profileId, projectId, index, bounded, expected);
+        const vectors = await this.embed(key, modelId, batch.map((chunk) => chunk.text), bounded, false);
         bounded.throwIfAborted();
-        index.chunks.push({ documentId: chunk.documentId, sourceHash: chunk.sourceHash, position: chunk.position, start: chunk.start, end: chunk.end, vector });
-        index.uncertain = index.uncertain.filter((key) => key !== id); index.updatedAt = new Date().toISOString();
-        await saveSemanticIndex(profileId, projectId, index, bounded); completed.add(id);
+        batch.forEach((chunk, position) => index.chunks.push({ documentId: chunk.documentId, sourceHash: chunk.sourceHash,
+          position: chunk.position, start: chunk.start, end: chunk.end, vector: vectors[position] }));
+        const sent = new Set(ids); index.uncertain = index.uncertain.filter((id) => !sent.has(id)); index.updatedAt = new Date().toISOString();
+        settings = await saveSemanticIndex(profileId, projectId, index, bounded, expected); ids.forEach((id) => completed.add(id));
       }
-      return status(await retrievalSnapshot(profileId, projectId), false);
+      return status({ settings, chunks: snapshot.chunks, index }, false);
     });
   }
   async search(key: string, profileId: string, projectId: string, models: GatewayModel[], query: string,
