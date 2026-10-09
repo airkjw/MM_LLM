@@ -72,8 +72,13 @@ export function normalizeAppSettings(value: Partial<AppSettings> | undefined): A
     : undefined;
   const favoriteModels = models(value?.favoriteModels, 20);
   const recentModels = models(value?.recentModels, 8);
+  // Display settings (contract D4.2) are optional: kept only when valid, absent in older files and backups.
+  const density = value?.density === "default" || value?.density === "compact" ? value.density : undefined;
   return {
     ...(favoriteModels ? { favoriteModels } : {}), ...(recentModels ? { recentModels } : {}),
+    ...(density ? { density } : {}),
+    ...(typeof value?.reduceMotion === "boolean" ? { reduceMotion: value.reduceMotion } : {}),
+    ...(typeof value?.shortcutHints === "boolean" ? { shortcutHints: value.shortcutHints } : {}),
     defaultInstruction: typeof value?.defaultInstruction === "string"
       ? value.defaultInstruction.slice(0, 12_000) : DEFAULT_INSTRUCTION,
     theme: (["system", "light", "dark"] as unknown[]).includes(value?.theme)

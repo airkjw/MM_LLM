@@ -159,6 +159,17 @@ expectMutationError("a comparison consent checkbox without the control boundary"
   '.composer-compare-consent input[type="checkbox"] { outline: 1px solid var(--color-border-control);',
   '.composer-compare-consent input[type="checkbox"] { outline: 1px solid var(--color-border);'
 ), /Control boundary.*composer-compare-consent/);
+// Stage 4 (D4.9): the settings screen switch replaced ".settings-inline select"; the theme cards' radio dot is new.
+expectMutationError("a settings switch without the control boundary", (source) => source.replace(
+  "border: 1px solid var(--color-border-control);\n  border-radius: 999px; background: var(--color-bg-subtle); }",
+  "border: 1px solid var(--color-border);\n  border-radius: 999px; background: var(--color-bg-subtle); }"
+), /Control boundary.*settings-switch/);
+expectMutationError("a theme radio without the control boundary", (source) => source.replace(
+  ".theme-radio { display: inline-block; flex: none; width: 16px; height: 16px; border: 1px solid var(--color-border-control);",
+  ".theme-radio { display: inline-block; flex: none; width: 16px; height: 16px; border: 1px solid var(--color-border-strong);"
+), /Control boundary.*theme-radio/);
+expectMutationError("a checked theme radio that repaints its boundary", (source) =>
+  `${source}\n[aria-checked="true"] > .theme-card-caption .theme-radio { border-color: var(--color-accent); }`, /theme-radio/);
 for (const pair of ["text-body/bg-subtle", "text-body/bg-hover"]) {
   expectMutationError(`the ${pair} composer token pair`, (source) => source.replace(
     "--color-text-body: #C9CDD2;", "--color-text-body: #5F6670;"), new RegExp(`dark: ${pair} is`));

@@ -103,6 +103,8 @@ async function app(initial = llm, overrides: Record<string, unknown> = {}, stric
     getSession: async () => ({ authenticated: true, models: [llm.modelId, chatbot.modelId].map((id) => ({ id, type: "llm" })), credits: { total: { remaining: 100 } } }),
     getSettings: async () => ({ theme: "dark", fontSize: "medium", defaultInstruction: "" }), setThemePreference: async () => {},
     listThreads: async () => [...items.values()], loadThread: async (id: string) => items.get(id),
+    searchThreads: async (query: string) => [...items.values()].filter((item) => item.title.includes(query))
+      .map((item) => ({ ...item, snippet: "" })),
     createThread: async () => { counts.creates++; items.set(target.id, target); return target; },
     listProjects: async () => [], listBackgroundResponses: async () => [],
     getUpdateState: async () => ({ status: "idle", currentVersion: "0.5.1" }), onUpdateChanged: () => () => {}, onThemeResolved: () => () => {},
@@ -118,12 +120,13 @@ async function app(initial = llm, overrides: Record<string, unknown> = {}, stric
   return { counts, discarded, items };
 }
 async function research() {
-  // Stage 3: compare left the tools dialog; research is reached from its own rail item.
-  if (!document.querySelector(".workspace-tools-dialog")) await click(button("논문·법령 리서치"));
-  if (!document.querySelector(".research-panel")) await click(button("논문·법령 검색"));
-  await click(button("검색 도구 확인")); await select(document.querySelector<HTMLSelectElement>(".research-panel select")!, suite.slug);
-  await click(button("선택한 묶음")); await select(document.querySelectorAll<HTMLSelectElement>(".research-panel select")[1], tool.token);
-  await input(document.querySelector<HTMLInputElement>(".research-panel input")!, "Synthetic"); await click(button("검색 실행"));
+  // Stage 4 (D4.3): research is its own screen; the conversation stays mounted (hidden) behind it, so the draft
+  // and attachment survive exactly as they did under the old tools dialog.
+  if (!document.querySelector(".research-screen")) await click(button("논문·법령 리서치"));
+  await click(button("검색 도구 확인")); await select(document.querySelector<HTMLSelectElement>(".research-column select")!, suite.slug);
+  await click(button("선택한 묶음")); await click([...document.querySelectorAll<HTMLButtonElement>(".research-tools button")]
+    .find((item) => item.textContent?.includes(tool.name))!);
+  await input(document.querySelector<HTMLInputElement>(".research-column input[type='text']")!, "Synthetic"); await click(button("검색 실행"));
 }
 test("actual App/ChatPanel preserves current draft and attachment through two research evidence insertions without sending", async () => {
   const { counts, discarded } = await app(); await input(composer(), "ORIGINAL_QUESTION"); await click(button("파일 첨부"));
@@ -171,14 +174,21 @@ for (const change of ["close", "panel", "selection", "account"] as const) {
     let finish!: (value: ThreadSnapshot) => void;
     const { counts, items } = await app(chatbot, { createThread: () => new Promise((resolve) => { finish = resolve; }) });
     await input(composer(), "KEEP_CHATBOT"); await research(); await click(button("근거 추가"));
-    if (change === "close") await click(document.querySelector('[aria-label="워크스페이스 도구 닫기"]')!);
-    if (change === "panel") await click(button("기존 도구로 돌아가기"));
+    // Stage 4: leaving the research screen replaces closing the tools dialog, and the chatbot screen replaces
+    // the dialog's "back to tools" toggle; both change the evidence owner exactly like before.
+    if (change === "close") await click(button("대화"));
+    if (change === "panel") await click(button("챗봇"));
     if (change === "selection") {
-      // A real sidebar action starts a newer selection request while creation is still pending.
-      await click(document.querySelector<HTMLButtonElement>('.thread-select[title="Synthetic LLM"]')!);
+      // A real conversation selection (the palette, since the list column is not shown on the research screen)
+      // starts a newer selection request while creation is still pending.
+      document.body.focus();
+      await act(async () => { document.body.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true })); });
+      await input(document.querySelector<HTMLInputElement>('.command-palette [role="combobox"]')!, "Synthetic LLM");
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 250)); });
+      await click(document.querySelector<HTMLElement>('.command-palette [role="option"][data-kind="thread"]')!);
     }
     if (change === "account") {
-      await click(document.querySelector('[aria-label="워크스페이스 도구 닫기"]')!);
+      // The account popover moved to the settings screen (risk 6): avatar -> 계정 · API 키 -> 로그아웃.
       await click(document.querySelector('[aria-label^="설정·계정"]')!); await click(button("로그아웃"));
       const accountThread = { ...llm, id: "synthetic-second-account", title: "Second account LLM" };
       items.clear(); items.set(accountThread.id, accountThread);

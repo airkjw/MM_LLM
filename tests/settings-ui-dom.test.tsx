@@ -1,0 +1,480 @@
+// Stage 4 (contract D4.1, D4.2, D4.8, risk 6): the settings screen, the account actions that moved there from the
+// rail popover, and the login screen. Synthetic data only; window.mmllm is a local mock and no request leaves it.
+import assert, { assertFocused } from "./dom-assert.ts";
+import test, { afterEach, before } from "node:test";
+import { readFileSync } from "node:fs";
+import { Window } from "happy-dom";
+import type { Root } from "react-dom/client";
+import * as React from "react";
+import type { ReactNode } from "react";
+import type { AppSettings, UpdateState } from "../src/shared/contracts.ts";
+
+const { act } = React;
+
+const browser = new Window({ url: "https://mm-llm.local/" });
+browser.document.write("<!doctype html><html><body></body></html>");
+for (const [name, value] of Object.entries({
+  window: browser, document: browser.document, navigator: browser.navigator, Node: browser.Node, Element: browser.Element,
+  HTMLElement: browser.HTMLElement, HTMLButtonElement: browser.HTMLButtonElement, Event: browser.Event,
+  KeyboardEvent: browser.KeyboardEvent, MouseEvent: browser.MouseEvent, PointerEvent: browser.PointerEvent ?? browser.MouseEvent,
+  FocusEvent: browser.FocusEvent, MutationObserver: browser.MutationObserver, ResizeObserver: browser.ResizeObserver,
+  IntersectionObserver: browser.IntersectionObserver, getComputedStyle: browser.getComputedStyle
+})) Object.defineProperty(globalThis, name, { value, writable: true, configurable: true });
+Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { value: true, configurable: true });
+let animationId = 0;
+const timers = new Map<number, ReturnType<typeof setTimeout>>();
+browser.requestAnimationFrame = (callback) => {
+  const id = ++animationId;
+  timers.set(id, setTimeout(() => { timers.delete(id); callback(Date.now()); }, 0));
+  return id;
+};
+browser.cancelAnimationFrame = (id) => { const timer = timers.get(id); if (timer) clearTimeout(timer); timers.delete(id); };
+globalThis.requestAnimationFrame = browser.requestAnimationFrame as never;
+globalThis.cancelAnimationFrame = browser.cancelAnimationFrame as never;
+let compact = false;
+const mediaListeners = new Set<(event: MediaQueryListEvent) => void>();
+browser.matchMedia = () => ({
+  get matches() { return compact; }, media: "(max-width: 720px)", onchange: null,
+  addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.add(listener),
+  removeEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => mediaListeners.delete(listener),
+  addListener: (listener: (event: MediaQueryListEvent) => void) => mediaListeners.add(listener),
+  removeListener: (listener: (event: MediaQueryListEvent) => void) => mediaListeners.delete(listener),
+  dispatchEvent: () => true
+}) as MediaQueryList;
+function setCompact(next: boolean) {
+  compact = next;
+  for (const listener of [...mediaListeners]) listener({ matches: compact, media: "(max-width: 720px)" } as MediaQueryListEvent);
+}
+
+let createRoot: typeof import("react-dom/client")["createRoot"];
+let App: typeof import("../src/renderer/src/App.tsx")["default"];
+let Login: typeof import("../src/renderer/src/Login.tsx")["Login"];
+let ConfirmProvider: typeof import("../src/renderer/src/components/ConfirmDialog.tsx")["ConfirmProvider"];
+before(async () => {
+  ({ createRoot } = await import("react-dom/client"));
+  ({ default: App } = await import("../src/renderer/src/App.tsx"));
+  ({ Login } = await import("../src/renderer/src/Login.tsx"));
+  ({ ConfirmProvider } = await import("../src/renderer/src/components/ConfirmDialog.tsx"));
+});
+
+let root: Root | null = null;
+let host: HTMLDivElement | null = null;
+async function render(ui: ReactNode) {
+  host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+  await act(async () => { root!.render(ui); });
+  await settle();
+}
+async function settle() {
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+}
+async function click(target: Element) {
+  await act(async () => { (target as HTMLElement).click(); });
+  await settle();
+}
+async function key(name: string, options: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean } = {}) {
+  let event!: KeyboardEvent;
+  await act(async () => {
+    event = new browser.KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true, ...options });
+    (document.activeElement ?? document.body).dispatchEvent(event);
+  });
+  await settle();
+  return event;
+}
+async function typeInto(element: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  await act(async () => {
+    const proto = element.tagName === "TEXTAREA" ? browser.HTMLTextAreaElement.prototype : browser.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(element, value);
+    element.dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+}
+async function blur(element: HTMLElement) {
+  await act(async () => { element.dispatchEvent(new browser.FocusEvent("focusout", { bubbles: true })); element.blur(); });
+  await settle();
+}
+const nameOf = (element: Element) => element.getAttribute("aria-label") ?? element.textContent?.trim() ?? "";
+function railItem(label: string) {
+  const target = [...document.querySelectorAll<HTMLElement>("nav.rail button")].find((element) => nameOf(element) === label);
+  assert.ok(target, `missing rail item ${label}`);
+  return target;
+}
+function avatar() {
+  const target = [...document.querySelectorAll<HTMLElement>("nav.rail button")].find((element) => /^설정·계정/.test(nameOf(element)));
+  assert.ok(target, "missing rail avatar");
+  return target;
+}
+function button(text: string, scope: ParentNode = document) {
+  const target = [...scope.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent?.trim() === text);
+  assert.ok(target, `missing button ${text}`);
+  return target;
+}
+function category(label: string) {
+  const target = [...document.querySelectorAll<HTMLElement>(".settings-categories button")].find((element) => element.textContent?.trim() === label);
+  assert.ok(target, `missing settings category ${label}`);
+  return target;
+}
+function radios(groupLabel: string) {
+  const group = document.querySelector<HTMLElement>(`[role="radiogroup"][aria-label="${groupLabel}"]`);
+  assert.ok(group, `missing radiogroup ${groupLabel}`);
+  return [...group.querySelectorAll<HTMLElement>('[role="radio"]')];
+}
+function switchControl(label: string) {
+  const target = [...document.querySelectorAll<HTMLElement>('[role="switch"]')].find((element) => nameOf(element) === label);
+  assert.ok(target, `missing switch ${label}`);
+  return target;
+}
+
+afterEach(async () => {
+  if (root) await act(async () => root!.unmount());
+  root = null; host?.remove(); host = null; setCompact(false); document.body.replaceChildren();
+  for (const name of ["fontSize", "density", "reduceMotion", "shortcutHints", "theme", "themePreference"]) {
+    delete document.documentElement.dataset[name];
+  }
+});
+
+const now = new Date().toISOString();
+const thread = { id: "settings-thread", title: "합성 대화", modelId: "gpt-6-astra", createdAt: now, updatedAt: now,
+  webSearchMode: "off" as const, reasoningMode: "auto" as const, instruction: "", advanced: {}, attachmentConsent: false,
+  messages: [], messageCount: 0 };
+type Calls = { settings: AppSettings[]; logout: number; models: number; check: number; install: number; credits: boolean[]; keyReplace: string[] };
+
+function appApi(options: { settings?: Partial<AppSettings>; update?: UpdateState; updateSettings?: (value: AppSettings) => Promise<AppSettings> } = {}) {
+  const calls: Calls = { settings: [], logout: 0, models: 0, check: 0, install: 0, credits: [], keyReplace: [] };
+  let stored: AppSettings = { theme: "light", fontSize: "medium", defaultInstruction: "합성 기본 지침", ...options.settings };
+  Object.assign(browser, { mmllm: {
+    getSession: async () => ({ authenticated: true, credits: { total: { quota: 1000, used: 120, remaining: 880 },
+      monthly_allocated: { quota: 500, used: 100, remaining: 400, renewal_date: "2026-11-01T00:00:00Z" } },
+      models: [{ id: "gpt-6-astra", type: "llm" }] }),
+    getSettings: async () => stored,
+    updateSettings: async (value: AppSettings) => {
+      calls.settings.push(value);
+      if (options.updateSettings) return options.updateSettings(value);
+      stored = { ...value }; return stored;
+    },
+    setThemePreference: async () => {}, onThemeResolved: () => () => {},
+    listThreads: async () => [thread], loadThread: async () => thread, listProjects: async () => [],
+    listBackgroundResponses: async () => [], getUpdateState: async () => options.update ?? { status: "latest", currentVersion: "0.5.1" },
+    onUpdateChanged: () => () => {}, discardAttachments: async () => {},
+    getCredits: async (force: boolean) => { calls.credits.push(force); return { total: { quota: 1000, used: 130, remaining: 870 } }; },
+    searchThreads: async () => [], listMediaJobs: async () => [], listChatbotBookmarks: async () => [], listCompareRuns: async () => [],
+    cancelResearch: async () => {}, onVoiceEvent: () => () => {},
+    logout: async () => { calls.logout++; }, refreshModels: async () => { calls.models++; return [{ id: "gpt-6-astra", type: "llm" }]; },
+    checkForUpdates: async () => { calls.check++; }, installUpdate: async () => { calls.install++; },
+    replaceApiKey: async (value: string) => { calls.keyReplace.push(value); throw new Error("합성 키 검증 실패"); },
+    getDiagnostics: async () => "synthetic diagnostics"
+  } });
+  return calls;
+}
+async function renderApp(options: Parameters<typeof appApi>[0] = {}) {
+  const calls = appApi(options);
+  await render(<ConfirmProvider><App /></ConfirmProvider>);
+  await settle();
+  return calls;
+}
+async function openSettings(label?: string) {
+  await click(railItem("앱 설정"));
+  if (label) await click(category(label));
+}
+
+test("the settings rail item opens the settings screen: one aria-current, its own 240 column, no chat list", async () => {
+  await renderApp();
+  const trigger = railItem("앱 설정");
+  trigger.focus();
+  await click(trigger);
+  const current = document.querySelectorAll('[aria-current="page"]');
+  assert.equal(current.length, 1);
+  assert.equal(nameOf(current[0]), "앱 설정");
+  assert.ok(document.querySelector(".settings-screen"), "settings is a screen, not a dialog");
+  assert.equal(document.querySelector('[role="dialog"]'), null);
+  assert.equal(document.querySelector(".sidebar"), null, "the chat list column gives its slot to the settings column");
+  assert.equal(document.querySelector(".sidebar-mobile-open.visible"), null, "no opener for a list that is not shown");
+  const nav = document.querySelector<HTMLElement>('nav.settings-categories[aria-label="설정 분류"]')!;
+  assert.ok(nav);
+  assert.deepEqual([...nav.querySelectorAll("button")].map((item) => item.textContent?.trim()),
+    ["일반", "화면", "응답 기본값", "계정 · API 키", "크레딧", "백업 · 복원", "진단"]);
+  assert.equal(nav.querySelectorAll('[aria-current="true"]').length, 1);
+  assert.equal(nav.querySelector('[aria-current="true"]')?.textContent?.trim(), "일반");
+  assert.equal(document.querySelector(".settings-footer")?.textContent?.replace(/\s+/g, " ").trim(), "MM_LLM v0.5.1 · 최신");
+  assertFocused(trigger, "rail navigation keeps focus on the rail trigger");
+  // Back to the conversation: the chat list returns.
+  await click(railItem("대화"));
+  assert.ok(document.querySelector(".sidebar"));
+});
+
+test("the footer version and status come from the update state, never a hard-coded version", async () => {
+  await renderApp({ update: { status: "ready", currentVersion: "0.7.3", availableVersion: "0.7.4" } });
+  await openSettings();
+  assert.equal(document.querySelector(".settings-footer")?.textContent?.replace(/\s+/g, " ").trim(), "MM_LLM v0.7.3 · 업데이트 준비됨");
+});
+
+test("display mode is a radiogroup with a single tab stop; arrow keys move and save immediately", async () => {
+  const calls = await renderApp();
+  await openSettings("화면");
+  const options = radios("화면 모드");
+  assert.deepEqual(options.map((item) => item.querySelector(".theme-card-label")?.textContent?.trim()), ["시스템", "라이트", "다크"]);
+  assert.match(options[0].textContent ?? "", /권장/);
+  assert.deepEqual(options.map((item) => item.getAttribute("aria-checked")), ["false", "true", "false"]);
+  assert.deepEqual(options.map((item) => item.tabIndex), [-1, 0, -1], "roving tab stop on the checked radio");
+  assert.equal(document.querySelector('.settings-screen button[type="submit"], .settings-screen .settings-save'), null, "no save button");
+  options[1].focus();
+  await key("ArrowRight");
+  let next = radios("화면 모드");
+  assertFocused(next[2]);
+  assert.deepEqual(next.map((item) => item.getAttribute("aria-checked")), ["false", "false", "true"]);
+  assert.equal(calls.settings.length, 1);
+  assert.deepEqual(calls.settings[0], { theme: "dark", fontSize: "medium", defaultInstruction: "합성 기본 지침" });
+  assert.equal(document.documentElement.dataset.themePreference, "dark");
+  await key("ArrowRight");
+  next = radios("화면 모드");
+  assertFocused(next[0], "arrow keys wrap");
+  assert.equal(calls.settings.at(-1)?.theme, "system");
+  await key("End");
+  assertFocused(radios("화면 모드")[2]);
+  await key("Home");
+  assertFocused(radios("화면 모드")[0]);
+  await key("ArrowLeft");
+  assertFocused(radios("화면 모드")[2]);
+  assert.equal(calls.settings.at(-1)?.theme, "dark");
+});
+
+test("font size, density, reduce motion and shortcut hints save at once and drive the root data attributes", async () => {
+  const calls = await renderApp();
+  await openSettings("화면");
+  assert.equal(document.documentElement.dataset.density, "default");
+  assert.equal(document.documentElement.dataset.reduceMotion, "false");
+  assert.equal(document.documentElement.dataset.shortcutHints, "true");
+  const font = radios("글자 크기");
+  assert.deepEqual(font.map((item) => item.textContent?.trim()), ["작게", "기본", "크게"]);
+  await click(font[2]);
+  assert.equal(document.documentElement.dataset.fontSize, "large");
+  assert.equal(calls.settings.at(-1)?.fontSize, "large");
+  const density = radios("밀도");
+  assert.deepEqual(density.map((item) => item.textContent?.trim()), ["기본", "촘촘"]);
+  await click(density[1]);
+  assert.equal(document.documentElement.dataset.density, "compact");
+  assert.equal(calls.settings.at(-1)?.density, "compact");
+  const motion = switchControl("동작 줄이기");
+  assert.equal(motion.getAttribute("aria-checked"), "false", "follows the OS until the student turns it on");
+  await click(motion);
+  assert.equal(switchControl("동작 줄이기").getAttribute("aria-checked"), "true");
+  assert.equal(document.documentElement.dataset.reduceMotion, "true");
+  assert.equal(calls.settings.at(-1)?.reduceMotion, true);
+  const hints = switchControl("단축키 힌트 표시");
+  assert.equal(hints.getAttribute("aria-checked"), "true", "hints are shown by default");
+  await click(hints);
+  assert.equal(document.documentElement.dataset.shortcutHints, "false");
+  assert.deepEqual(calls.settings.at(-1), { theme: "light", fontSize: "large", defaultInstruction: "합성 기본 지침",
+    density: "compact", reduceMotion: true, shortcutHints: false });
+  assert.equal(calls.settings.length, 4, "one save per change");
+});
+
+test("a failed immediate save shows an inline error and returns the control to the previous value", async () => {
+  const calls = await renderApp({ updateSettings: async () => { throw new Error("합성 설정 저장 실패"); } });
+  await openSettings("화면");
+  await click(radios("밀도")[1]);
+  assert.equal(calls.settings.length, 1);
+  assert.match(document.querySelector('.settings-screen [role="alert"]')?.textContent ?? "", /합성 설정 저장 실패/);
+  assert.deepEqual(radios("밀도").map((item) => item.getAttribute("aria-checked")), ["true", "false"]);
+  assert.equal(document.documentElement.dataset.density, "default");
+  await click(switchControl("단축키 힌트 표시"));
+  assert.equal(switchControl("단축키 힌트 표시").getAttribute("aria-checked"), "true");
+  assert.equal(document.documentElement.dataset.shortcutHints, "true");
+});
+
+test("a second change while a save is in flight is not sent twice (settingsSaving guard)", async () => {
+  let release!: (value: AppSettings) => void;
+  const calls = await renderApp({ updateSettings: (value) => new Promise((resolve) => { release = () => resolve(value); }) });
+  await openSettings("화면");
+  await click(radios("밀도")[1]);
+  await click(radios("글자 크기")[0]);
+  await click(switchControl("동작 줄이기"));
+  assert.equal(calls.settings.length, 1);
+  await act(async () => release(calls.settings[0]));
+  await settle();
+  assert.equal(document.documentElement.dataset.density, "compact");
+  await click(radios("글자 크기")[0]);
+  assert.equal(calls.settings.length, 2);
+});
+
+test("the response default instruction saves when the field is left, without a save button", async () => {
+  const calls = await renderApp();
+  await openSettings("응답 기본값");
+  const field = document.querySelector<HTMLTextAreaElement>(".settings-screen .settings-field textarea")!;
+  assert.ok(field);
+  assert.equal(field.value, "합성 기본 지침");
+  field.focus();
+  await typeInto(field, "합성 새 지침");
+  assert.equal(calls.settings.length, 0, "typing does not save on every keystroke");
+  await blur(field);
+  assert.equal(calls.settings.length, 1);
+  assert.equal(calls.settings[0].defaultInstruction, "합성 새 지침");
+  await blur(field);
+  assert.equal(calls.settings.length, 1, "leaving an unchanged field does not save again");
+});
+
+test("general: app info, update check/install and model refresh live on the settings screen", async () => {
+  const calls = await renderApp();
+  await openSettings();
+  assert.match(document.querySelector(".settings-body")?.textContent ?? "", /MM_LLM v0\.5\.1/);
+  await click(button("모델 목록 새로고침"));
+  assert.equal(calls.models, 1);
+  await click(button("업데이트 확인"));
+  assert.equal(calls.check, 1);
+});
+
+test("general: a ready update installs from the settings screen and an update error stays readable", async () => {
+  const calls = await renderApp({ update: { status: "ready", currentVersion: "0.5.1", availableVersion: "0.6.0" } });
+  await openSettings();
+  await click(button("업데이트 설치 0.6.0"));
+  assert.equal(calls.install, 1);
+  assert.equal(calls.check, 0);
+});
+
+test("the rail avatar opens the settings screen on 계정 · API 키 in one click", async () => {
+  await renderApp();
+  const trigger = avatar();
+  assert.equal(trigger.getAttribute("aria-haspopup"), null, "no popover remains on the avatar");
+  assert.equal(trigger.getAttribute("aria-expanded"), null);
+  await click(trigger);
+  assert.equal(document.querySelector(".account-popover"), null);
+  assert.ok(document.querySelector(".settings-screen"));
+  assert.equal(document.querySelector('.settings-categories [aria-current="true"]')?.textContent?.trim(), "계정 · API 키");
+  assert.equal(nameOf(document.querySelector('[aria-current="page"]')!), "앱 설정", "aria-current goes through the settings item");
+  assert.equal(trigger.hasAttribute("aria-current"), false);
+});
+
+test("account: the API key replace dialog opens from the settings screen and returns focus to its trigger", async () => {
+  const calls = await renderApp();
+  await openSettings("계정 · API 키");
+  const replace = button("API 키 교체");
+  replace.focus();
+  await click(replace);
+  const dialog = document.querySelector<HTMLElement>('.key-replace-dialog[role="dialog"][aria-modal="true"]')!;
+  assert.ok(dialog);
+  const input = dialog.querySelector<HTMLInputElement>('input[type="password"]')!;
+  assert.ok(input, "the replacement key stays a password field");
+  await key("Escape");
+  assert.equal(document.querySelector(".key-replace-dialog"), null);
+  assertFocused(button("API 키 교체"));
+  assert.deepEqual(calls.keyReplace, []);
+});
+
+test("account: logout from the settings screen returns to the login screen", async () => {
+  const calls = await renderApp();
+  await openSettings("계정 · API 키");
+  await click(button("로그아웃"));
+  assert.equal(calls.logout, 1);
+  assert.ok(document.querySelector(".login-page"));
+  assert.equal(document.querySelector("nav.rail"), null);
+});
+
+test("credits: the three meters and the manual refresh moved from the popover", async () => {
+  const calls = await renderApp();
+  await openSettings("크레딧");
+  const meters = [...document.querySelectorAll<HTMLElement>(".settings-body .credit-meter")];
+  assert.deepEqual(meters.map((meter) => meter.querySelector("b")?.textContent), ["전체", "월 제공", "구매"]);
+  assert.match(meters[0].textContent ?? "", /880/);
+  assert.match(meters[2].textContent ?? "", /잔액 정보 없음/, "no numbers are invented for a missing bucket");
+  assert.match(document.querySelector(".settings-body .credit-renewal")?.textContent ?? "", /갱신/);
+  await click(button("크레딧 새로고침"));
+  assert.deepEqual(calls.credits, [true]);
+});
+
+test("backup and diagnostics categories host the existing panels", async () => {
+  await renderApp();
+  await openSettings("백업 · 복원");
+  assert.ok(document.querySelector(".settings-body fieldset.backup-panel"));
+  await click(category("진단"));
+  assert.ok(button("진단 정보 복사", document.querySelector(".settings-body")!));
+});
+
+test("settings categories stack above the body at the compact width and keep keyboard order", async () => {
+  setCompact(true);
+  await renderApp();
+  await openSettings("화면");
+  const screen = document.querySelector<HTMLElement>(".settings-screen")!;
+  assert.ok(screen.classList.contains("screen-layout"));
+  const css = readFileSync(new URL("../src/renderer/src/styles.css", import.meta.url), "utf8");
+  const compactBlock = css.slice(css.indexOf("@media (max-width: 720px)"));
+  assert.match(compactBlock, /\.screen-layout[^{}]*\{[^}]*flex-direction:\s*column/);
+  const focusables = [...screen.querySelectorAll<HTMLElement>("button, [tabindex='0']")];
+  assert.ok(focusables.indexOf(category("화면")) < focusables.indexOf(radios("화면 모드")[1]), "categories come before the body");
+});
+
+test("Cmd/Ctrl+B is a no-op on a screen without the chat list and never hides the rail", async () => {
+  await renderApp();
+  await openSettings();
+  document.body.focus();
+  await key("b", { ctrlKey: true });
+  assert.ok(document.querySelector("nav.rail"));
+  await click(railItem("대화"));
+  assert.ok(document.querySelector(".sidebar:not(.collapsed)"), "the list was not toggled while it was not shown");
+});
+
+const css = () => readFileSync(new URL("../src/renderer/src/styles.css", import.meta.url), "utf8");
+test("the shortcut-hint, density and reduce-motion attributes have CSS behind them", () => {
+  assert.match(css(), /:root\[data-shortcut-hints="false"\][^{]*kbd[^{]*\{[^}]*display:\s*none/);
+  assert.match(css(), /:root\[data-density="compact"\]/);
+  assert.match(css(), /:root\[data-reduce-motion="true"\]/);
+});
+
+// Login (D4.8)
+type LoginCalls = { login: string[]; cancel: number; guide: number };
+function loginApi(login: (key: string) => Promise<unknown>) {
+  const calls: LoginCalls = { login: [], cancel: 0, guide: 0 };
+  Object.assign(browser, { mmllm: {
+    login: async (value: string) => { calls.login.push(value); return login(value); },
+    cancelLogin: async () => { calls.cancel++; return true; }, openKeyGuide: async () => { calls.guide++; },
+    getDiagnostics: async () => "synthetic diagnostics"
+  } });
+  return calls;
+}
+
+test("login keeps the password field, visibility toggle, cancel and error-only diagnostics", async () => {
+  let reject!: (error: Error) => void;
+  const calls = loginApi(() => new Promise((_resolve, fail) => { reject = fail; }));
+  await render(<Login onLogin={async () => {}} />);
+  const input = document.querySelector<HTMLInputElement>("#api-key")!;
+  assert.equal(input.type, "password");
+  assert.equal(input.getAttribute("autocomplete"), "off");
+  assert.equal(document.querySelector('.login-page input[type="checkbox"]'), null, "no auto-login option (login() has none)");
+  const toggle = document.querySelector<HTMLButtonElement>(".key-visibility")!;
+  assert.equal(toggle.getAttribute("aria-label"), "API 키 보기");
+  await click(toggle);
+  assert.equal(document.querySelector<HTMLInputElement>("#api-key")!.type, "text");
+  assert.equal(toggle.getAttribute("aria-pressed"), "true");
+  await click(toggle);
+  assert.equal(document.querySelector<HTMLInputElement>("#api-key")!.type, "password");
+  assert.equal([...document.querySelectorAll("button")].some((item) => item.textContent?.includes("진단 정보 복사")), false);
+  await typeInto(document.querySelector<HTMLInputElement>("#api-key")!, "  synthetic-key  ");
+  await act(async () => { document.querySelector("form")!.dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true })); });
+  await settle();
+  assert.deepEqual(calls.login, ["synthetic-key"]);
+  await click(button("로그인 확인 취소"));
+  assert.equal(calls.cancel, 1);
+  await act(async () => reject(new Error("합성 로그인 실패")));
+  await settle();
+  assert.match(document.querySelector('.login-page [role="alert"]')?.textContent ?? "", /합성 로그인 실패/);
+  assert.ok(button("진단 정보 복사"));
+});
+
+test("login: two columns from 900px, one column below; issuance card uses only openKeyGuide", async () => {
+  const calls = loginApi(async () => ({ authenticated: false, models: [] }));
+  await render(<Login onLogin={async () => {}} />);
+  const layout = document.querySelector<HTMLElement>(".login-layout")!;
+  assert.ok(layout.querySelector(".login-intro") && layout.querySelector(".login-card"));
+  const style = css();
+  assert.match(style, /\.login-layout\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1\.1fr\)\s+minmax\(0,\s*1fr\)/);
+  const narrow = style.slice(style.indexOf("@media (max-width: 899px)"));
+  assert.ok(style.includes("@media (max-width: 899px)"));
+  assert.match(narrow, /\.login-layout\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  const card = document.querySelector<HTMLElement>(".login-guide")!;
+  assert.ok(card);
+  assert.deepEqual([...card.querySelectorAll(".login-guide-step b")].map((item) => item.textContent), ["01", "02", "03"]);
+  const links = [...card.querySelectorAll("button")];
+  assert.equal(links.length, 1);
+  await click(links[0]);
+  assert.equal(calls.guide, 1);
+  assert.equal(document.querySelector(".login-page a[href]"), null, "no new URL is added to the renderer");
+  const notes = [...document.querySelectorAll(".login-security li")].map((item) => item.textContent?.trim());
+  assert.deepEqual(notes, ["키는 이 기기의 운영체제 보안 저장소로 보호됩니다.", "대화 기록은 이 기기 안에서 암호화해 보관합니다."]);
+});

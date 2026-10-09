@@ -276,7 +276,7 @@ export type ChatCompare = {
 export function ChatPanel({
   thread, modelId, models, onModelChange, onThreadUpdated, onRefreshThreads, onUsageChanged,
   onTemplateStart, initialDraft, onDraftApplied, evidenceAppends = NO_EVIDENCE, onEvidenceApplied,
-  composerRef, voicePanel, headerSearch, compare, compareShortcut, onCompareShortcutHandled
+  composerRef, voicePanel, headerSearch, compare, compareShortcut, onCompareShortcutHandled, active = true
 }: {
   thread: ThreadSnapshot; modelId: string; models: GatewayModel[];
   onModelChange: (id: string) => void;
@@ -296,6 +296,8 @@ export function ChatPanel({
   /** Cmd/Ctrl+Shift+C request: add a second model token and open its picker. */
   compareShortcut?: number;
   onCompareShortcutHandled?: (id: number) => void;
+  /** False while the App keeps this conversation mounted but hidden behind another screen: no window shortcuts. */
+  active?: boolean;
 }) {
   const confirm = useConfirm();
   const preferences = useContext(ModelPreferences);
@@ -782,7 +784,7 @@ export function ChatPanel({
     finally { setControlsPending(false); }
   };
   const startVisible = messages.length === 0 && !showCompare;
-  templateKeysRef.current = { enabled: startVisible && !controlsPending, choose: (item) => void chooseTemplate(item) };
+  templateKeysRef.current = { enabled: active && startVisible && !controlsPending, choose: (item) => void chooseTemplate(item) };
   const modelsLocked = isRunning || controlsPending || compareBusy;
   const pickerFallback = () => document.querySelector<HTMLElement>(".chat-panel .composer-input");
   const routeVisible = !chatbotTarget && thread.webSearchMode !== "off";
@@ -798,7 +800,7 @@ export function ChatPanel({
   const footerPrefix = chatbotTarget ? "Studio Chatbot · 원격 감사 로그가 저장될 수 있음"
     : thread.purpose === "meeting-summary" ? "로컬 회의 요약 · 웹 검색 꺼짐" : "";
   return <AssistantRuntimeProvider runtime={runtime}>
-    <ChatKeyboardShortcuts messages={messages} running={isRunning} stop={() => stopRef.current?.()} />
+    {active && <ChatKeyboardShortcuts messages={messages} running={isRunning} stop={() => stopRef.current?.()} />}
     <ComposerDraft text={initialDraft} onDraftApplied={onDraftApplied} operations={evidenceAppends}
       onEvidenceApplied={onEvidenceApplied} composerRef={composerRef} restoreRef={restoreDraftRef} />
     <div className="chat-panel" onDragEnter={handleDragEnter} onDragOver={(event) => {
@@ -854,7 +856,8 @@ export function ChatPanel({
             }}
           </ThreadPrimitive.Messages>
           {compare && showCompare && <CompareInline run={compare.run} busy={compare.busy} synthesis={compare.synthesis}
-            continueDisabled={compare.continueDisabled} onContinue={compare.onContinue} onError={compare.onError} />}
+            continueDisabled={compare.continueDisabled} onContinue={compare.onContinue} onError={compare.onError}
+            digitKeys={active} />}
           <ThreadPrimitive.ViewportFooter className="chat-footer">
             {needsConsent && <small className="document-scope-note">문서는 전송 한도 안에서는 전체 본문을 전달하고, 한도를 넘으면 관련 부분을 발췌합니다.
               전체 원문을 빠짐없이 검토한 결과가 아닐 수 있으므로, 필요한 페이지·표·항목을 질문에 명시해 주세요.</small>}

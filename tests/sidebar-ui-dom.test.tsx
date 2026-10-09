@@ -80,8 +80,10 @@ let calls: string[] = [];
 let order: string[] = [];
 
 const RAIL_ITEMS = ["대화", "모델 비교", "논문·법령 리서치", "미디어", "음성", "프로젝트", "챗봇"] as const;
-// Stage 3: compare is a screen (contract D3.4); research, projects, chatbot and settings still open dialogs.
-const DIALOG_DESTINATIONS = new Set(["research", "projects", "chatbot", "settings"]);
+// Stage 4: research, chatbot and settings are screens (D4.1/D4.3/D4.4); projects keeps its dialog until the
+// W4b projects screen is wired, and voice its disclosure.
+const DIALOG_DESTINATIONS = new Set(["projects"]);
+const SCREEN_RAIL_ITEMS = [["논문·법령 리서치", "research"], ["챗봇", "chatbot"], ["앱 설정", "settings"]] as const;
 
 function setCompact(next: boolean) {
   compact = next;
@@ -114,7 +116,7 @@ function Harness({ responsive = false, initialOpen = true, modalHandoff = false,
   updateStatus = "error", creditStatus = "default", screen = "chat" }: {
   responsive?: boolean; initialOpen?: boolean; modalHandoff?: boolean; removeOnDelete?: boolean;
   updateStatus?: "error" | "ready" | "latest"; creditStatus?: CreditStatus;
-  screen?: "chat" | "compare" | "media";
+  screen?: "chat" | "compare" | "media" | "research" | "chatbot" | "settings";
 }) {
   const responsiveState = useResponsiveSidebarState();
   const manualState = useState(initialOpen);
@@ -141,7 +143,9 @@ function Harness({ responsive = false, initialOpen = true, modalHandoff = false,
       onToggle: () => { order.push(open ? "sheet-close" : "sheet-open"); setOpen((value) => !value); },
       onNewThread: call("new"),
       onNavigate: (destination, returnFocus) => DIALOG_DESTINATIONS.has(destination)
-        ? openDialog(destination)(returnFocus) : call(destination)()
+        ? openDialog(destination)(returnFocus) : call(destination)(),
+      // The rail avatar opens the settings screen on its account category (risk 6: the popover is gone).
+      onOpenAccount: call("account")
     }}
     history={{
       threadCount: hasThread ? 1 : 0, selectedThreadId: hasThread ? "thread-1" : undefined,
@@ -161,10 +165,6 @@ function Harness({ responsive = false, initialOpen = true, modalHandoff = false,
       updateState: updateStatus === "error" ? { status: "error", message: "network" }
         : updateStatus === "ready" ? { status: "ready", currentVersion: "0.2.0", availableVersion: "0.3.0" }
           : { status: "latest", currentVersion: "0.2.0" }
-    }}
-    accountActions={{
-      onRefreshCredits: call("credits"), onOpenKeyReplace: openDialog("key"), onRefreshModels: call("models"),
-      onOpenSettings: openDialog("settings"), onUpdateAction: call("update"), onLogout: call("logout")
     }} />
     <main className="main-area"><button type="button" className="harness-body-control">본문</button></main>
     {dialog && <div role="dialog" aria-modal="true" aria-label={`${dialog} modal`} ref={dialogRef} tabIndex={-1}>
@@ -252,7 +252,7 @@ function railItem(label: string) {
 function railTabOrder() {
   const rail = document.querySelector<HTMLElement>("nav.rail")!;
   return [...rail.querySelectorAll<HTMLElement>(FOCUSABLE)]
-    .filter((element) => !element.matches(".sidebar-mobile-open:not(.visible)") && !element.closest(".account-popover"));
+    .filter((element) => !element.matches(".sidebar-mobile-open:not(.visible)"));
 }
 
 afterEach(async () => {
@@ -338,8 +338,21 @@ test("aria-current marks exactly one rail item and only for real screens", async
   assert.equal(current.length, 1);
   assert.equal(accessibleName(current[0]), "모델 비교", "compare is a real screen since stage 3");
 
-  for (const label of ["논문·법령 리서치", "음성", "프로젝트", "챗봇", "앱 설정"]) {
-    assert.equal(railItem(label).hasAttribute("aria-current"), false, `${label} opens a dialog, not a screen`);
+  // Stage 4: research, chatbot and settings are real screens too; their screens own the second column.
+  for (const [label, screen] of SCREEN_RAIL_ITEMS) {
+    await act(async () => root!.render(<Harness screen={screen} />));
+    await flushFocus();
+    current = document.querySelectorAll('[aria-current="page"]');
+    assert.equal(current.length, 1);
+    assert.equal(accessibleName(current[0]), label);
+    assert.equal(document.querySelector(".sidebar"), null, `${label} does not show the chat list column`);
+    assert.equal(byLabel(/^설정·계정/).hasAttribute("aria-current"), false, "the avatar is never the current page");
+  }
+
+  await act(async () => root!.render(<Harness />));
+  await flushFocus();
+  for (const label of ["음성", "프로젝트"]) {
+    assert.equal(railItem(label).hasAttribute("aria-current"), false, `${label} still opens its existing flow`);
   }
 });
 
@@ -377,59 +390,44 @@ test("collapsing the list column (Cmd/Ctrl+B path) never hides the rail", async 
   assert.ok(document.querySelector("nav.rail"), "the rail stays at the compact width too");
 });
 
-test("account popover is nonmodal: Tab is free, Escape restores, and outside focus is preserved", async () => {
+// Risk 6: the account popover left the rail. The avatar keeps its place, label and update badge, and opens the
+// settings screen on its account category in one click (the moved account actions are tested in settings-ui-dom).
+test("the rail avatar is a plain navigation button to the account settings, not a popover", async () => {
   await render(<Harness />);
   const trigger = byLabel(/설정·계정/);
-  assert.ok(trigger.closest("nav.rail"), "the account popover is temporarily attached to the rail avatar");
+  assert.ok(trigger.closest("nav.rail"));
+  assert.equal(trigger.getAttribute("aria-haspopup"), null);
+  assert.equal(trigger.getAttribute("aria-expanded"), null);
+  trigger.focus();
   await click(trigger);
-  const dialog = document.querySelector<HTMLElement>('.account-popover[role="dialog"]')!;
-  assert.ok(dialog);
-  assert.equal(dialog.getAttribute("aria-modal"), "false");
-  assert.equal(hasBlockingModal(document), false, "the account popover cannot suppress global shortcuts");
-  assert.equal(appShortcutBlocked(document, "k"), false);
-  const last = [...dialog.querySelectorAll<HTMLButtonElement>("button")].at(-1)!;
-  last.focus();
-  const tab = await key("Tab");
-  assert.equal(tab.defaultPrevented, false);
-  assert.ok(document.querySelector(".account-popover"), "Tab must not close or trap the nonmodal account popover");
-  await key("Escape");
-  assertFocused(trigger);
+  assert.deepEqual(calls, ["account"]);
   assert.equal(document.querySelector(".account-popover"), null);
-
-  await click(trigger);
-  const outside = document.createElement("button"); outside.textContent = "외부"; document.body.append(outside); outside.focus();
-  await act(async () => outside.dispatchEvent(new browser.Event("pointerdown", { bubbles: true })));
-  assert.equal(document.querySelector(".account-popover"), null);
-  assertFocused(outside, "outside pointer target keeps focus");
+  assert.equal(document.querySelector('[role="dialog"]'), null);
+  assertFocused(trigger, "navigation keeps focus on the visible avatar");
 });
 
-test("collapsing the desktop sidebar from an open account popover restores the visible toggle", async () => {
+test("collapsing the desktop list column keeps the avatar reachable and restores the visible toggle", async () => {
   await render(<Harness />);
-  await click(byLabel(/설정·계정/));
   const toggle = byLabel("사이드바 닫기");
+  toggle.focus();
   await click(toggle);
   assert.ok(document.querySelector(".sidebar")?.classList.contains("collapsed"));
-  assert.ok(document.activeElement === byLabel("사이드바 펼치기"), "focus returns to the visible desktop toggle");
+  assertFocused(byLabel("사이드바 펼치기"), "focus returns to the visible desktop toggle");
+  assert.ok(railTabOrder().includes(byLabel(/설정·계정/)));
   await click(byLabel("사이드바 펼치기"));
   assert.ok(!document.querySelector(".sidebar")?.classList.contains("collapsed"));
   assertFocused(byLabel("사이드바 닫기"), "expanding returns focus to the list column toggle");
 });
 
-test("compact account popover opens from the rail after closing the sheet and stays nonmodal", async () => {
+test("compact avatar navigation closes the sheet before opening the account settings", async () => {
   setCompact(true);
   await render(<Harness initialOpen />);
-  await click(byLabel(/설정·계정/));
-  assert.deepEqual(order, ["sheet-close"]);
+  const trigger = byLabel(/설정·계정/);
+  trigger.focus();
+  await click(trigger);
+  assert.deepEqual(order, ["sheet-close", "account"]);
   assert.ok(document.querySelector(".sidebar")?.classList.contains("collapsed"));
-  const account = document.querySelector<HTMLElement>('.account-popover[role="dialog"]')!;
-  assert.ok(account);
-  assert.equal(account.closest('[aria-modal="true"]'), null, "the popover is not hidden inside a closed modal sheet");
-  const buttons = [...account.querySelectorAll<HTMLButtonElement>("button")];
-  assert.ok(buttons.length > 5);
-  buttons.at(-1)!.focus();
-  const tab = await key("Tab");
-  assert.equal(tab.defaultPrevented, false, "with the sheet closed there is no parent boundary to borrow");
-  assert.ok(document.querySelector(".account-popover"));
+  assertFocused(trigger);
 });
 
 test("desktop thread actions use menu keys and Tab to actual adjacent controls", async () => {
@@ -546,18 +544,6 @@ test("compact sidebar is modal/trapped, restores its toggle, and closes before n
   assert.ok(document.querySelector(".sidebar")?.classList.contains("collapsed"));
 });
 
-test("account actions close account and compact sidebar before launching the action", async () => {
-  setCompact(true);
-  await render(<Harness initialOpen />);
-  await click(byLabel(/설정·계정/));
-  const settings = [...document.querySelectorAll<HTMLButtonElement>(".account-actions button")]
-    .find((button) => button.textContent?.trim() === "설정")!;
-  await click(settings);
-  assert.deepEqual(calls, ["settings"]);
-  assert.equal(document.querySelector(".account-popover"), null);
-  assert.ok(document.querySelector(".sidebar")?.classList.contains("collapsed"));
-});
-
 const openRenameFromThreadMenu = async () => {
   await click(byLabel("첫 대화 대화 작업"));
   await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
@@ -589,16 +575,9 @@ for (const [route, launchOnDesktop, launch] of compactDialogRoutes) {
 }
 
 // Rail launchers stay visible at every width, so rule 1 (the original trigger) applies before the opener.
+// Stage 4: only projects still opens a dialog; settings, research, chatbot and the avatar navigate to screens.
 const compactRailDialogRoutes = [
-  ["settings", () => railItem("앱 설정"), async () => { await click(railItem("앱 설정")); }],
-  ["account settings", () => byLabel(/설정·계정/), async () => {
-    await click(byLabel(/설정·계정/));
-    await click([...document.querySelectorAll<HTMLButtonElement>(".account-actions button")]
-      .find((button) => button.textContent?.trim() === "설정")!);
-  }],
-  ["projects", () => railItem("프로젝트"), async () => { await click(railItem("프로젝트")); }],
-  ["research", () => railItem("논문·법령 리서치"), async () => { await click(railItem("논문·법령 리서치")); }],
-  ["chatbot", () => railItem("챗봇"), async () => { await click(railItem("챗봇")); }]
+  ["projects", () => railItem("프로젝트"), async () => { await click(railItem("프로젝트")); }]
 ] as const;
 
 for (const [route, trigger, launch] of compactRailDialogRoutes) {
@@ -614,15 +593,27 @@ for (const [route, trigger, launch] of compactRailDialogRoutes) {
   });
 }
 
-test("desktop account and portalled rename dialogs return to their original triggers", async () => {
-  await render(<Harness modalHandoff />);
-  const accountTrigger = byLabel(/설정·계정/);
-  await click(accountTrigger);
-  await click([...document.querySelectorAll<HTMLButtonElement>(".account-actions button")]
-    .find((button) => button.textContent?.trim() === "설정")!);
-  await key("Escape");
-  assertFocused(accountTrigger);
+for (const [route, trigger, expected] of [
+  ["settings", () => railItem("앱 설정"), "settings"],
+  ["account settings", () => byLabel(/설정·계정/), "account"],
+  ["research", () => railItem("논문·법령 리서치"), "research"],
+  ["chatbot", () => railItem("챗봇"), "chatbot"]
+] as const) {
+  test(`compact ${route} screen closes the sheet first and keeps focus on its visible rail trigger`, async () => {
+    setCompact(true);
+    await render(<Harness initialOpen modalHandoff />);
+    const target = trigger();
+    target.focus();
+    await click(target);
+    assert.deepEqual(order, ["sheet-close", expected]);
+    assert.ok(document.querySelector(".sidebar")?.classList.contains("collapsed"), "the sheet closed first");
+    assert.equal(document.querySelector('[role="dialog"][aria-modal="true"]'), null, "a screen, not a modal");
+    assertFocused(target);
+  });
+}
 
+test("portalled rename dialogs return to their original triggers", async () => {
+  await render(<Harness modalHandoff />);
   const threadTrigger = byLabel("첫 대화 대화 작업");
   await click(threadTrigger);
   await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
@@ -670,7 +661,7 @@ test("compact media navigation closes the sidebar and keeps focus on the visible
   assertFocused(media);
 });
 
-test("settings is one rail click; the account path stays two clicks and update errors remain visible when closed", async () => {
+test("settings and the account settings are one click each and update errors remain visible on the avatar", async () => {
   await render(<Harness />);
   await click(railItem("앱 설정"));
   assert.deepEqual(calls, ["settings"]);
@@ -683,11 +674,9 @@ test("settings is one rail click; the account path stays two clicks and update e
   assert.equal(live[0].getAttribute("role"), "status");
   assert.equal(live[0].getAttribute("aria-live"), "polite");
   assert.equal(live[0].textContent?.trim(), "업데이트 확인에 실패했습니다. 다시 시도해 주세요.");
-  await click(trigger); // click 1 on the rail avatar
-  const settings = [...document.querySelectorAll<HTMLButtonElement>(".account-actions button")]
-    .find((button) => button.textContent?.trim() === "설정")!;
-  await click(settings); // click 2
-  assert.deepEqual(calls, ["settings"]);
+  await click(trigger); // one click on the rail avatar
+  assert.deepEqual(calls, ["account"]);
+  assert.equal(document.querySelectorAll('[data-testid="update-status-live"]').length, 1);
 });
 
 test("ready update is a text badge beside the avatar and announced once while the account panel is closed", async () => {
@@ -784,8 +773,19 @@ test("thread rows show the model id and a relative time as metadata", async () =
   assert.match(row.querySelector(".thread-meta")?.textContent ?? "", /^gpt-5\.6-luna · \d+d$/);
 });
 
-for (const label of ["프로젝트", "논문·법령 리서치", "앱 설정"]) {
-  const modal = label === "프로젝트" ? "projects" : label === "논문·법령 리서치" ? "research" : "settings";
+// Stage 4: projects still opens a dialog; research and settings are screens (focus stays on the trigger).
+for (const [label, screen] of SCREEN_RAIL_ITEMS) {
+  test(`collapsed rail ${label} opens its screen and keeps focus on the visible trigger`, async () => {
+    await render(<Harness />);
+    await click(byLabel("사이드바 닫기"));
+    const trigger = railItem(label);
+    await activateWithKey(trigger);
+    assert.deepEqual(calls, [screen]);
+    assertFocused(trigger);
+  });
+}
+for (const label of ["프로젝트"]) {
+  const modal = "projects";
   test(`collapsed rail ${label} opens a dialog and restores its visible trigger`, async () => {
     await render(<Harness modalHandoff />);
     await click(byLabel("사이드바 닫기"));
@@ -889,13 +889,16 @@ test("real App: the body header Cmd+K button opens the command palette and focus
   assertFocused(search, "the header trigger stays visible at the compact width");
 });
 
-test("real App: rail research, compare and voice reach the existing flows", async () => {
+test("real App: rail research, compare and voice reach their flows", async () => {
   await renderApp();
-  await click(railItem("논문·법령 리서치"));
-  assert.ok(document.querySelector(".workspace-tools-dialog .research-panel"), "research opens in the tools dialog");
-  assert.equal(document.querySelector("#workspace-tools-title")?.textContent, "논문·법령 검색");
-  await key("Escape");
-  assertFocused(railItem("논문·법령 리서치"));
+  const research = railItem("논문·법령 리서치");
+  research.focus();
+  await click(research);
+  // Stage 4 (D4.3): research is a screen with aria-current; focus stays on its rail trigger.
+  assert.ok(document.querySelector(".research-screen"), "research opens its screen");
+  assert.equal(document.querySelector(".workspace-tools-dialog"), null);
+  assert.equal(research.getAttribute("aria-current"), "page");
+  assertFocused(research);
 
   // Stage 3: compare is a screen with aria-current; focus stays on its rail trigger.
   const compare = railItem("모델 비교");
@@ -980,11 +983,16 @@ test("real App: media kind switching and media rows are refused while an estimat
   await click(tabs[1]);
   assert.equal(mediaTabs()[0].getAttribute("aria-selected"), "true", "the kind does not change while busy");
   assert.equal(mediaPrompt().value, "합성 프롬프트");
+  // Stage 4: the list column is shown on the chat screen only; the busy media screen stays mounted meanwhile.
+  await click(railItem("대화"));
   await click(mediaFilter());
   const row = document.querySelector<HTMLElement>(".media-job-row")!;
   assert.ok(row, "the media filter lists the synthetic job");
   await click(row);
-  assert.equal(mediaTabs()[0].getAttribute("aria-selected"), "true", "a media row cannot interrupt a busy screen");
+  assert.equal(accessibleName(document.querySelector('[aria-current="page"]')!), "대화", "a media row cannot interrupt a busy screen");
+  assert.match(document.querySelector('.app-error[role="status"]')?.textContent ?? "", /진행 중인 미디어 작업이 끝난 뒤 다시 선택해 주세요/);
+  await click(railItem("미디어"));
+  assert.equal(mediaTabs()[0].getAttribute("aria-selected"), "true");
   assert.equal(mediaPrompt().value, "합성 프롬프트");
 });
 
@@ -999,21 +1007,26 @@ test("real App: a media row opens the clicked job, STT jobs in the STT lane", as
   const row = (label: string) => [...document.querySelectorAll<HTMLElement>(".media-job-row")]
     .find((item) => item.textContent?.includes(label))!;
   const settle = async () => { await flushFocus(); await flushFocus(); };
-  await click(mediaFilter());
+  // Stage 4: rows live in the chat screen's list column, so each pick starts from the conversation screen.
+  const fromChat = async () => { await click(railItem("대화")); await click(mediaFilter()); };
+  await fromChat();
   await click(row("합성 받아쓰기"));
   await settle();
   assert.equal(document.querySelector('[data-audio-lane="stt"]')?.getAttribute("aria-selected"), "true", "STT opens its lane");
   assert.match(resultText(), /합성 받아쓰기 오류/);
 
+  await fromChat();
   await click(row("합성 영상 2"));
   await settle();
   assert.equal(mediaTabs()[2].getAttribute("aria-selected"), "true");
   assert.match(resultText(), /합성 영상 오류 2/, "the clicked job is shown, not the first of its kind");
   assert.match(document.querySelector('.job-list [aria-current="true"]')?.textContent ?? "", /합성 영상 2/);
 
+  await fromChat();
   await click(row("합성 영상 1"));
   await settle();
   assert.match(resultText(), /합성 영상 오류 1/, "a second job of the same kind opens on the same screen");
+  await fromChat();
   await click(row("합성 영상 2"));
   await settle();
   assert.match(resultText(), /합성 영상 오류 2/);

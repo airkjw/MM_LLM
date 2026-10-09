@@ -16,13 +16,13 @@ for (const [name, value] of Object.entries({ window: browser, document: browser.
 Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { value: true, configurable: true });
 const { act } = React;
 let createRoot: typeof import("react-dom/client")["createRoot"];
-let ResearchPanel: typeof import("../src/renderer/src/ResearchPanel")["ResearchPanel"];
+let ResearchScreen: typeof import("../src/renderer/src/ResearchScreen")["ResearchScreen"];
 let ProjectRetrievalSettings: typeof import("../src/renderer/src/ProjectRetrievalSettings")["ProjectRetrievalSettings"];
 let ConfirmProvider: typeof import("../src/renderer/src/components/ConfirmDialog")["ConfirmProvider"];
 let root: Root | null = null; let host: HTMLDivElement | null = null;
 before(async () => {
   ({ createRoot } = await import("react-dom/client"));
-  ({ ResearchPanel } = await import("../src/renderer/src/ResearchPanel"));
+  ({ ResearchScreen } = await import("../src/renderer/src/ResearchScreen"));
   ({ ProjectRetrievalSettings } = await import("../src/renderer/src/ProjectRetrievalSettings"));
   ({ ConfirmProvider } = await import("../src/renderer/src/components/ConfirmDialog"));
 });
@@ -47,12 +47,15 @@ async function readyResearch(search: () => Promise<ResearchResult> = async () =>
   Object.assign(browser, { mmllm: { discoverResearch: async () => { counts.discover++; return [suite]; },
     listResearchTools: async () => { counts.tools++; return [tool, { ...tool, token: "unknown", executable: false, reason: "미검토 스키마" }]; },
     searchResearch: async () => { counts.search++; return search(); }, cancelResearch: async () => { counts.cancel++; }, openExternal: async () => {} } });
-  await render(<ResearchPanel onEvidence={(text) => evidence.push(text)} />); assert.deepEqual(counts, { discover: 0, tools: 0, search: 0, cancel: 0 });
+  // Stage 4 (D4.3): ResearchScreen absorbed ResearchPanel; the suite is a select, tools are a selectable list.
+  await render(<ResearchScreen onEvidence={(text) => evidence.push(text)} />); assert.deepEqual(counts, { discover: 0, tools: 0, search: 0, cancel: 0 });
   await click(button("검색 도구 확인")); assert.equal(counts.discover, 1); assert.equal(counts.tools, 0);
-  await select(field("발견한 묶음").querySelector("select")!, suite.slug); assert.equal(counts.tools, 0);
-  await click(button("선택한 묶음")); await select(field("도구").querySelector("select")!, tool.token);
+  await select(field("검색 묶음").querySelector("select")!, suite.slug); assert.equal(counts.tools, 0);
+  await click(button("선택한 묶음")); await click(toolRows()[0]);
   return { counts, evidence };
 }
+const toolRows = () => [...document.querySelectorAll<HTMLButtonElement>(".research-tools button")];
+const resultChecks = () => [...document.querySelectorAll<HTMLInputElement>(".research-result input[type='checkbox']")];
 test("actual research DOM only discovers selected suite by explicit action, typing is free and results preserve provenance", async () => {
   const { counts, evidence } = await readyResearch();
   await input(field("words").querySelector("input")!, "합성 질의"); assert.equal(counts.search, 0);
@@ -61,9 +64,14 @@ test("actual research DOM only discovers selected suite by explicit action, typi
   assert.match(document.body.textContent!, /https:\/\/example.org\/original/); assert.match(document.body.textContent!, /2026-10-08T10:00:00Z/);
   assert.match(document.body.textContent!, /초록은 원문 전체가 아닙니다.*현행 여부 미확인/);
   assert.equal(document.querySelector("script"), null);
+  // Evidence carries only the results the student ticked (D4.3); with nothing ticked the action is disabled.
+  assert.equal(button("근거 추가").disabled, true); await click(button("근거 추가")); assert.equal(evidence.length, 0);
+  await click(resultChecks()[0]);
   await click(button("근거 추가")); assert.match(evidence[0], /신뢰하지 않는 자료/); assert.match(evidence[0], /원래|example.org\/original/);
-  await select(field("도구").querySelector("select")!, "unknown"); assert.equal(button("검색 실행").disabled, true);
-  await click(button("검색 실행")); assert.equal(counts.search, 1);
+  // An unreviewed tool is listed but cannot be selected or run.
+  const unknown = toolRows()[1]; assert.equal(unknown.getAttribute("aria-disabled"), "true"); assert.match(unknown.textContent!, /실행 미검토/);
+  await click(unknown); assert.equal(toolRows()[1].getAttribute("aria-pressed"), "false"); assert.equal(toolRows()[0].getAttribute("aria-pressed"), "true");
+  assert.equal(counts.search, 1);
 });
 test("actual research component cancels on close and drops a delayed response", async () => {
   let resolve!: (value: ResearchResult) => void;
@@ -135,7 +143,7 @@ test("actual project back-to-back search clicks make one call and cancel the sam
 });
 
 // Exercise the real DOM transition, while the main IPC test independently validates the boundary.
-test("actual ResearchPanel optional enum query -> papers -> omission deletes the argument", async () => {
+test("actual ResearchScreen optional enum query -> papers -> omission deletes the argument", async () => {
   const { validateResearchArguments } = await import("../src/shared/research");
   const scoped = { ...tool, fields: [...tool.fields, { name: "scope", type: "string" as const, required: false, enum: ["papers", "laws"] }] };
   const args: Record<string, unknown>[] = [];
@@ -144,7 +152,7 @@ test("actual ResearchPanel optional enum query -> papers -> omission deletes the
   window.mmllm.searchResearch = async (_id, _token, value) => {
     validateResearchArguments(scoped.fields, value); args.push(structuredClone(value)); return result;
   };
-  await click(button("선택한 묶음")); await select(field("도구").querySelector("select")!, tool.token);
+  await click(button("선택한 묶음")); await click(toolRows()[0]);
   await input(field("words").querySelector("input")!, "Synthetic"); await click(button("검색 실행"));
   const scope = field("scope").querySelector("select")!;
   await select(scope, "papers"); await click(button("검색 실행"));

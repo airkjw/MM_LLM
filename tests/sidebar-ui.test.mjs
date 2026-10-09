@@ -70,7 +70,9 @@ test("sidebar exposes the accepted compact navigation and account semantics", ()
   assert.doesNotMatch(rail + sidebar, /credit-card/);
   assert.match(rail, /\{ id: "media", label: "미디어", icon: ImageIcon \}/);
   assert.match(rail, /<nav className="rail" aria-label="주 탐색">/);
-  assert.match(rail, /role="dialog" aria-modal="false"/);
+  // Risk 6 (Stage 4): the nonmodal account popover left the rail; the avatar opens the settings screen's account category.
+  assert.doesNotMatch(rail, /role="dialog"/);
+  assert.match(rail, /onOpenAccount\(returnTo\(trigger\)\)/);
   assert.match(listColumn, /role="menu"/);
   assert.match(listColumn, /role="menuitem"/);
   assert.match(shell, /잔액 없음/);

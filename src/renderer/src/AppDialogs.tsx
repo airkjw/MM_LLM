@@ -1,14 +1,11 @@
-import { Bot, CircleHelp, Edit3, FileText, FolderOpen, Paperclip, Plus, Search, Settings, ShieldCheck, Trash2, X } from "lucide-react";
-import type { AppSettings, ChatbotBookmark, ChatbotUsageReport, GatewayModel, ProjectSummary, ThreadSnapshot, ThreadSummary } from "../../shared/contracts";
-import { useState } from "react";
+import { CircleHelp, Edit3, FileText, FolderOpen, Paperclip, Plus, ShieldCheck, Trash2, X } from "lucide-react";
+import type { GatewayModel, ProjectSummary, ThreadSnapshot, ThreadSummary } from "../../shared/contracts";
 import { ProjectRetrievalSettings } from "./ProjectRetrievalSettings";
-import { ResearchPanel } from "./ResearchPanel";
-import { BackupPanel } from "./components/BackupPanel";
-import { DiagnosticButton } from "./components/DiagnosticButton";
-import { Notice, type NoticeState } from "./components/Notice";
-import { type FocusReturnTarget } from "./components/Sidebar";
 
-import { errorText } from "./ui-shared";
+/**
+ * The dialogs left after Stage 4 (contract D4.9): rename and API key replace. Research, chatbot and settings are
+ * screens now; the projects dialog stays only until the projects screen is wired.
+ */
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
 
 type Props = {
@@ -20,22 +17,6 @@ type Props = {
   saveRenamedConversation: () => Promise<void>;
   renameInputRef: React.RefObject<HTMLInputElement | null>;
   setRenameDialog: React.Dispatch<React.SetStateAction<RenameDialogState | null>>;
-  toolsOpen: boolean;
-  bookmarkBusy: boolean;
-  closeTools: () => void;
-  toolsRef: React.RefObject<HTMLDivElement | null>;
-  toolsTab: "research" | "chatbot";
-  toolsNotice: NoticeState | null;
-  clearToolsNotice: () => void;
-  bookmarkDraft: { alias: string; chatbotId: string; };
-  setBookmarkDraft: React.Dispatch<React.SetStateAction<{ alias: string; chatbotId: string; }>>;
-  saveBookmark: () => Promise<void>;
-  bookmarks: ChatbotBookmark[];
-  openChatbot: (bookmarkId: string) => Promise<void>;
-  loadChatbotUsage: (bookmarkId: string) => Promise<void>;
-  setBookmarks: React.Dispatch<React.SetStateAction<ChatbotBookmark[]>>;
-  setError: (text: string) => void;
-  chatbotUsage: { bookmarkId: string; report: ChatbotUsageReport; } | null;
   projectsOpen: boolean;
   projectBusy: boolean;
   closeProjects: () => void;
@@ -59,21 +40,9 @@ type Props = {
   replacementKey: string;
   setReplacementKey: React.Dispatch<React.SetStateAction<string>>;
   replaceApiKey: () => Promise<void>;
-  settingsOpen: boolean;
-  settingsDraft: AppSettings | null;
-  settingsSaving: boolean;
-  closeSettings: () => void;
-  settingsRef: React.RefObject<HTMLDivElement | null>;
-  modelId: string;
-  setSettingsDraft: React.Dispatch<React.SetStateAction<AppSettings | null>>;
-  saveGlobalSettings: () => Promise<void>;
-  researchOpen?: boolean; setResearchOpen?: (open: boolean | ((open: boolean) => boolean)) => void;
 };
 
-export function AppDialogs({ retrievalModels, onResearchEvidence, renameDialog, closeRename, renameRef, saveRenamedConversation, renameInputRef, setRenameDialog, toolsOpen, bookmarkBusy, closeTools, toolsRef, toolsTab, toolsNotice, clearToolsNotice, bookmarkDraft, setBookmarkDraft, saveBookmark, bookmarks, openChatbot, loadChatbotUsage, setBookmarks, setError, chatbotUsage, projectsOpen, projectBusy, closeProjects, projectsRef, selectedProjectId, setSelectedProjectId, setProjectDraft, projects, projectDraft, saveProject, removeProjectDocument, addDocumentToProject, thread, assignCurrentThreadToProject, createProjectThread, removeProject, keyReplaceOpen, keyReplacing, closeKeyReplace, keyReplaceRef, replacementKey, setReplacementKey, replaceApiKey, settingsOpen, settingsDraft, settingsSaving, closeSettings, settingsRef, modelId, setSettingsDraft, saveGlobalSettings, ...researchControl }: Props) {
-  const [researchOpenState, setResearchOpenState] = useState(false);
-  const [researchOpen, setResearchOpen] = researchControl.setResearchOpen
-    ? [Boolean(researchControl.researchOpen), researchControl.setResearchOpen] : [researchOpenState, setResearchOpenState];
+export function AppDialogs({ retrievalModels, onResearchEvidence, renameDialog, closeRename, renameRef, saveRenamedConversation, renameInputRef, setRenameDialog, projectsOpen, projectBusy, closeProjects, projectsRef, selectedProjectId, setSelectedProjectId, setProjectDraft, projects, projectDraft, saveProject, removeProjectDocument, addDocumentToProject, thread, assignCurrentThreadToProject, createProjectThread, removeProject, keyReplaceOpen, keyReplacing, closeKeyReplace, keyReplaceRef, replacementKey, setReplacementKey, replaceApiKey }: Props) {
   return <>
       {renameDialog && <div className="dialog-backdrop" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !renameDialog.busy) closeRename();
@@ -94,43 +63,6 @@ export function AppDialogs({ retrievalModels, onResearchEvidence, renameDialog, 
             !renameDialog.value.trim() || renameDialog.value.trim() === renameDialog.thread.title}>
             {renameDialog.busy ? "저장 중…" : "저장"}</button></div>
       </form></div>}
-      {toolsOpen && <div className="dialog-backdrop" onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !bookmarkBusy) closeTools();
-      }}><div className="dialog-card workspace-tools-dialog" role="dialog" aria-modal="true"
-        aria-labelledby="workspace-tools-title" ref={toolsRef} tabIndex={-1}>
-        <div className="dialog-title">{researchOpen ? <Search size={21} /> : <Bot size={21} />}<h3 id="workspace-tools-title">{researchOpen ? "논문·법령 검색" : "Studio Chatbot"}</h3>
-          <button type="button" className="icon-button dialog-close" aria-label="워크스페이스 도구 닫기" onClick={closeTools}
-            disabled={bookmarkBusy}><X size={18} /></button></div>
-        <button type="button" className="secondary-button" aria-pressed={researchOpen}
-          onClick={() => setResearchOpen((open) => !open)} disabled={bookmarkBusy}>
-          {researchOpen ? "기존 도구로 돌아가기" : "논문·법령 검색"}</button>
-        {researchOpen ? <ResearchPanel onEvidence={onResearchEvidence} /> : <section className="chatbot-panel" aria-label="Studio Chatbot 관리">
-          <div className="audit-notice" role="note"><ShieldCheck size={16} />Studio Chatbot은 원격 서비스에 대화 감사 로그를 저장할 수 있습니다.
-            모델·전역/프로젝트 지침·첨부는 전송하지 않고 문서화된 텍스트 메시지만 보냅니다.</div>
-          <div className="bookmark-form"><label>별칭<input value={bookmarkDraft.alias} maxLength={80} disabled={bookmarkBusy}
-            onChange={(event) => setBookmarkDraft((value) => ({ ...value, alias: event.target.value }))} /></label>
-            <label>Chatbot ID<input value={bookmarkDraft.chatbotId} maxLength={200} disabled={bookmarkBusy}
-              onChange={(event) => setBookmarkDraft((value) => ({ ...value, chatbotId: event.target.value }))} /></label>
-            <button type="button" className="primary-button" disabled={bookmarkBusy || !bookmarkDraft.alias.trim() || !bookmarkDraft.chatbotId.trim()}
-              onClick={() => void saveBookmark()}>북마크 저장</button></div>
-          <div className="bookmark-list">{bookmarks.length === 0 && <p>저장된 챗봇이 없습니다. ChatKHU Studio에서 받은 ID를 직접 등록하세요.</p>}
-            {bookmarks.map((bookmark) => <div key={bookmark.id}><Bot size={16} /><span><strong>{bookmark.alias}</strong>
-              <small>{bookmark.chatbotId}</small></span><button type="button" className="secondary-button" disabled={bookmarkBusy}
-                onClick={() => void openChatbot(bookmark.id)}>대화 시작</button><button type="button" className="secondary-button"
-                disabled={bookmarkBusy} onClick={() => void loadChatbotUsage(bookmark.id)}>사용량</button><button type="button" className="icon-button"
-                aria-label={`${bookmark.alias} 삭제`} disabled={bookmarkBusy} onClick={() => void window.mmllm.deleteChatbotBookmark(bookmark.id)
-                  .then(async () => setBookmarks(await window.mmllm.listChatbotBookmarks())).catch((error) => setError(errorText(error)))}>
-                <Trash2 size={14} /></button></div>)}</div>
-          {chatbotUsage && <section className="chatbot-usage" aria-live="polite"><strong>챗봇 사용량</strong>
-            <small>{new Date(chatbotUsage.report.retrievedAt).toLocaleString("ko-KR")}</small>
-            {chatbotUsage.report.summary.map((line) => <div key={line}>{line}</div>)}
-            <details><summary>안전하게 정규화된 상세 응답</summary>
-              <pre>{JSON.stringify(chatbotUsage.report.data, null, 2)}</pre></details></section>}
-        </section>}
-        <Notice notice={toolsNotice} onClose={clearToolsNotice} />
-        <div className="dialog-actions"><button type="button" className="secondary-button" onClick={closeTools}
-          disabled={bookmarkBusy}>닫기</button></div>
-      </div></div>}
       {projectsOpen && <div className="dialog-backdrop" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !projectBusy) closeProjects();
       }}><div className="dialog-card projects-dialog" role="dialog" aria-modal="true"
@@ -206,31 +138,6 @@ export function AppDialogs({ retrievalModels, onResearchEvidence, renameDialog, 
           onClick={closeKeyReplace} disabled={keyReplacing}>취소</button>
           <button type="button" className="primary-button" disabled={keyReplacing || !replacementKey.trim()}
             onClick={() => void replaceApiKey()}>{keyReplacing ? "검증 중…" : "검증하고 교체"}</button></div>
-      </div></div>}
-      {settingsOpen && settingsDraft && <div className="dialog-backdrop" onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !settingsSaving) closeSettings();
-      }}><div className="dialog-card settings-dialog"
-        role="dialog" aria-modal="true" aria-labelledby="settings-title" ref={settingsRef} tabIndex={-1}>
-        <div className="dialog-title"><Settings size={21} /><h3 id="settings-title">앱 설정</h3></div>
-        <p className="settings-description">화면과 답변의 기본 방식을 설정하세요.</p>
-        <div className="settings-inline"><label>테마<select value={settingsDraft.theme} disabled={settingsSaving}
-          onChange={(event) => setSettingsDraft((value) => value ? { ...value, theme: event.target.value as AppSettings["theme"] } : value)}>
-          <option value="system">시스템</option><option value="light">라이트</option><option value="dark">다크</option>
-        </select></label><label>글자 크기<select value={settingsDraft.fontSize} disabled={settingsSaving}
-          onChange={(event) => setSettingsDraft((value) => value ? { ...value, fontSize: event.target.value as AppSettings["fontSize"] } : value)}>
-          <option value="small">작게</option><option value="medium">보통</option><option value="large">크게</option>
-        </select></label></div>
-        <label className="settings-field">전역 기본 지침
-          <textarea value={settingsDraft.defaultInstruction} maxLength={12000} disabled={settingsSaving}
-            onChange={(event) => setSettingsDraft((value) => value ? { ...value, defaultInstruction: event.target.value } : value)} />
-          <small>모든 대화에 적용됩니다. 대화별 지침은 더 구체적인 경우 우선합니다.</small>
-        </label>
-        <div className="dialog-actions"><button type="button" className="secondary-button" onClick={closeSettings}
-          disabled={settingsSaving}>취소</button>
-          <button type="button" className="primary-button" onClick={() => void saveGlobalSettings()}
-            disabled={settingsSaving}>{settingsSaving ? "저장 중…" : "저장"}</button></div>
-        <details className="settings-disclosure"><summary>백업 · 복원</summary><BackupPanel /></details>
-        <details className="settings-disclosure"><summary>진단 정보</summary><DiagnosticButton stage="general" modelId={modelId} /></details>
       </div></div>}
   </>;
 }

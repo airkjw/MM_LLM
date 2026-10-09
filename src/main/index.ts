@@ -55,7 +55,7 @@ import {
 import { combinedProjectInstruction, hasFixedTemperature, reasoningSupport } from "../shared/chat-options";
 import { safeExportFilename, serializeThreadMarkdown } from "../shared/thread-export";
 import {
-  assertAllowedKeys, IPC_ALLOWED_KEYS, validatedAdvancedSettings, validatedImageOptions, validatedLanguageHints, validatedMusicOptions,
+  assertAllowedKeys, IPC_ALLOWED_KEYS, validatedAdvancedSettings, validatedSettingsUpdate, validatedImageOptions, validatedLanguageHints, validatedMusicOptions,
   validatedSpeakers, validatedTtsVoice, validatedVideoOptions
 } from "../shared/request-validation";
 import { assertAdvancedOptionsForModel, isClaudeModel, validateManualToolResult } from "../shared/advanced-chat";
@@ -578,14 +578,7 @@ function registerHandlers(): void {
   });
   ipcMain.handle("settings:update", async (event, raw: unknown) => {
     trustedInvoke(event); assertSessionStable();
-    if (!isRecord(raw)) throw new Error("설정이 올바르지 않습니다.");
-    assertAllowedKeys(raw, IPC_ALLOWED_KEYS.settingsUpdate, "앱");
-    const theme = raw.theme; const fontSize = raw.fontSize;
-    if (!["system", "light", "dark"].includes(String(theme)) ||
-      !["small", "medium", "large"].includes(String(fontSize))) throw new Error("화면 설정이 올바르지 않습니다.");
-    const defaultInstruction = typeof raw.defaultInstruction === "string"
-      ? raw.defaultInstruction.trim().slice(0, 12_000) : "";
-    return saveSettings({ defaultInstruction, theme, fontSize } as AppSettings);
+    return saveSettings(validatedSettingsUpdate(raw));
   });
   ipcMain.handle("appearance:set-theme", async (event, rawTheme: unknown) => {
     trustedInvoke(event);

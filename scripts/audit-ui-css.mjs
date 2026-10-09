@@ -80,9 +80,12 @@ const AMBER_FACE_BORDER_SELECTORS = [".privacy-modal-actions .privacy-modal-prim
 // The compare dialog's .compare-controls select became the composer comparison consent checkbox
 // (.composer-compare-consent; R-3 F3 renamed it from .compare-consent, which project retrieval labels use), and the search
 // dialog's .dialog-search-input became the command palette field (.command-palette-input, underline boundary).
+// Stage 4 (contract D4.9): the settings dialog's ".settings-inline select" became the settings screen's switch track
+// (".settings-switch"), and the theme cards' radio dot (".theme-radio") is a new control boundary. The removed tools
+// dialog's ".workspace-tool-tabs button:disabled" exception became the research screen's ".research-tool:disabled".
 const CONTROL_BOUNDARIES = [
   ".login-card form input", ".composer-card", ".model-search", ".media-textarea", ".media-controls select", ".meeting-options input",
-  ".settings-field input", ".settings-field select", ".settings-field textarea", ".settings-inline select",
+  ".settings-field input", ".settings-field select", ".settings-field textarea", ".settings-switch", ".theme-radio",
   ".advanced-grid input", ".advanced-grid select", ".advanced-section select", ".command-palette-input", ".custom-check",
   ".advanced-section textarea", ".media-controls input", ".speaker-grid input", ".speaker-grid select",
   ".music-options input", ".music-options textarea", ".composer-compare-consent input[type=\"checkbox\"]", ".bookmark-form input",
@@ -193,7 +196,7 @@ const AUDITED_SELECTOR_EXCEPTIONS = new Map([
   [".reference-button", new Set([".reference-button.drop-active"])],
   [".file-drop", new Set([".file-drop.drop-active"])],
   [".send-button.stop", new Set([".send-button.stop:disabled"])],
-  ["button:disabled", new Set([".privacy-modal-actions button:disabled", ".workspace-tool-tabs button:disabled"])],
+  ["button:disabled", new Set([".privacy-modal-actions button:disabled", ".research-tool:disabled"])],
 ]);
 
 // Composer buttons that replaced audited selects and the model trigger (contract D3.2). Each state names the token
