@@ -87,7 +87,7 @@ test("a main-process theme push changes only the root dataset and keeps the open
     Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")!.set!.call(input, "합성 초안");
     input.dispatchEvent(new browser.Event("input", { bubbles: true }));
   });
-  await click(document.querySelector(".model-trigger")!);
+  await click(document.querySelector(".composer-model-token.primary")!);
   const popover = document.querySelector(".model-popover");
   assert.ok(popover, "the model picker popover is open");
   const focused = document.activeElement;
