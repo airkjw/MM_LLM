@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+</helmet>
+<div style="color-scheme:{{ scheme }};width:1280px;height:820px;">
+<div style="--base:light-dark(#F6F7F8,#0D0E10);--panel:light-dark(#FFFFFF,#131518);--field:light-dark(#FFFFFF,#16181B);--raised:light-dark(#EDEFF2,#1D2024);--sub:light-dark(#E7E9EC,#1F2227);--line:light-dark(#DCDFE3,#2A2E33);--ink:light-dark(#15171A,#ECEEF0);--body:light-dark(#2E333A,#C9CDD2);--ink2:light-dark(#4F5660,#A3A9B1);--ink3:light-dark(#646B75,#7D848D);--acc:#E5B04A;--acc-ink:#1A1306;--acc-text:light-dark(#8A5A00,#E5B04A);--acc-soft:light-dark(#FBF0D9,#2A2316);--ok:light-dark(#2E7D4F,#6FBF8E);width:1280px;height:820px;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);background:var(--base);color:var(--ink);border-radius:12px;overflow:hidden;box-shadow:0 24px 48px -16px light-dark(rgba(21,23,26,.18),rgba(0,0,0,.45)),0 0 0 1px light-dark(#E2E4E7,transparent);font-family:'Pretendard Variable',Pretendard,sans-serif;transition:background-color .25s,color .25s;">
+<div style="padding:56px 64px;display:flex;flex-direction:column;justify-content:space-between;border-right:1px solid var(--sub);">
+<div style="display:flex;align-items:center;gap:10px;"><span style="width:30px;height:30px;border-radius:8px;background:var(--acc);color:var(--acc-ink);display:flex;align-items:center;justify-content:center;font:600 12px/1 'JetBrains Mono',monospace;">M</span><span style="font:600 15px/1 'Pretendard Variable',sans-serif;">MM_LLM</span></div>
+<div style="display:flex;flex-direction:column;gap:20px;">
+<span style="font:500 12px/1 'JetBrains Mono',monospace;color:var(--acc-text);letter-spacing:.08em;">KYUNG HEE UNIVERSITY · MEDICAL MBA</span>
+<span style="font:600 44px/1.25 'Pretendard Variable',sans-serif;letter-spacing:-.03em;">의료의 미래를 읽고,<br>경영의 답을 설계하다</span>
+<span style="font:400 16px/1.65 'Pretendard Variable',sans-serif;color:var(--ink2);max-width:440px;text-wrap:pretty;">ChatKHU API 키 하나로 대화, 모델 비교, 논문·법령 검색, 이미지·오디오·비디오 생성까지.</span>
+</div>
+<div style="display:flex;gap:20px;font:400 12px/1 'Pretendard Variable',sans-serif;color:var(--ink3);"><span style="display:flex;align-items:center;gap:6px;"><i data-lucide="lock" style="width:13px;height:13px;"></i>키는 OS 보안 저장소에만 보관</span><span style="display:flex;align-items:center;gap:6px;"><i data-lucide="hard-drive" style="width:13px;height:13px;"></i>대화 기록은 기기 안 암호화</span></div>
+</div>
+<div style="display:flex;align-items:center;justify-content:center;padding:48px;">
+<div style="width:100%;max-width:400px;display:flex;flex-direction:column;gap:24px;">
+<div style="display:flex;flex-direction:column;gap:8px;"><span style="font:600 22px/1.3 'Pretendard Variable',sans-serif;letter-spacing:-.01em;">API 키로 시작하기</span><span style="font:400 14px/1.5 'Pretendard Variable',sans-serif;color:var(--ink2);">ChatKHU에서 발급한 API 키를 붙여 넣으세요.</span></div>
+<div style="display:flex;flex-direction:column;gap:8px;"><span style="font:500 12px/1 'Pretendard Variable',sans-serif;color:var(--ink2);">API 키</span><div style="height:42px;border-radius:8px;background:var(--field);box-shadow:inset 0 0 0 1px var(--acc-text),0 0 0 3px var(--acc-soft);display:flex;align-items:center;gap:8px;padding:0 12px;"><span style="flex:1;font:400 14px/1 'JetBrains Mono',monospace;letter-spacing:.1em;">••••••••••••••••••••</span><i data-lucide="eye" style="width:16px;height:16px;color:var(--ink2);"></i></div></div>
+<span style="display:flex;align-items:center;gap:8px;font:400 13px/1 'Pretendard Variable',sans-serif;color:var(--body);"><span style="width:16px;height:16px;border-radius:4px;background:var(--acc);color:var(--acc-ink);display:flex;align-items:center;justify-content:center;"><i data-lucide="check" style="width:12px;height:12px;"></i></span>이 기기에서 자동 로그인</span>
+<span style="height:42px;border-radius:8px;background:var(--acc);color:var(--acc-ink);display:flex;align-items:center;justify-content:center;gap:8px;font:600 15px/1 'Pretendard Variable',sans-serif;">시작하기<i data-lucide="arrow-right" style="width:16px;height:16px;"></i></span>
+<div style="border-radius:10px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);padding:16px 18px;display:flex;flex-direction:column;gap:12px;">
+<div style="display:flex;align-items:center;justify-content:space-between;"><span style="font:600 13px/1 'Pretendard Variable',sans-serif;">API 키 발급 방법</span><span style="display:flex;align-items:center;gap:4px;font:500 12px/1 'Pretendard Variable',sans-serif;color:var(--acc-text);">ChatKHU 열기<i data-lucide="arrow-up-right" style="width:12px;height:12px;"></i></span></div>
+<div style="display:flex;flex-direction:column;gap:8px;font:400 13px/1.45 'Pretendard Variable',sans-serif;color:var(--body);">
+<span style="display:flex;gap:10px;"><span style="font:500 12px/1.6 'JetBrains Mono',monospace;color:var(--ink3);">01</span>Info21 계정으로 ChatKHU 로그인</span>
+<span style="display:flex;gap:10px;"><span style="font:500 12px/1.6 'JetBrains Mono',monospace;color:var(--ink3);">02</span>왼쪽 아래 API Gateway → API 키 생성</span>
+<span style="display:flex;gap:10px;"><span style="font:500 12px/1.6 'JetBrains Mono',monospace;color:var(--ink3);">03</span>이름 입력 후 생성, 키 복사 (한 번만 표시)</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:820},&quot;scheme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light dark&quot;,&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light dark&quot;,&quot;tsType&quot;:&quot;'light dark' | 'light' | 'dark'&quot;}}">
+class Component extends DCLogic {
+  componentDidMount() {
+    const run = () => window.lucide && window.lucide.createIcons({ attrs: { "stroke-width": 1.75 } });
+    run(); setTimeout(run, 300); setTimeout(run, 1200);
+  }
+  renderVals() { return { scheme: this.props.scheme ?? "light dark" }; }
+}
+</script>
+</body>
+</html>

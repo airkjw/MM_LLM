@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+</helmet>
+<div style="color-scheme:{{ scheme }};width:1280px;height:820px;">
+<div style="--base:light-dark(#F6F7F8,#0D0E10);--panel:light-dark(#FFFFFF,#131518);--field:light-dark(#FFFFFF,#16181B);--raised:light-dark(#EDEFF2,#1D2024);--sub:light-dark(#E7E9EC,#1F2227);--line:light-dark(#DCDFE3,#2A2E33);--ink:light-dark(#15171A,#ECEEF0);--body:light-dark(#2E333A,#C9CDD2);--ink2:light-dark(#4F5660,#A3A9B1);--ink3:light-dark(#646B75,#7D848D);--acc:#E5B04A;--acc-ink:#1A1306;--acc-text:light-dark(#8A5A00,#E5B04A);--acc-soft:light-dark(#FBF0D9,#2A2316);--ok:light-dark(#2E7D4F,#6FBF8E);--shadow:light-dark(0 1px 2px rgba(21,23,26,.06),none);--stripe:repeating-linear-gradient(135deg,light-dark(#EDEFF2,#1A1D21) 0 10px,light-dark(#F6F7F8,#16181B) 10px 20px);width:1280px;height:820px;display:flex;background:var(--base);color:var(--ink);border-radius:12px;overflow:hidden;box-shadow:0 24px 48px -16px light-dark(rgba(21,23,26,.18),rgba(0,0,0,.45)),0 0 0 1px light-dark(#E2E4E7,transparent);font-family:'Pretendard Variable',Pretendard,sans-serif;transition:background-color .25s,color .25s;">
+<nav style="width:56px;flex-shrink:0;border-right:1px solid var(--sub);display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:6px;">
+<span style="width:30px;height:30px;border-radius:8px;background:var(--acc);color:var(--acc-ink);display:flex;align-items:center;justify-content:center;font:600 12px/1 'JetBrains Mono',monospace;margin-bottom:12px;">M</span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="message-square" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="columns-3" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="book-open-text" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;background:var(--raised);color:var(--acc-text);display:flex;align-items:center;justify-content:center;"><i data-lucide="image" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="audio-lines" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="folder" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="bot" style="width:18px;height:18px;"></i></span>
+<span style="flex:1;"></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="settings" style="width:18px;height:18px;"></i></span>
+<span style="width:30px;height:30px;border-radius:50%;background:var(--raised);display:flex;align-items:center;justify-content:center;font:600 12px/1 'Pretendard Variable',sans-serif;">권</span>
+</nav>
+<aside style="width:340px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--sub);display:flex;flex-direction:column;">
+<div style="height:52px;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid var(--sub);"><div style="display:grid;grid-template-columns:repeat(3,1fr);width:100%;padding:3px;background:var(--raised);border-radius:8px;font:500 13px/1 'Pretendard Variable',sans-serif;"><span style="height:28px;display:flex;align-items:center;justify-content:center;gap:6px;background:var(--panel);border-radius:6px;box-shadow:light-dark(0 1px 2px rgba(21,23,26,.12),inset 0 0 0 1px #2A2E33);"><i data-lucide="image" style="width:14px;height:14px;"></i>이미지</span><span style="height:28px;display:flex;align-items:center;justify-content:center;gap:6px;color:var(--ink2);"><i data-lucide="audio-lines" style="width:14px;height:14px;"></i>오디오</span><span style="height:28px;display:flex;align-items:center;justify-content:center;gap:6px;color:var(--ink2);"><i data-lucide="clapperboard" style="width:14px;height:14px;"></i>비디오</span></div></div>
+<div style="flex:1;padding:18px 16px;display:flex;flex-direction:column;gap:18px;">
+<div style="display:flex;flex-direction:column;gap:8px;"><span style="font:500 12px/1 'Pretendard Variable',sans-serif;color:var(--ink2);">모델</span><div style="height:36px;border-radius:7px;background:var(--field);box-shadow:inset 0 0 0 1px var(--line);display:flex;align-items:center;gap:8px;padding:0 10px;font:500 13px/1 'Pretendard Variable',sans-serif;"><span style="flex:1;">GPT Image 2</span><span style="font:400 12px/1 'JetBrains Mono',monospace;color:var(--ink3);">gpt-image-2</span><i data-lucide="chevrons-up-down" style="width:14px;height:14px;color:var(--ink3);"></i></div></div>
+<div style="display:flex;flex-direction:column;gap:8px;"><span style="font:500 12px/1 'Pretendard Variable',sans-serif;color:var(--ink2);">프롬프트</span><div style="height:112px;box-sizing:border-box;border-radius:7px;background:var(--field);box-shadow:inset 0 0 0 1px var(--acc-text),0 0 0 3px var(--acc-soft);padding:10px;font:400 14px/1.6 'Pretendard Variable',sans-serif;">의료경영 논문 발표용, 밝은 외래 대기실을 위에서 내려다본 일러스트. 차분한 색감, 사람 얼굴은 식별되지 않게.</div></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+<div style="display:flex;flex-direction:column;gap:8px;"><span style="font:500 12px/1 'Pretendard Variable',sans-serif;color:var(--ink2);">품질</span><div style="display:grid;grid-template-columns:repeat(3,1fr);padding:3px;background:var(--raised);border-radius:8px;font:500 12px/1 'Pretendard Variable',sans-serif;"><span style="height:26px;display:flex;align-items:center;justify-content:center;color:var(--ink2);">낮음</span><span style="height:26px;display:flex;align-items:center;justify-content:center;background:var(--panel);border-radius:6px;box-shadow:light-dark(0 1px 2px rgba(21,23,26,.12),inset 0 0 0 1px #2A2E33);">보통</span><span style="height:26px;display:flex;align-items:center;justify-content:center;color:var(--ink2);">높음</span></div></div>
+<div style="display:flex;flex-direction:column;gap:8px;"><span style="font:500 12px/1 'Pretendard Variable',sans-serif;color:var(--ink2);">비율</span><div style="display:grid;grid-template-columns:repeat(3,1fr);padding:3px;background:var(--raised);border-radius:8px;font:500 12px/1 'JetBrains Mono',monospace;"><span style="height:26px;display:flex;align-items:center;justify-content:center;color:var(--ink2);">1:1</span><span style="height:26px;display:flex;align-items:center;justify-content:center;background:var(--panel);border-radius:6px;box-shadow:light-dark(0 1px 2px rgba(21,23,26,.12),inset 0 0 0 1px #2A2E33);">16:9</span><span style="height:26px;display:flex;align-items:center;justify-content:center;color:var(--ink2);">3:4</span></div></div>
+</div>
+<div style="height:56px;border-radius:8px;border:1px dashed var(--line);display:flex;align-items:center;justify-content:center;gap:8px;font:400 13px/1 'Pretendard Variable',sans-serif;color:var(--ink2);"><i data-lucide="image-plus" style="width:16px;height:16px;"></i>참고 이미지를 끌어 놓거나 선택</div>
+<span style="display:flex;align-items:center;gap:8px;font:400 13px/1.4 'Pretendard Variable',sans-serif;color:var(--body);"><span style="width:16px;height:16px;border-radius:4px;background:var(--acc);color:var(--acc-ink);display:flex;align-items:center;justify-content:center;flex-shrink:0;"><i data-lucide="check" style="width:12px;height:12px;"></i></span>환자 식별정보를 제거한 자료만 전송합니다</span>
+</div>
+<div style="padding:14px 16px;border-top:1px solid var(--sub);display:flex;align-items:center;gap:12px;"><div style="flex:1;display:flex;flex-direction:column;gap:4px;"><span style="font:500 13px/1 'JetBrains Mono',monospace;">≈ 53cr</span><span style="font:400 12px/1 'Pretendard Variable',sans-serif;color:var(--ink3);">잔액 880 · 1장</span></div><span style="height:36px;padding:0 16px;border-radius:7px;background:var(--acc);color:var(--acc-ink);display:flex;align-items:center;gap:6px;font:600 14px/1 'Pretendard Variable',sans-serif;white-space:nowrap;"><i data-lucide="sparkles" style="width:15px;height:15px;"></i>생성하기<span style="font:500 12px/1 'JetBrains Mono',monospace;opacity:.7;">⌘↵</span></span></div>
+</aside>
+<main style="flex:1;min-width:0;display:flex;flex-direction:column;">
+<header style="height:52px;flex-shrink:0;border-bottom:1px solid var(--sub);display:flex;align-items:center;gap:12px;padding:0 20px;"><span style="font:500 14px/1 'Pretendard Variable',sans-serif;">이미지 결과</span><span style="font:400 12px/1 'JetBrains Mono',monospace;color:var(--ink3);">3</span><span style="flex:1;"></span><span style="height:30px;padding:0 10px;border-radius:7px;display:flex;align-items:center;gap:6px;font:500 13px/1 'Pretendard Variable',sans-serif;color:var(--ink2);"><i data-lucide="folder" style="width:14px;height:14px;"></i>졸업논문 · 환자경험</span><span style="height:30px;padding:0 10px;border-radius:7px;box-shadow:inset 0 0 0 1px var(--line);display:flex;align-items:center;gap:6px;font:500 13px/1 'Pretendard Variable',sans-serif;"><i data-lucide="layout-grid" style="width:14px;height:14px;"></i>격자</span></header>
+<div style="flex:1;padding:20px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:min-content;gap:16px;overflow:hidden;">
+<div style="border-radius:10px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--acc),var(--shadow);overflow:hidden;display:flex;flex-direction:column;">
+<div style="aspect-ratio:16/9;background:var(--acc-soft);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;"><span style="font:500 13px/1 'Pretendard Variable',sans-serif;color:var(--acc-text);">생성 중 · 62%</span><div style="width:180px;height:4px;border-radius:2px;background:light-dark(#F1DFB6,#3A301C);"><div style="width:62%;height:4px;border-radius:2px;background:var(--acc);"></div></div><span style="font:400 12px/1 'JetBrains Mono',monospace;color:var(--ink3);">약 20초 남음</span></div>
+<div style="padding:12px 14px;display:flex;align-items:center;gap:10px;"><span style="flex:1;font:400 13px/1.4 'Pretendard Variable',sans-serif;color:var(--body);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">밝은 외래 대기실을 위에서 내려다본 일러스트</span><span style="height:28px;padding:0 10px;border-radius:6px;background:var(--raised);display:flex;align-items:center;font:500 12px/1 'Pretendard Variable',sans-serif;">중지</span></div>
+</div>
+<div style="border-radius:10px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line),var(--shadow);overflow:hidden;display:flex;flex-direction:column;">
+<div style="aspect-ratio:16/9;background:var(--stripe);display:flex;align-items:center;justify-content:center;"><span style="font:400 12px/1 'JetBrains Mono',monospace;color:var(--ink3);">generated image · 16:9</span></div>
+<div style="padding:12px 14px;display:flex;align-items:center;gap:10px;"><span style="flex:1;font:400 13px/1.4 'Pretendard Variable',sans-serif;color:var(--body);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">병원 경영 대시보드 개념도, 회색 톤</span><span style="font:400 12px/1 'JetBrains Mono',monospace;color:var(--ink3);">53cr</span><i data-lucide="download" style="width:15px;height:15px;color:var(--ink2);"></i><i data-lucide="message-square-plus" style="width:15px;height:15px;color:var(--ink2);"></i></div>
+</div>
+<div style="border-radius:10px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line),var(--shadow);overflow:hidden;display:flex;flex-direction:column;">
+<div style="aspect-ratio:16/9;background:var(--stripe);display:flex;align-items:center;justify-content:center;"><span style="font:400 12px/1 'JetBrains Mono',monospace;color:var(--ink3);">generated image · 16:9</span></div>
+<div style="padding:12px 14px;display:flex;align-items:center;gap:10px;"><span style="flex:1;font:400 13px/1.4 'Pretendard Variable',sans-serif;color:var(--body);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">환자 동선 다이어그램 배경, 미니멀</span><span style="font:400 12px/1 'JetBrains Mono',monospace;color:var(--ink3);">53cr</span><i data-lucide="download" style="width:15px;height:15px;color:var(--ink2);"></i><i data-lucide="message-square-plus" style="width:15px;height:15px;color:var(--ink2);"></i></div>
+</div>
+<div style="border-radius:10px;border:1px dashed var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px;"><span style="font:500 13px/1.4 'Pretendard Variable',sans-serif;color:var(--ink2);">결과는 프로젝트에 자동 보관</span><span style="font:400 12px/1.5 'Pretendard Variable',sans-serif;color:var(--ink3);text-align:center;">대화에 첨부하려면 <i data-lucide="message-square-plus" style="width:12px;height:12px;vertical-align:-2px;"></i> 를 누르세요</span></div>
+</div>
+</main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:820},&quot;scheme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light dark&quot;,&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light dark&quot;,&quot;tsType&quot;:&quot;'light dark' | 'light' | 'dark'&quot;}}">
+class Component extends DCLogic {
+  componentDidMount() {
+    const run = () => window.lucide && window.lucide.createIcons({ attrs: { "stroke-width": 1.75 } });
+    run(); setTimeout(run, 300); setTimeout(run, 1200);
+  }
+  renderVals() { return { scheme: this.props.scheme ?? "light dark" }; }
+}
+</script>
+</body>
+</html>

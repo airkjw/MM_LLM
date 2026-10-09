@@ -1,0 +1,122 @@
+/*
+ * MM_LLM Console 테마 토큰 — src/renderer/src/styles.css 교체용 초안
+ * 기존 토큰 이름과 구조(:root / :root[data-theme="dark"])를 그대로 유지해
+ * ui:audit의 "대칭 토큰 · 다크 선택자 단일화 · media query 금지" 계약을 지킨다.
+ * OS 테마 추종은 CSS media query가 아니라 기존 ThemePreference("system") 경로에서
+ * data-theme 값을 바꾸는 방식으로 처리한다 (README §테마 동작).
+ * 신규 토큰: --color-success, --color-success-bg, --radius-*, --font-*  (audit 허용 목록에 추가 필요)
+ */
+:root {
+  color-scheme: light;
+  /* Surfaces */
+  --color-bg: #F6F7F8;              /* base: 앱 바탕, 본문 영역 */
+  --color-bg-clear: #F6F7F800;
+  --color-bg-sidebar: #FFFFFF;      /* panel: 목록/설정 열, 카드, 메뉴 */
+  --color-bg-subtle: #EDEFF2;       /* raised: 선택 행, 세그먼트 트랙, 사용자 말풍선, 칩 */
+  --color-bg-hover: #E4E7EB;
+  --color-bg-selected: #EDEFF2;     /* + 2px 왼쪽 인디케이터(--color-accent-graphic) */
+  /* Text */
+  --color-text: #15171A;
+  --color-text-secondary: #4F5660;
+  --color-text-tertiary: #646B75;
+  /* Lines */
+  --color-border: #E7E9EC;          /* sub: 영역 구분선 */
+  --color-border-strong: #DCDFE3;   /* line: 카드·입력 테두리 */
+  --color-border-control: #8A919B;  /* 체크박스 등 3:1 경계가 필요한 컨트롤 */
+  /* Accent (amber) */
+  --color-accent: #E5B04A;          /* 면 전용: 주요 버튼, 전송, 토글 켬 */
+  --color-accent-hover: #D9A23A;
+  --color-accent-subtle: #FBF0D9;   /* 선택 토큰, 안내 박스, 진행 중 카드 */
+  --color-accent-text: #8A5A00;     /* 흰 바탕 위 앰버 글자/아이콘 (≥4.5:1) */
+  --color-accent-graphic: #B57F12;  /* 2px 인디케이터·포커스·진행 막대 (≥3:1) */
+  --color-progress-fill: #B57F12;
+  --color-progress-track: #DCDFE3;
+  --color-on-accent: #1A1306;       /* 앰버 면 위 글자 — 기존 #FFFFFF에서 변경 */
+  --color-focus-ring: #8A5A00;
+  --color-focus-halo: #E5B04A40;
+  /* Status */
+  --color-danger: #B3261E;
+  --color-danger-bg: #FBE9E7;
+  --color-warning: #7A5300;
+  --color-warning-bg: #FFF6E0;
+  --color-info: #3E5F8A;
+  --color-info-bg: #EEF3F9;
+  --color-new: #8A5A00;
+  --color-new-bg: #FBF0D9;
+  --color-success: #2E7D4F;
+  --color-success-bg: #E4F2E9;
+  /* Speakers — 기존 값 유지 (이름 글자에는 쓰지 않고 마커에만) */
+  --color-speaker-1: #245DCE;
+  --color-speaker-2: #36558F;
+  --color-speaker-3: #14745B;
+  --color-speaker-4: #9B3D69;
+  --color-speaker-5: #7A5300;
+  --color-speaker-6: #8A3B2E;
+  /* Misc */
+  --color-overlay: #15171A47;
+  --color-media-canvas: #EDEFF2;
+  --color-shadow: #15171A0F;
+  --shadow-sm: 0 1px 2px var(--color-shadow);
+  --shadow-md: 0 4px 16px var(--color-shadow);
+  --shadow-lg: 0 12px 32px -8px #15171A38;
+  /* Shape & type (theme-independent) */
+  --radius-xs: 5px;   /* 배지, 모델 토큰, kbd */
+  --radius-sm: 6px;   /* 세그먼트 안쪽, 필터 칩 */
+  --radius-md: 7px;   /* 버튼, 입력 */
+  --radius-lg: 8px;   /* 목록 행, 레일 버튼, 안내 박스 */
+  --radius-xl: 10px;  /* 카드, 입력창(컴포저) */
+  --radius-2xl: 12px; /* 명령 팔레트, 대화상자 */
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #0D0E10;
+  --color-bg-clear: #0D0E1000;
+  --color-bg-sidebar: #131518;
+  --color-bg-subtle: #1D2024;
+  --color-bg-hover: #23272C;
+  --color-bg-selected: #1D2024;
+  --color-text: #ECEEF0;
+  --color-text-secondary: #A3A9B1;
+  --color-text-tertiary: #7D848D;
+  --color-border: #1F2227;
+  --color-border-strong: #2A2E33;
+  --color-border-control: #646B75;
+  --color-accent: #E5B04A;
+  --color-accent-hover: #F0C065;
+  --color-accent-subtle: #2A2316;
+  --color-accent-text: #E5B04A;
+  --color-accent-graphic: #E5B04A;
+  --color-progress-fill: #E5B04A;
+  --color-progress-track: #2A2E33;
+  --color-on-accent: #1A1306;
+  --color-focus-ring: #E5B04A;
+  --color-focus-halo: #E5B04A38;
+  --color-danger: #F08A7E;
+  --color-danger-bg: #2B1716;
+  --color-warning: #F0CF8E;
+  --color-warning-bg: #3A2F17;
+  --color-info: #AFC4E6;
+  --color-info-bg: #1C2633;
+  --color-new: #E5B04A;
+  --color-new-bg: #2A2316;
+  --color-success: #6FBF8E;
+  --color-success-bg: #16261C;
+  --color-speaker-1: #A4C5FF;
+  --color-speaker-2: #8FB4FF;
+  --color-speaker-3: #75D8B0;
+  --color-speaker-4: #F3A6C7;
+  --color-speaker-5: #F0CF8E;
+  --color-speaker-6: #F2A89A;
+  --color-overlay: #0000008C;
+  --color-media-canvas: #08090A;
+  --color-shadow: #00000099;
+  --shadow-sm: none;                /* 다크는 그림자 대신 면 단계로 깊이 */
+  --shadow-md: none;
+  --shadow-lg: 0 12px 32px -8px #000000B3;
+}
+
+/* 테마 전환 페이드 — 기존 reduced-motion 규칙 안에서 0으로 내릴 것 */
+body, .sidebar, .panel, .composer { transition: background-color .25s ease, color .25s ease, border-color .25s ease; }

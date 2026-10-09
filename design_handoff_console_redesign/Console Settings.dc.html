@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+</helmet>
+<div style="color-scheme:{{ scheme }};width:1280px;height:820px;">
+<div style="--base:light-dark(#F6F7F8,#0D0E10);--panel:light-dark(#FFFFFF,#131518);--field:light-dark(#FFFFFF,#16181B);--raised:light-dark(#EDEFF2,#1D2024);--sub:light-dark(#E7E9EC,#1F2227);--line:light-dark(#DCDFE3,#2A2E33);--ink:light-dark(#15171A,#ECEEF0);--body:light-dark(#2E333A,#C9CDD2);--ink2:light-dark(#4F5660,#A3A9B1);--ink3:light-dark(#646B75,#7D848D);--acc:#E5B04A;--acc-ink:#1A1306;--acc-text:light-dark(#8A5A00,#E5B04A);--acc-soft:light-dark(#FBF0D9,#2A2316);--shadow:light-dark(0 1px 2px rgba(21,23,26,.06),none);--seg:light-dark(0 1px 2px rgba(21,23,26,.12),inset 0 0 0 1px #2A2E33);width:1280px;height:820px;display:flex;background:var(--base);color:var(--ink);border-radius:12px;overflow:hidden;box-shadow:0 24px 48px -16px light-dark(rgba(21,23,26,.18),rgba(0,0,0,.45)),0 0 0 1px light-dark(#E2E4E7,transparent);font-family:'Pretendard Variable',Pretendard,sans-serif;transition:background-color .25s,color .25s;">
+<nav style="width:56px;flex-shrink:0;border-right:1px solid var(--sub);display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:6px;">
+<span style="width:30px;height:30px;border-radius:8px;background:var(--acc);color:var(--acc-ink);display:flex;align-items:center;justify-content:center;font:600 12px/1 'JetBrains Mono',monospace;margin-bottom:12px;">M</span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="message-square" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="columns-3" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="book-open-text" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="image" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="audio-lines" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="folder" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="bot" style="width:18px;height:18px;"></i></span>
+<span style="flex:1;"></span>
+<span style="width:38px;height:38px;border-radius:8px;background:var(--raised);color:var(--acc-text);display:flex;align-items:center;justify-content:center;"><i data-lucide="settings" style="width:18px;height:18px;"></i></span>
+<span style="width:30px;height:30px;border-radius:50%;background:var(--raised);display:flex;align-items:center;justify-content:center;font:600 12px/1 'Pretendard Variable',sans-serif;">권</span>
+</nav>
+<aside style="width:240px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--sub);display:flex;flex-direction:column;padding:0 8px;">
+<div style="height:52px;display:flex;align-items:center;padding:0 8px;"><span style="font:600 14px/1 'Pretendard Variable',sans-serif;">설정</span></div>
+<div style="display:flex;flex-direction:column;gap:2px;font:400 14px/1 'Pretendard Variable',sans-serif;">
+<span style="height:34px;padding:0 10px;border-radius:7px;display:flex;align-items:center;gap:10px;color:var(--body);"><i data-lucide="sliders-horizontal" style="width:15px;height:15px;color:var(--ink2);"></i>일반</span>
+<span style="height:34px;padding:0 10px;border-radius:7px;display:flex;align-items:center;gap:10px;background:var(--raised);box-shadow:inset 2px 0 0 var(--acc);font-weight:500;"><i data-lucide="sun-moon" style="width:15px;height:15px;color:var(--acc-text);"></i>화면</span>
+<span style="height:34px;padding:0 10px;border-radius:7px;display:flex;align-items:center;gap:10px;color:var(--body);"><i data-lucide="message-square-text" style="width:15px;height:15px;color:var(--ink2);"></i>응답 기본값</span>
+<span style="height:34px;padding:0 10px;border-radius:7px;display:flex;align-items:center;gap:10px;color:var(--body);"><i data-lucide="scroll-text" style="width:15px;height:15px;color:var(--ink2);"></i>기본 지침</span>
+<span style="height:1px;background:var(--sub);margin:8px 10px;"></span>
+<span style="height:34px;padding:0 10px;border-radius:7px;display:flex;align-items:center;gap:10px;color:var(--body);"><i data-lucide="key-round" style="width:15px;height:15px;color:var(--ink2);"></i>계정 · API 키</span>
+<span style="height:34px;padding:0 10px;border-radius:7px;display:flex;align-items:center;gap:10px;color:var(--body);"><i data-lucide="gauge" style="width:15px;height:15px;color:var(--ink2);"></i>크레딧</span>
+<span style="height:34px;padding:0 10px;border-radius:7px;display:flex;align-items:center;gap:10px;color:var(--body);"><i data-lucide="archive" style="width:15px;height:15px;color:var(--ink2);"></i>백업 · 복원</span>
+<span style="height:34px;padding:0 10px;border-radius:7px;display:flex;align-items:center;gap:10px;color:var(--body);"><i data-lucide="stethoscope" style="width:15px;height:15px;color:var(--ink2);"></i>진단</span>
+</div>
+<span style="flex:1;"></span>
+<div style="padding:14px 10px;display:flex;align-items:center;justify-content:space-between;font:400 12px/1 'JetBrains Mono',monospace;color:var(--ink3);"><span>MM_LLM v0.6.0</span><span style="color:var(--ok, #2E7D4F);">최신</span></div>
+</aside>
+<main style="flex:1;min-width:0;overflow:hidden;display:flex;justify-content:center;padding:40px 48px;">
+<div style="width:100%;max-width:680px;display:flex;flex-direction:column;gap:28px;">
+<div style="display:flex;flex-direction:column;gap:8px;"><span style="font:600 24px/1.25 'Pretendard Variable',sans-serif;letter-spacing:-.02em;">화면</span><span style="font:400 14px/1.5 'Pretendard Variable',sans-serif;color:var(--ink2);">테마, 글자 크기, 움직임을 설정합니다. 변경은 바로 적용됩니다.</span></div>
+<div style="display:flex;flex-direction:column;gap:12px;">
+<span style="font:600 14px/1 'Pretendard Variable',sans-serif;">화면 모드</span>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+<div style="border-radius:10px;padding:8px;background:var(--panel);box-shadow:inset 0 0 0 2px var(--acc);display:flex;flex-direction:column;gap:10px;">
+<div style="height:84px;border-radius:6px;overflow:hidden;display:flex;"><div style="flex:1;background:#F6F7F8;display:flex;gap:4px;padding:8px;"><span style="width:10px;border-radius:2px;background:#DCDFE3;"></span><span style="flex:1;border-radius:3px;background:#FFFFFF;box-shadow:inset 0 0 0 1px #DCDFE3;"></span></div><div style="flex:1;background:#0D0E10;display:flex;gap:4px;padding:8px;"><span style="flex:1;border-radius:3px;background:#16181B;box-shadow:inset 0 0 0 1px #2A2E33;"></span></div></div>
+<div style="display:flex;align-items:center;gap:8px;padding:0 4px 4px;"><span style="width:16px;height:16px;border-radius:50%;background:var(--acc);box-shadow:inset 0 0 0 4px var(--panel),0 0 0 1px var(--acc);"></span><span style="font:500 13px/1 'Pretendard Variable',sans-serif;">시스템</span><span style="font:400 12px/1 'Pretendard Variable',sans-serif;color:var(--ink3);">권장</span></div>
+</div>
+<div style="border-radius:10px;padding:8px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);display:flex;flex-direction:column;gap:10px;">
+<div style="height:84px;border-radius:6px;background:#F6F7F8;display:flex;gap:4px;padding:8px;box-sizing:border-box;box-shadow:inset 0 0 0 1px #E7E9EC;"><span style="width:10px;border-radius:2px;background:#DCDFE3;"></span><span style="flex:1;border-radius:3px;background:#FFFFFF;box-shadow:inset 0 0 0 1px #DCDFE3;"></span></div>
+<div style="display:flex;align-items:center;gap:8px;padding:0 4px 4px;"><span style="width:16px;height:16px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--line);"></span><span style="font:500 13px/1 'Pretendard Variable',sans-serif;">라이트</span></div>
+</div>
+<div style="border-radius:10px;padding:8px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);display:flex;flex-direction:column;gap:10px;">
+<div style="height:84px;border-radius:6px;background:#0D0E10;display:flex;gap:4px;padding:8px;box-sizing:border-box;"><span style="width:10px;border-radius:2px;background:#2A2E33;"></span><span style="flex:1;border-radius:3px;background:#16181B;box-shadow:inset 0 0 0 1px #2A2E33;"></span></div>
+<div style="display:flex;align-items:center;gap:8px;padding:0 4px 4px;"><span style="width:16px;height:16px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--line);"></span><span style="font:500 13px/1 'Pretendard Variable',sans-serif;">다크</span></div>
+</div>
+</div>
+<span style="font:400 13px/1.5 'Pretendard Variable',sans-serif;color:var(--ink2);">시스템: macOS ‘자동’이나 Windows 야간 예약에 맞춰 낮에는 라이트, 밤에는 다크로 바뀝니다.</span>
+</div>
+<div style="background:var(--panel);border-radius:10px;box-shadow:inset 0 0 0 1px var(--line),var(--shadow);display:flex;flex-direction:column;">
+<div style="display:flex;align-items:center;gap:16px;padding:16px 18px;border-bottom:1px solid var(--sub);"><div style="flex:1;display:flex;flex-direction:column;gap:4px;"><span style="font:500 14px/1 'Pretendard Variable',sans-serif;">글자 크기</span><span style="font:400 12px/1.4 'Pretendard Variable',sans-serif;color:var(--ink3);">답변 본문과 메뉴에 함께 적용</span></div><div style="display:grid;grid-template-columns:repeat(3,64px);padding:3px;background:var(--raised);border-radius:8px;font:500 13px/1 'Pretendard Variable',sans-serif;"><span style="height:28px;display:flex;align-items:center;justify-content:center;color:var(--ink2);">작게</span><span style="height:28px;display:flex;align-items:center;justify-content:center;background:var(--panel);border-radius:6px;box-shadow:var(--seg);">기본</span><span style="height:28px;display:flex;align-items:center;justify-content:center;color:var(--ink2);">크게</span></div></div>
+<div style="display:flex;align-items:center;gap:16px;padding:16px 18px;border-bottom:1px solid var(--sub);"><div style="flex:1;display:flex;flex-direction:column;gap:4px;"><span style="font:500 14px/1 'Pretendard Variable',sans-serif;">밀도</span><span style="font:400 12px/1.4 'Pretendard Variable',sans-serif;color:var(--ink3);">목록 행 높이와 여백</span></div><div style="display:grid;grid-template-columns:repeat(2,72px);padding:3px;background:var(--raised);border-radius:8px;font:500 13px/1 'Pretendard Variable',sans-serif;"><span style="height:28px;display:flex;align-items:center;justify-content:center;background:var(--panel);border-radius:6px;box-shadow:var(--seg);">기본</span><span style="height:28px;display:flex;align-items:center;justify-content:center;color:var(--ink2);">촘촘</span></div></div>
+<div style="display:flex;align-items:center;gap:16px;padding:16px 18px;border-bottom:1px solid var(--sub);"><div style="flex:1;display:flex;flex-direction:column;gap:4px;"><span style="font:500 14px/1 'Pretendard Variable',sans-serif;">동작 줄이기</span><span style="font:400 12px/1.4 'Pretendard Variable',sans-serif;color:var(--ink3);">테마 전환 페이드와 스트리밍 애니메이션 끄기 · 기본은 OS 설정</span></div><span style="width:34px;height:20px;border-radius:10px;background:var(--line);position:relative;flex-shrink:0;"><span style="position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:light-dark(#FFFFFF,#7D848D);"></span></span></div>
+<div style="display:flex;align-items:center;gap:16px;padding:16px 18px;"><div style="flex:1;display:flex;flex-direction:column;gap:4px;"><span style="font:500 14px/1 'Pretendard Variable',sans-serif;">단축키 힌트 표시</span><span style="font:400 12px/1.4 'Pretendard Variable',sans-serif;color:var(--ink3);">버튼 옆 ⌘K · ⌘↵ 표기</span></div><span style="width:34px;height:20px;border-radius:10px;background:var(--acc);position:relative;flex-shrink:0;"><span style="position:absolute;right:2px;top:2px;width:16px;height:16px;border-radius:50%;background:#FFFFFF;"></span></span></div>
+</div>
+</div>
+</main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:820},&quot;scheme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light dark&quot;,&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light dark&quot;,&quot;tsType&quot;:&quot;'light dark' | 'light' | 'dark'&quot;}}">
+class Component extends DCLogic {
+  componentDidMount() {
+    const run = () => window.lucide && window.lucide.createIcons({ attrs: { "stroke-width": 1.75 } });
+    run(); setTimeout(run, 300); setTimeout(run, 1200);
+  }
+  renderVals() { return { scheme: this.props.scheme ?? "light dark" }; }
+}
+</script>
+</body>
+</html>

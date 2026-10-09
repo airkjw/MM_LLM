@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+</helmet>
+<div style="color-scheme:{{ scheme }};width:1280px;height:820px;">
+<div style="--base:light-dark(#F6F7F8,#0D0E10);--panel:light-dark(#FFFFFF,#131518);--field:light-dark(#FFFFFF,#16181B);--raised:light-dark(#EDEFF2,#1D2024);--sub:light-dark(#E7E9EC,#1F2227);--line:light-dark(#DCDFE3,#2A2E33);--ink:light-dark(#15171A,#ECEEF0);--body:light-dark(#2E333A,#C9CDD2);--ink2:light-dark(#4F5660,#A3A9B1);--ink3:light-dark(#646B75,#7D848D);--acc:#E5B04A;--acc-ink:#1A1306;--acc-text:light-dark(#8A5A00,#E5B04A);--acc-soft:light-dark(#FBF0D9,#2A2316);--ok:light-dark(#2E7D4F,#6FBF8E);--ok-soft:light-dark(#E4F2E9,#16261C);--err:light-dark(#B3261E,#F08A7E);--err-soft:light-dark(#FBE9E7,#2B1716);--shadow:light-dark(0 1px 2px rgba(21,23,26,.06),none);--pop:light-dark(0 12px 32px -8px rgba(21,23,26,.22),0 12px 32px -8px rgba(0,0,0,.7));--seg:light-dark(0 1px 2px rgba(21,23,26,.12),inset 0 0 0 1px #2A2E33);position:relative;width:1280px;height:820px;display:flex;background:var(--base);color:var(--ink);border-radius:12px;overflow:hidden;box-shadow:0 24px 48px -16px light-dark(rgba(21,23,26,.18),rgba(0,0,0,.45)),0 0 0 1px light-dark(#E2E4E7,transparent);font-family:'Pretendard Variable',sans-serif;transition:background-color .25s,color .25s;">
+<nav style="width:56px;flex-shrink:0;border-right:1px solid var(--sub);display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:6px;">
+<span style="width:30px;height:30px;border-radius:8px;background:var(--acc);color:var(--acc-ink);display:flex;align-items:center;justify-content:center;font:600 12px/1 'JetBrains Mono',monospace;margin-bottom:12px;">M</span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="message-square" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="columns-3" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="book-open-text" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="image" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="audio-lines" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="folder" style="width:18px;height:18px;"></i></span>
+<span style="width:38px;height:38px;border-radius:8px;background:var(--raised);color:var(--acc-text);display:flex;align-items:center;justify-content:center;"><i data-lucide="bot" style="width:18px;height:18px;"></i></span>
+<span style="flex:1;"></span>
+<span style="width:38px;height:38px;border-radius:8px;color:var(--ink2);display:flex;align-items:center;justify-content:center;"><i data-lucide="settings" style="width:18px;height:18px;"></i></span>
+<span style="width:30px;height:30px;border-radius:50%;background:var(--raised);display:flex;align-items:center;justify-content:center;font:600 12px/1 'Pretendard Variable',sans-serif;">권</span>
+</nav>
+<aside style="width:260px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--sub);display:flex;flex-direction:column;">
+<div style="height:52px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 16px;"><span style="font:600 14px/1 'Pretendard Variable',sans-serif;">Studio 챗봇</span><span style="width:28px;height:28px;border-radius:6px;background:var(--raised);display:flex;align-items:center;justify-content:center;"><i data-lucide="plus" style="width:15px;height:15px;"></i></span></div>
+<div style="display:flex;flex-direction:column;gap:2px;padding:0 8px;">
+<div style="padding:10px;border-radius:8px;background:var(--raised);box-shadow:inset 2px 0 0 var(--acc);display:flex;flex-direction:column;gap:6px;"><span style="font:500 14px/1.3 'Pretendard Variable',sans-serif;">학과 행정 안내봇</span><span style="font:400 12px/1 'JetBrains Mono',monospace;color:var(--ink3);">studio · 연결됨</span></div>
+<div style="padding:10px;display:flex;flex-direction:column;gap:6px;"><span style="font:400 14px/1.3 'Pretendard Variable',sans-serif;color:var(--body);">논문 작성 도우미</span><span style="font:400 12px/1 'JetBrains Mono',monospace;color:var(--ink3);">studio · 연결됨</span></div>
+<div style="padding:10px;display:flex;flex-direction:column;gap:6px;"><span style="font:400 14px/1.3 'Pretendard Variable',sans-serif;color:var(--body);">병원 실습 FAQ</span><span style="font:400 12px/1 'JetBrains Mono',monospace;color:var(--ink3);">studio · 권한 확인 필요</span></div>
+</div>
+<span style="flex:1;"></span>
+<div style="margin:12px;padding:12px;border-radius:8px;background:var(--raised);display:flex;flex-direction:column;gap:6px;"><span style="font:500 12px/1 'Pretendard Variable',sans-serif;color:var(--ink2);">챗봇은 텍스트만 주고받습니다</span><span style="font:400 12px/1.5 'Pretendard Variable',sans-serif;color:var(--ink3);">파일 첨부·웹 검색·모델 비교는 일반 대화에서 사용하세요.</span></div>
+</aside>
+<main style="flex:1;min-width:0;display:flex;flex-direction:column;">
+<header style="height:52px;flex-shrink:0;border-bottom:1px solid var(--sub);display:flex;align-items:center;gap:12px;padding:0 20px;"><span style="width:26px;height:26px;border-radius:7px;background:var(--acc-soft);color:var(--acc-text);display:flex;align-items:center;justify-content:center;"><i data-lucide="bot" style="width:14px;height:14px;"></i></span><span style="font:500 14px/1 'Pretendard Variable',sans-serif;">학과 행정 안내봇</span><span style="height:22px;padding:0 7px;border-radius:5px;background:var(--raised);color:var(--ink2);display:flex;align-items:center;gap:4px;font:500 12px/1 'Pretendard Variable',sans-serif;white-space:nowrap;">ChatKHU Studio</span><span style="flex:1;"></span><span style="height:32px;padding:0 12px;border-radius:7px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);display:flex;align-items:center;justify-content:center;gap:6px;font:500 13px/1 'Pretendard Variable',sans-serif;white-space:nowrap;"><i data-lucide="arrow-right-left" style="width:14px;height:14px;"></i>일반 대화로 옮기기</span></header>
+<div style="flex:1;overflow:hidden;padding:28px 24px 0;display:flex;justify-content:center;">
+<div style="width:100%;max-width:680px;display:flex;flex-direction:column;gap:20px;">
+<div style="align-self:flex-end;max-width:480px;background:var(--raised);border-radius:10px;padding:12px 14px;font:400 14px/1.6 'Pretendard Variable',sans-serif;">졸업논문 예비심사 일정과 제출 서류 알려줘.</div>
+<div style="display:flex;flex-direction:column;gap:12px;">
+<span style="display:flex;align-items:center;gap:8px;font:500 12px/1 'Pretendard Variable',sans-serif;color:var(--ink3);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok);"></span>학과 행정 안내봇</span>
+<span style="font:400 15px/1.75 'Pretendard Variable',sans-serif;color:var(--body);">2026학년도 2학기 예비심사는 11월 둘째 주에 진행됩니다. 제출 서류는 다음과 같습니다.</span>
+<ol style="margin:0;padding-left:20px;font:400 15px/1.75 'Pretendard Variable',sans-serif;color:var(--body);"><li>예비심사 신청서 (지도교수 서명)</li><li>논문 초안 PDF 1부</li><li>연구윤리 서약서</li></ol>
+<span style="font:400 13px/1.5 'Pretendard Variable',sans-serif;color:var(--ink3);">정확한 일자는 학과 공지를 함께 확인해 주세요.</span>
+<div style="display:flex;gap:16px;font:400 12px/1 'JetBrains Mono',monospace;color:var(--ink3);"><span>in 1,204</span><span>out 382</span><span>3cr</span></div>
+</div>
+</div>
+</div>
+<div style="padding:14px 24px 18px;display:flex;justify-content:center;">
+<div style="width:100%;max-width:720px;border-radius:10px;background:var(--field);box-shadow:inset 0 0 0 1px var(--line),var(--shadow);padding:12px 12px 12px 14px;display:flex;align-items:center;gap:10px;"><span style="flex:1;font:400 14px/1.5 'Pretendard Variable',sans-serif;color:var(--ink3);">학과 행정 안내봇에게 묻기…</span><span style="width:30px;height:30px;border-radius:7px;background:var(--acc);color:var(--acc-ink);display:flex;align-items:center;justify-content:center;"><i data-lucide="arrow-up" style="width:15px;height:15px;"></i></span></div>
+</div>
+</main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:820},&quot;scheme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;light dark&quot;,&quot;light&quot;,&quot;dark&quot;],&quot;default&quot;:&quot;light dark&quot;,&quot;tsType&quot;:&quot;'light dark' | 'light' | 'dark'&quot;}}">
+class Component extends DCLogic {
+  componentDidMount() { this.icons(); }
+  componentDidUpdate() { this.icons(); }
+  icons() {
+    const run = () => window.lucide && window.lucide.createIcons({ attrs: { "stroke-width": 1.75 } });
+    run(); setTimeout(run, 300); setTimeout(run, 1200);
+  }
+  renderVals() { return { scheme: this.props.scheme ?? "light dark" }; }
+}
+</script>
+</body>
+</html>
