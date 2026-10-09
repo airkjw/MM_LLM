@@ -8,15 +8,15 @@ import { LatestRequestGate } from "../../shared/request-generation";
 import { useConfirm } from "./components/ConfirmDialog";
 import { DiagnosticButton } from "./components/DiagnosticButton";
 import { Notice, useNotice } from "./components/Notice";
-import { type SidebarScreen } from "./components/Sidebar";
+import { type MediaKind } from "./components/Sidebar";
 
 import { ModelPicker } from "./ModelPicker";
 import { DeidCheck, errorText, readDroppedFiles } from "./ui-shared";
-type Screen = SidebarScreen;
+type Screen = MediaKind;
 const AUDIO_LANES = ["tts", "stt", "music"] as const;
 export function MediaPanel({
-  screen, models, workspaceEpochRef, onUsageChanged, onSummarizeTranscript
-}: { screen: Exclude<Screen, "chat">; models: GatewayModel[]; onUsageChanged: () => void;
+  screen, models, workspaceEpochRef, onUsageChanged, onSummarizeTranscript, headerSearch
+}: { screen: Exclude<Screen, "chat">; models: GatewayModel[]; onUsageChanged: () => void; headerSearch?: import("react").ReactNode;
   workspaceEpochRef: { current: number };
   onSummarizeTranscript: (result: MediaResult) => Promise<void> }) {
   const confirm = useConfirm();
@@ -426,6 +426,7 @@ export function MediaPanel({
 
   return <div className="media-panel">
     <div className="panel-header media-header"><div className="panel-heading"><span className="panel-section">미디어</span><h2>{titles[screen][0]}</h2></div>
+      {headerSearch}
       <ModelPicker models={available} selected={modelId} onSelect={setModelId} disabled={busy} />
     </div>
     <div className="media-scroll">

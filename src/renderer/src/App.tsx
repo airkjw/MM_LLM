@@ -1,5 +1,5 @@
-import { CircleHelp, Image as ImageIcon, LoaderCircle, Mic2, Video } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CircleHelp, LoaderCircle, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { canSynthesizeCompare, COMPARE_SYNTHESIS_MODEL_ID } from "../../shared/compare-synthesis";
 import type { AppSettings, ChatbotBookmark, ChatbotUsageReport, CompareEvent, CompareRun, CompareSynthesisEvent, GatewayModel, MediaResult, PickedAttachment, ProjectSummary, SessionState, ThreadSearchResult, ThreadSnapshot, ThreadSummary, UpdateState, WebSearchMode } from "../../shared/contracts";
 import { CreditRefreshQueue } from "../../shared/credit-refresh";
@@ -11,7 +11,7 @@ import { isPristineThread } from "../../shared/thread-state";
 import { AppDialogs } from "./AppDialogs";
 import { useConfirm } from "./components/ConfirmDialog";
 import { Notice, useNotice } from "./components/Notice";
-import { Sidebar, type FocusReturnTarget, type SidebarScreen } from "./components/Sidebar";
+import { Sidebar, type FocusReturnTarget, type MediaKind, type SidebarScreen } from "./components/Sidebar";
 import { ModelPreferences } from "./model-preferences";
 import { appShortcutBlocked } from "./shortcut-policy";
 import { useResponsiveSidebarState } from "./sidebar-responsive";
@@ -23,9 +23,11 @@ import { VoicePanel } from './VoicePanel';
 import { Login } from "./Login";
 import { MediaPanel } from "./MediaPanel";
 import { errorText, templates } from "./ui-shared";
-type Screen = SidebarScreen;
+/** Rendered screens in stage 2; the other rail destinations still open their existing dialogs. */
+type Screen = Extract<SidebarScreen, "chat" | "media">;
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
-const AUDIO_LANES = ["tts", "stt", "music"] as const;
+const MEDIA_KINDS: ReadonlyArray<readonly [MediaKind, string]> = [["image", "이미지"], ["audio", "오디오"], ["video", "비디오"]];
+const SHORTCUT_LABEL = navigator.platform.includes("Mac") ? "⌘K" : "Ctrl K";
 
 async function checkStoredThreadModel(snapshot: ThreadSnapshot, models: GatewayModel[]): Promise<{
   snapshot: ThreadSnapshot; removedModelId?: string;
@@ -40,6 +42,8 @@ export default function App() {
   const [session, setSession] = useState<SessionState | null>(null);
   const [loading, setLoading] = useState(true);
   const [screen, setScreen] = useState<Screen>("chat");
+  const [mediaKind, setMediaKind] = useState<MediaKind>("image");
+  const [voiceRequest, setVoiceRequest] = useState(0);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [thread, setThread] = useState<ThreadSnapshot | null>(null);
   const [modelId, setModelId] = useState("");
@@ -71,6 +75,7 @@ export default function App() {
   const [projectBusy, setProjectBusy] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [toolsTab, setToolsTab] = useState<"compare" | "chatbot">("compare");
+  const [researchOpen, setResearchOpen] = useState(false);
   const [comparePrompt, setComparePrompt] = useState("");
   const [compareModels, setCompareModels] = useState<string[]>([]);
   const [compareMode, setCompareMode] = useState<WebSearchMode>("always");
@@ -117,10 +122,11 @@ export default function App() {
   const rememberDialogReturn = useCallback((returnFocus?: FocusReturnTarget) => {
     dialogReturnFocusRef.current = returnFocus ?? null;
   }, []);
+  // Dialog focus return: the original trigger, else the visible list control, else the rail's current item.
   const dialogRestoreFallback = useCallback(() => dialogReturnFocusRef.current?.() ??
     document.querySelector<HTMLElement>(
       ".sidebar-mobile-open.visible:not([disabled]), .sidebar:not(.collapsed) .sidebar-toggle:not([disabled])"
-    ), []);
+    ) ?? document.querySelector<HTMLElement>('nav.rail .rail-item[aria-current="page"]'), []);
 
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const closeSearch = useCallback(() => setSearchOpen(false), []);
@@ -175,10 +181,23 @@ export default function App() {
     if (!pendingWorkspaceFocusRef.current || loading || !session?.authenticated) return;
     pendingWorkspaceFocusRef.current = false;
     const frame = window.requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(".sidebar-toggle:not([disabled])")?.focus();
+      (document.querySelector<HTMLElement>(".sidebar-toggle:not([disabled])") ??
+        document.querySelector<HTMLElement>(".sidebar-mobile-open.visible"))?.focus();
     });
     return () => window.cancelAnimationFrame(frame);
   }, [loading, session?.authenticated]);
+
+  // The voice rail item opens the existing per-conversation voice disclosure until stage 4 gives it a screen.
+  useEffect(() => {
+    if (!voiceRequest) return;
+    const frame = window.requestAnimationFrame(() => {
+      const voice = document.querySelector<HTMLDetailsElement>(".chat-panel details.voice-panel");
+      if (!voice) return;
+      voice.open = true;
+      voice.querySelector<HTMLElement>(":scope > summary")?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [voiceRequest]);
 
   useEffect(() => {
     const preventFileNavigation = (event: DragEvent) => {
@@ -325,9 +344,9 @@ export default function App() {
     setProjectBusy(false);
     compareStopRef.current?.(); compareStopRef.current = null;
     compareSynthesisStopRef.current?.(); compareSynthesisStopRef.current = null;
-    setProjectDraft({ name: "", instruction: "" }); setToolsOpen(false); setCompareBusy(false);
+    setProjectDraft({ name: "", instruction: "" }); setToolsOpen(false); setResearchOpen(false); setCompareBusy(false);
     setCompareSynthesisBusy(false); setCompareRun(null);
-    setCompareAttachments([]); setBookmarks([]); setThread(null); setModelId(""); setScreen("chat");
+    setCompareAttachments([]); setBookmarks([]); setThread(null); setModelId(""); setScreen("chat"); setMediaKind("image");
     setAppSettings(null); setSettingsDraft(null); setSettingsOpen(false); setSettingsSaving(false);
     setSearchOpen(false); setSearchQuery(""); setSearchResults([]); setRenameDialog(null);
     setKeyReplaceOpen(false); setReplacementKey(""); setKeyReplacing(false);
@@ -907,29 +926,61 @@ export default function App() {
     finally { setLoading(false); }
   }} />;
 
-  const nav = [
-    { id: "image", label: "이미지", icon: ImageIcon },
-    { id: "audio", label: "오디오", icon: Mic2 },
-    { id: "video", label: "비디오", icon: Video }
-  ] as const;
   const credits = session.credits;
+  const navigate = (destination: SidebarScreen, returnFocus: FocusReturnTarget) => {
+    if (destination === "chat" || destination === "media") { setScreen(destination); return; }
+    if (destination === "voice") { setScreen("chat"); setVoiceRequest((value) => value + 1); return; }
+    if (destination === "projects") { openProjectsPanel(returnFocus); return; }
+    if (destination === "settings") { setSettingsDraft(appSettings); openSettings(returnFocus); return; }
+    // Compare, research and chatbot share the existing workspace-tools dialog; research is its search view.
+    setResearchOpen(destination === "research");
+    void openWorkspaceTools(destination === "chatbot" ? "chatbot" : "compare", returnFocus);
+  };
+  const selectMediaKind = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+    if (!keys.includes(event.key)) return;
+    event.preventDefault();
+    const current = MEDIA_KINDS.findIndex(([kind]) => kind === mediaKind);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? MEDIA_KINDS.length - 1
+      : (current + (event.key === "ArrowRight" ? 1 : -1) + MEDIA_KINDS.length) % MEDIA_KINDS.length;
+    setMediaKind(MEDIA_KINDS[next][0]);
+    const tablist = event.currentTarget.parentElement;
+    window.requestAnimationFrame(() => tablist?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus());
+  };
+  const headerSearch = <button type="button" className="header-search" aria-keyshortcuts="Meta+K Control+K"
+    title={`대화 검색 (${SHORTCUT_LABEL})`} onClick={(event) => {
+      const trigger = event.currentTarget;
+      openSearch(() => trigger.isConnected ? trigger : null);
+    }}><Search size={15} aria-hidden="true" /><span className="header-search-label">대화 검색</span>
+    <kbd aria-hidden="true">{SHORTCUT_LABEL}</kbd></button>;
+  const mediaHeader = <div className="header-center">
+    <div className="media-kind-tabs" role="tablist" aria-label="미디어 종류">{MEDIA_KINDS.map(([kind, label]) =>
+      <button type="button" role="tab" key={kind} aria-selected={mediaKind === kind} tabIndex={mediaKind === kind ? 0 : -1}
+        onClick={() => setMediaKind(kind)} onKeyDown={selectMediaKind}>{label}</button>)}</div>
+    {headerSearch}</div>;
   const compareSynthesisReady = !compareBusy && canSynthesizeCompare(compareRun);
   const compareSynthesisModelAvailable = session.models.some((item) =>
     item.type === "llm" && item.id === COMPARE_SYNTHESIS_MODEL_ID);
   return <ModelPreferences.Provider value={preferences}><div className="app-shell">
     <Sidebar
-      workspace={{ open: sidebarOpen, screen, navItems: nav, projectCount: projects.length }}
+      workspace={{ open: sidebarOpen, screen }}
       workspaceActions={{
-        onToggle: () => setSidebarOpen((open) => !open), onNewThread: () => void newThread(),
-        onOpenProjects: openProjectsPanel, onOpenCompare: (returnFocus) => void openWorkspaceTools("compare", returnFocus),
-        onOpenChatbot: (returnFocus) => void openWorkspaceTools("chatbot", returnFocus), onScreenChange: setScreen
+        onToggle: () => setSidebarOpen((open) => !open), onNewThread: () => void newThread(), onNavigate: navigate
       }}
       history={{ threadCount: threads.length, threadGroups, selectedThreadId: thread?.id }}
       historyActions={{
-        onOpenSearch: openSearch, onSelectThread: (id) => void selectThread(id),
+        onSelectThread: (id) => void selectThread(id),
         onPinThread: (item) => void pinConversation(item), onRenameThread: openRenameConversation,
         onExportThread: (item) => void window.mmllm.exportThread(item.id).catch((error) => setError(errorText(error))),
-        onDeleteThread: (id) => void deleteThread(id)
+        onDeleteThread: (id) => void deleteThread(id),
+        loadCompareRuns: () => window.mmllm.listCompareRuns(),
+        onOpenCompareRun: (run, returnFocus) => {
+          // A saved run opens read-only in the existing compare dialog; nothing new is stored.
+          if (compareBusy || compareSynthesisBusy) return;
+          setCompareRun(run); setResearchOpen(false); void openWorkspaceTools("compare", returnFocus);
+        },
+        loadMediaJobs: () => window.mmllm.listMediaJobs(),
+        onOpenMediaJob: (job) => { setMediaKind(job.kind === "stt" ? "audio" : job.kind); setScreen("media"); }
       }}
       account={{ credits, updateState }}
       accountActions={{
@@ -1027,7 +1078,9 @@ export default function App() {
         settingsRef={settingsRef}
         modelId={modelId}
         setSettingsDraft={setSettingsDraft}
-        saveGlobalSettings={saveGlobalSettings} />
+        saveGlobalSettings={saveGlobalSettings}
+        researchOpen={researchOpen}
+        setResearchOpen={setResearchOpen} />
       {!session.models.length && <div className="offline-banner"><CircleHelp size={16} />
         모델 목록을 가져오지 못했습니다. 연결을 확인하고 새로고침해 주세요.
         <button type="button" onClick={refreshModels}>새로고침</button></div>}
@@ -1045,8 +1098,10 @@ export default function App() {
           initialDraft={templateDraft?.threadId === thread.id ? templateDraft.text : undefined}
           evidenceAppends={evidenceAppends.filter((item) => item.threadId === thread.id)}
           onEvidenceApplied={evidenceApplied} composerRef={composerRef}
-          onDraftApplied={() => setTemplateDraft(null)} />
-        : screen !== "chat" && <MediaPanel screen={screen} models={session.models} workspaceEpochRef={uiEpochRef}
+          onDraftApplied={() => setTemplateDraft(null)}
+          headerSearch={<div className="header-center">{headerSearch}</div>} />
+        : screen === "media" && <MediaPanel screen={mediaKind} models={session.models} workspaceEpochRef={uiEpochRef}
+          headerSearch={mediaHeader}
           onUsageChanged={handleUsageChanged}
           onSummarizeTranscript={summarizeTranscript} />}
       {screen === "chat" && (!thread || !llmModels.length) && <div className="no-models">

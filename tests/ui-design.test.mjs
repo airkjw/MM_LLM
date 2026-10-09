@@ -130,19 +130,25 @@ expectMutationError("the stop-button semantic map", (source) => source.replace(
   ".send-button.stop, .send-button.stop:hover:not(:disabled) { background: var(--color-border); color: var(--color-text); }"
 ), /send-button\.stop/);
 expectMutationError("the active navigation contrast map", (source) => source.replace(
-  ".creation-tile.active { border-color: var(--color-accent-graphic); color: var(--color-accent-text); background: var(--color-accent-subtle); font-weight: 600; }",
-  ".creation-tile.active { border-color: var(--color-accent-graphic); color: var(--color-text-tertiary); background: var(--color-accent-subtle); font-weight: 600; }"
-), /creation-tile\.active must use/);
+  '.rail-item[aria-current="page"] { color: var(--color-accent-text); background: var(--color-bg-subtle); }',
+  '.rail-item[aria-current="page"] { color: var(--color-text-tertiary); background: var(--color-bg-subtle); }'
+), /rail-item\[aria-current="page"\] must use/);
 expectMutationError("higher-specificity active navigation conflicts", (source) =>
-  `${source}\n.app-shell .creation-tile.active { color: var(--color-text-tertiary); }`, /audited-selector conflict/);
+  `${source}\n.app-shell .rail-item[aria-current="page"] { color: var(--color-text-tertiary); }`, /audited-selector conflict/);
 expectMutationError("escaped higher-specificity active navigation conflicts", (source) =>
-  `${source}\n.app-shell .creation-tile.active { color: v\\61 r(--color-text-tertiary); }`, /audited-selector conflict/);
+  `${source}\n.app-shell .rail-item[aria-current="page"] { color: v\\61 r(--color-text-tertiary); }`, /audited-selector conflict/);
 expectMutationError(":is active navigation conflicts", (source) =>
-  `${source}\n:is(.creation-tile.active) { color: var(--color-text-tertiary); }`, /audited-selector conflict.*creation-tile\.active/);
+  `${source}\n:is(.rail-item[aria-current="page"]) { color: var(--color-text-tertiary); }`, /audited-selector conflict.*rail-item/);
 expectMutationError("typed active navigation conflicts", (source) =>
-  `${source}\nbutton.creation-tile.active { color: var(--color-text-tertiary); }`, /audited-selector conflict.*creation-tile\.active/);
+  `${source}\nbutton.rail-item[aria-current="page"] { color: var(--color-text-tertiary); }`, /audited-selector conflict.*rail-item/);
 expectMutationError("stateful active navigation conflicts", (source) =>
-  `${source}\n.creation-tile.active:hover { color: var(--color-text-tertiary); }`, /audited-selector conflict.*creation-tile\.active/);
+  `${source}\n.rail-item[aria-current="page"]:hover { color: var(--color-text-tertiary); }`, /audited-selector conflict.*rail-item/);
+expectMutationError("an active navigation surface off the audited pair", (source) => source.replace(
+  '.rail-item[aria-current="page"] { color: var(--color-accent-text); background: var(--color-bg-subtle); }',
+  '.rail-item[aria-current="page"] { color: var(--color-accent-text); background: var(--color-accent-subtle); }'
+), /rail-item\[aria-current="page"\] must use/);
+expectMutationError("a panel header that is not 52px", (source) => source.replace(
+  "flex: none; min-height: 52px; gap: 16px;", "flex: none; min-height: 66px; gap: 16px;"), /Panel header must be 52px/);
 expectMutationError("speaker token contrast failures", (source) => source.replace(
   /(--color-speaker-3:\s*)#14745B/, "$1#EEF0F3"
 ), /speaker-3\/bg/);
@@ -285,8 +291,9 @@ expectMutationError("missing reduce-motion app setting selector", (source) => so
 expectMutationError("missing theme transition rule", (source) => source.replace(
   "transition: background-color .25s ease, color .25s ease, border-color .25s ease;", ""), /theme transition/);
 
-expectMutationError("amber face used as a border on the active navigation tile", (source) => source.replace(
-  ".creation-tile.active { border-color: var(--color-accent-graphic);", ".creation-tile.active { border-color: var(--color-accent);"), /Non-fill use of --color-accent.*creation-tile\.active/);
+expectMutationError("amber face used as a border on the active list row", (source) => source.replace(
+  ".thread-item.selected { background: var(--color-bg-selected); box-shadow: inset 2px 0 0 var(--color-accent-graphic); }",
+  ".thread-item.selected { background: var(--color-bg-selected); box-shadow: inset 2px 0 0 var(--color-accent); }"), /Non-fill use of --color-accent.*thread-item\.selected/);
 expectMutationError("amber face used as a composer focus indicator", (source) => source.replace(
   ".composer-card:focus-within { border-color: var(--color-accent-graphic);", ".composer-card:focus-within { border-color: var(--color-accent);"), /Non-fill use of --color-accent.*composer-card:focus-within/);
 expectMutationError("amber face used as an input focus border", (source) => source.replace(

@@ -63,11 +63,11 @@ const CONTRAST_PAIRS = [
   ["accent-text", "accent-subtle", 4.5], ["accent-text", "bg-subtle", 4.5],
   // The amber face (--color-accent) is 1.84:1 against bg by design and is face-only; text on it is protected instead.
   ["on-accent", "accent", 4.5], ["on-accent", "accent-hover", 4.5],
-  ["danger", "danger-bg", 4.5], ["warning", "warning-bg", 4.5], ["info", "info-bg", 4.5],
+  ["danger", "danger-bg", 4.5], ["danger", "bg-subtle", 4.5], ["warning", "warning-bg", 4.5], ["info", "info-bg", 4.5],
   ["new", "new-bg", 4.5], ["success", "success-bg", 4.5], ["success", "bg-sidebar", 4.5],
   ["border-control", "bg", 3], ["border-control", "bg-sidebar", 3],
   ["accent-graphic", "bg", 3], ["accent-graphic", "bg-sidebar", 3], ["accent-graphic", "bg-subtle", 3],
-  ["accent-graphic", "accent-subtle", 3], ["progress-fill", "progress-track", 3],
+  ["accent-graphic", "accent-subtle", 3], ["accent-graphic", "bg-selected", 3], ["progress-fill", "progress-track", 3],
   ["focus-ring", "bg", 3]
 ];
 for (let index = 1; index <= 6; index++) {
@@ -527,13 +527,15 @@ export function auditCss(css) {
   }
   rejectStructuralOverrides(errors, root, ".send-button.stop", ["color", "background", "background-color"],
     new Set(["var(--color-text)", "var(--color-bg)"]));
-  if (!selectorHas(root, ".creation-tile.active", (values) =>
+  // Stage 2 replaced the sidebar creation tiles with the rail; the active-navigation map moved with them.
+  const ACTIVE_NAVIGATION = '.rail-item[aria-current="page"]';
+  if (!selectorHas(root, ACTIVE_NAVIGATION, (values) =>
     values.get("color") === "var(--color-accent-text)" &&
-    values.get("background") === "var(--color-accent-subtle)")) {
-    errors.push(".creation-tile.active must use the audited accent-text/accent-subtle pair");
+    values.get("background") === "var(--color-bg-subtle)")) {
+    errors.push(`${ACTIVE_NAVIGATION} must use the audited accent-text/bg-subtle pair`);
   }
-  rejectStructuralOverrides(errors, root, ".creation-tile.active", ["color", "background", "background-color"],
-    new Set(["var(--color-accent-text)", "var(--color-accent-subtle)"]));
+  rejectStructuralOverrides(errors, root, ACTIVE_NAVIGATION, ["color", "background", "background-color"],
+    new Set(["var(--color-accent-text)", "var(--color-bg-subtle)"]));
 
   const speakerTokens = Array.from({ length: 6 }, (_, index) => `var(--color-speaker-${index + 1})`);
   for (let index = 0; index < speakerTokens.length; index++) {
@@ -552,7 +554,7 @@ export function auditCss(css) {
     values.get("background") === "var(--speaker-color)")) {
     errors.push(".segment-speaker::before must render the categorical speaker dot");
   }
-  if (!selectorHas(root, ".panel-header", (values) => values.get("min-height") === "66px")) errors.push("Panel header must be 66px");
+  if (!selectorHas(root, ".panel-header", (values) => values.get("min-height") === "52px")) errors.push("Panel header must be 52px");
   for (const [selector, height] of [[".web-mode", "34px"], [".reasoning-mode", "34px"], [".model-trigger", "36px"]]) {
     if (!selectorHas(root, selector, (values) => values.get("height") === height)) errors.push(`${selector} must be ${height} high`);
   }

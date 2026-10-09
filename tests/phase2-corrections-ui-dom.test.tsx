@@ -144,7 +144,7 @@ test("actual App project evidence shares append semantics and preserves draft an
     searchProjectDocuments: async () => ({ hits: [], text: `PROJECT_EVIDENCE_${++searches}`, notice: "합성 로컬 근거" }) });
   await input(composer(), "PROJECT_QUESTION"); await click(button("파일 첨부"));
   for (let i = 0; i < 2; i++) {
-    await click([...document.querySelectorAll<HTMLButtonElement>(".sidebar button")].find((item) => item.textContent?.includes("프로젝트"))!);
+    await click([...document.querySelectorAll<HTMLButtonElement>(".rail button")].find((item) => item.textContent?.includes("프로젝트"))!);
     await input(document.querySelector<HTMLInputElement>(".project-retrieval-settings input[type=text], .project-retrieval input[type=text]") ??
       [...document.querySelectorAll<HTMLLabelElement>("label")].find((item) => item.textContent?.includes("문서 검색어"))!.querySelector("input")!, "Synthetic");
     await click(button("저장한 설정으로 문서 검색")); await click(button("근거 추가"));

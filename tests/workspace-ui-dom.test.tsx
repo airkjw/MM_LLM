@@ -495,7 +495,7 @@ test("real App project dialog loads saved semantic settings while cached project
   await openRealComparison({ listProjects: async () => [project], getProjectRetrieval: async () => ({ settings, documents: [], uncertain: 0, running: false }),
     startProjectIndex: async () => { paid++; }, searchProjectDocuments: async () => { paid++; } });
   await key("Escape");
-  const open = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("프로젝트") && button.closest(".sidebar"))!;
+  const open = [...document.querySelectorAll("button")].find((button) => button.textContent?.includes("프로젝트") && button.closest(".rail"))!;
   await click(open);
   const select = document.querySelector<HTMLSelectElement>('.retrieval-settings select')!;
   assert.equal(select.value, "semantic"); assert.equal(paid, 0);
