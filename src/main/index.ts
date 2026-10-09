@@ -1,5 +1,5 @@
 import { RealtimeSessionManager } from './realtime-session';
-import { installVoicePermissions } from './voice-permissions';
+import { installVoicePermissions, bindRendererLifecycle } from './voice-permissions';
 import { estimateMedia } from "./gateway";
 import { normalizeEstimateRequest } from "../shared/media-estimate";
 import { mergeServerCode, settleServerCode } from "../shared/server-code";
@@ -352,6 +352,7 @@ function registerHandlers(): void {
       text.assertCurrent();
       if (getActiveProfileId() !== profileId) throw new Error('계정이 변경되어 저장 결과를 적용하지 않았습니다.');
     };
+    let committed = false;
     try {
       const result = await updateThread(target, (thread) => {
         assertCurrent();
@@ -359,10 +360,11 @@ function registerHandlers(): void {
         assertMessageCapacity(thread.messages.length, 1);
         thread.messages.push({ id: randomUUID(), modelId: text.modelId, role: 'assistant', text: text.text,
           apiContent: text.text, createdAt: new Date().toISOString() });
-      }, { profileId, assertCurrent, committed: text.commit });
-      assertCurrent();
+      }, { profileId, assertCurrent, committed: () => { committed = true; text.commit(); } });
+      // Once the encrypted replacement is committed the save happened; never report it as a failure (renderer checks its own epoch).
+      if (!committed) assertCurrent();
       return result;
-    } catch (error) { text.rollback(); throw error; }
+    } catch (error) { if (!committed) text.rollback(); throw error; }
   });
   ipcMain.handle("projects:retrieval-status", (event, rawId: unknown) => {
     trustedInvoke(event); return runSessionBound((_controller, identity) => documentRetrieval.status(identity.profileId, shortString(rawId, 100, "프로젝트")));
@@ -1814,6 +1816,7 @@ async function createWindow(): Promise<void> {
   installVoicePermissions(mainWindow.webContents.session,
     (contents, url) => Boolean(mainWindow && contents === mainWindow.webContents && trustedRendererUrl(url)),
     () => voiceManager.permissionPending);
+  bindRendererLifecycle(mainWindow.webContents, voiceManager);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
   const updateSystemBackground = () => {
