@@ -21,7 +21,7 @@
     "dist:win": "node scripts/ensure-canvas-binaries.mjs win && npm run icon && npm run build && electron-builder --win nsis --x64 --publish never && npm run release:verify:win",
     "test": "node --test tests/*.test.mjs && npm run ui:check",
     "ui:audit": "node scripts/audit-ui-css.mjs",
-    "ui:check": "tsx --test --test-concurrency=1 tests/sidebar-ui-dom.test.tsx tests/workspace-ui-dom.test.tsx tests/phase2-ui-dom.test.tsx tests/phase2-corrections-ui-dom.test.tsx tests/phase3-ui-dom.test.tsx tests/phase4-ui-dom.test.tsx tests/theme-ui-dom.test.tsx",
+    "ui:check": "tsx --test --test-concurrency=1 tests/sidebar-ui-dom.test.tsx tests/workspace-ui-dom.test.tsx tests/phase2-ui-dom.test.tsx tests/phase2-corrections-ui-dom.test.tsx tests/phase3-ui-dom.test.tsx tests/phase4-ui-dom.test.tsx tests/theme-ui-dom.test.tsx tests/command-palette-ui-dom.test.tsx",
     "release:verify:mac": "node scripts/verify-release.mjs mac",
     "release:verify:win": "node scripts/verify-release.mjs win"
   },
