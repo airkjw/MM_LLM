@@ -195,7 +195,7 @@ async function openRealComparison(extraApi: Record<string, unknown> = {}) {
     getSettings: async () => ({ theme: "dark", fontSize: "medium", defaultInstruction: "" }),
     setThemePreference: async () => {}, listThreads: async () => [thread], loadThread: async () => thread,
     listProjects: async () => [], listBackgroundResponses: async () => [],
-    getUpdateState: async () => ({ status: "idle", currentVersion: "0.5.0" }), onUpdateChanged: () => () => {},
+    getUpdateState: async () => ({ status: "idle", currentVersion: "0.5.0" }), onUpdateChanged: () => () => {}, onThemeResolved: () => () => {},
     pickAttachment: async () => ({ id: `report-${++nextId}`, name: "report.pdf", kind: "document", size: 100 }),
     discardAttachments: async () => {}, streamCompare: (request: CompareRequest, listener: (event: CompareEvent) => void) => {
       requests.push(request); receive = listener; return () => {};

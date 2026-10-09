@@ -196,18 +196,18 @@ export default function App() {
     document.documentElement.dataset.fontSize = appSettings?.fontSize ?? "medium";
     if (!appSettings) return;
     const preference = appSettings.theme;
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = () => {
-      const appliedTheme = preference === "system" ? media.matches ? "dark" : "light" : preference;
-      document.documentElement.dataset.theme = appliedTheme;
+    // data-theme comes only from the startup bootstrap and main's resolved pushes below.
+    if (document.documentElement.dataset.themePreference !== preference) {
       document.documentElement.dataset.themePreference = preference;
-      void themePersistenceRef.current?.sync(preference).catch((error) => {
-        console.warn("화면 테마 설정을 저장하지 못했습니다.", error instanceof Error ? error.name : "unknown");
-      });
-    };
-    apply(); media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
+    }
+    void themePersistenceRef.current?.sync(preference).catch((error) => {
+      console.warn("화면 테마 설정을 저장하지 못했습니다.", error instanceof Error ? error.name : "unknown");
+    });
   }, [appSettings]);
+
+  useEffect(() => window.mmllm.onThemeResolved((theme) => {
+    if (document.documentElement.dataset.theme !== theme) document.documentElement.dataset.theme = theme;
+  }), []);
 
   const llmModels = useMemo(() => session?.models.filter((model) => model.type === "llm") ?? [], [session]);
   const defaultModel = useCallback((items: GatewayModel[]) =>

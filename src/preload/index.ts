@@ -47,6 +47,14 @@ const desktopApi: DesktopApi = {
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (settings) => ipcRenderer.invoke("settings:update", settings),
   setThemePreference: (theme) => ipcRenderer.invoke("appearance:set-theme", theme),
+  onThemeResolved(listener) {
+    // One-way main -> renderer push; forward only the two resolved values and never reply.
+    const receive = (_event: Electron.IpcRendererEvent, theme: unknown) => {
+      if (theme === "light" || theme === "dark") listener(theme);
+    };
+    ipcRenderer.on("appearance:resolved", receive);
+    return () => ipcRenderer.removeListener("appearance:resolved", receive);
+  },
   listThreads: () => ipcRenderer.invoke("threads:list"),
   createThread: (request) => ipcRenderer.invoke("threads:create", request),
   loadThread: (id) => ipcRenderer.invoke("threads:load", id),

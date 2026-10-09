@@ -90,7 +90,7 @@ import { DocumentRetrieval } from "./document-retrieval";
 import { clearProfileRetrieval } from "./project-vault";
 import { validateRetrievalSettings } from "../shared/document-retrieval";
 import { isThemePreference, readThemePreference, writeThemePreference, type ThemePreference } from "./theme-state";
-import { applyWindowTheme, backgroundColorForTheme, resolveThemePreference } from "./theme-application";
+import { applyThemePreference, publishResolvedTheme, type ThemeWindow } from "./theme-application";
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "mmllm", privileges: { secure: true, standard: true, supportFetchAPI: true } }
@@ -591,10 +591,11 @@ function registerHandlers(): void {
     trustedInvoke(event);
     if (!isThemePreference(rawTheme)) throw new Error("화면 테마가 올바르지 않습니다.");
     try {
-      lastThemePreference = applyWindowTheme(rawTheme, nativeTheme.shouldUseDarkColors, lastThemePreference, {
+      lastThemePreference = applyThemePreference(rawTheme, nativeTheme, lastThemePreference, {
+        setThemeSource: (preference) => { nativeTheme.themeSource = preference; },
         setBackgroundColor: (color) => mainWindow?.setBackgroundColor(color),
         persist: (preference) => writeThemePreference(app.getPath("userData"), preference)
-      });
+      }, liveThemeWindow());
     } catch (error) {
       console.warn(`[appearance] Failed to persist the theme preference (${error instanceof Error ? error.name : "unknown"}).`);
       throw new Error("화면 테마 상태를 저장하지 못했습니다.");
@@ -1769,12 +1770,23 @@ async function registerAppProtocol(): Promise<void> {
       const bytes = await readFile(target);
       const contentType = target.endsWith(".html") ? "text/html; charset=utf-8" :
         target.endsWith(".js") ? "text/javascript; charset=utf-8" :
-          target.endsWith(".css") ? "text/css; charset=utf-8" : "application/octet-stream";
+          target.endsWith(".css") ? "text/css; charset=utf-8" :
+            target.endsWith(".woff2") ? "font/woff2" : "application/octet-stream";
       return new Response(new Uint8Array(bytes), { headers: { "Content-Type": contentType } });
     } catch {
       return new Response("Not found", { status: 404 });
     }
   });
+}
+
+/** One-way main -> renderer theme push target; null while no live window can receive it. */
+function liveThemeWindow(): ThemeWindow | null {
+  const window = mainWindow;
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return null;
+  return {
+    setBackgroundColor: (color) => window.setBackgroundColor(color),
+    sendResolvedTheme: (theme) => window.webContents.send("appearance:resolved", theme)
+  };
 }
 
 async function createWindow(): Promise<void> {
@@ -1799,13 +1811,12 @@ async function createWindow(): Promise<void> {
     : work.x + Math.round((work.width - width) / 2);
   const y = saved ? Math.max(work.y, Math.min(saved.y, work.y + work.height - height))
     : work.y + Math.round((work.height - height) / 2);
-  const persistedPreference = readThemePreference(app.getPath("userData"));
-  const initialTheme = resolveThemePreference(persistedPreference ?? "system", nativeTheme.shouldUseDarkColors);
-  lastThemePreference = persistedPreference;
+  // nativeTheme.themeSource is set from the persisted preference before the first window.
+  const initialTheme = nativeTheme.shouldUseDarkColors ? "dark" : "light";
   mainWindow = new BrowserWindow({
     x, y, width, height, minWidth: 680, minHeight: 620,
     title: "MM_LLM",
-    backgroundColor: initialTheme === "dark" ? "#12161D" : "#FFFFFF",
+    backgroundColor: initialTheme === "dark" ? "#0D0E10" : "#F6F7F8",
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       // Electron forwards additionalArguments to the sandboxed preload's process.argv. The
@@ -1823,12 +1834,8 @@ async function createWindow(): Promise<void> {
   bindRendererLifecycle(mainWindow.webContents, voiceManager);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
-  const updateSystemBackground = () => {
-    if (lastThemePreference !== "system" || !mainWindow) return;
-    const theme = resolveThemePreference("system", nativeTheme.shouldUseDarkColors);
-    mainWindow.setBackgroundColor(backgroundColorForTheme(theme));
-  };
-  nativeTheme.on("updated", updateSystemBackground);
+  const pushResolvedTheme = () => { publishResolvedTheme(nativeTheme, liveThemeWindow()); };
+  nativeTheme.on("updated", pushResolvedTheme);
   if (saved?.maximized) mainWindow.maximize();
   let closeCleanupStarted = false;
   mainWindow.on("close", (event) => {
@@ -1851,7 +1858,7 @@ async function createWindow(): Promise<void> {
     void cleanup.finally(() => { if (!closingWindow.isDestroyed()) closingWindow.destroy(); });
   });
   mainWindow.on("closed", () => {
-    nativeTheme.removeListener("updated", updateSystemBackground);
+    nativeTheme.removeListener("updated", pushResolvedTheme);
     clearAttachments(); mainWindow = null;
   });
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
@@ -1864,6 +1871,8 @@ async function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  lastThemePreference = readThemePreference(app.getPath("userData"));
+  nativeTheme.themeSource = lastThemePreference ?? "system";
   configureOcrDataRoot(join(app.getPath("userData"), "ocr-data"));
   await cleanupAllProfileMedia();
   startAttachmentSweeper();
