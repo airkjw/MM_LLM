@@ -24,7 +24,7 @@ import { mockModels } from "./mock";
 import { gatewayScheduler } from "./request-scheduler";
 import { ModelSearchCache } from "./model-search-cache";
 import { searchCapabilityFromDetail, nativeSearchSettingsError, nativeSearchProvider, sharedEvidenceModelError } from "../shared/search-capability";
-import { SearchEvidenceNormalizer, safeCitation } from "../shared/search-evidence";
+import { MAX_SEARCH_CITATIONS, SearchEvidenceNormalizer, safeCitation } from "../shared/search-evidence";
 
 export const GATEWAY = "https://factchat-cloud.mindlogic.ai/v1/gateway";
 let apiKey: string | null = null;
@@ -92,7 +92,8 @@ export async function listModelsForKey(key: string, signal?: AbortSignal): Promi
 }
 
 export async function listModels(): Promise<GatewayModel[]> {
-  modelSearchCache.clear();
+  // A refresh does not change the account, so searches already checking capability keep running.
+  modelSearchCache.invalidate();
   models = await listModelsForKey(requireKey());
   return models;
 }
@@ -469,11 +470,14 @@ async function deepResearch(query: string, controller: AbortController, onSearch
   const tasks = queries.map(async (planned) => ({ query: planned,
     content: await searchWeb(planned, child, "deep", (search) => {
       searches.push(search);
-      const citations = [...new Map(searches.flatMap((item) => item.citations).map((item) => [item.url, item])).values()];
-      if (citations.length > 64) throw new Error("딥리서치 출처 수가 안전 한도를 넘었습니다.");
+      const merged = [...new Map(searches.flatMap((item) => item.citations).map((item) => [item.url, item])).values()];
+      // Paid searches already ran: keep the first MAX sources and say so instead of failing the whole research.
+      const citations = merged.slice(0, MAX_SEARCH_CITATIONS);
+      const truncated = merged.length > citations.length || searches.some((s) => s.truncated);
       onSearch?.({ route: "sonar", provider: "sonar", status: searches.some((s) => s.status === "failed") ? "failed"
         : searches.some((s) => s.status === "missing") ? "missing" : citations.length ? "executed" : "empty",
-        queries: searches.flatMap((s) => s.queries), citations, requestCount: searches.reduce((n, s) => n + (s.requestCount ?? 0), 0) });
+        queries: searches.flatMap((s) => s.queries), citations, requestCount: searches.reduce((n, s) => n + (s.requestCount ?? 0), 0),
+        ...(truncated ? { truncated: true as const } : {}) });
     }) }));
   try { return combineResearchResults(await Promise.all(tasks)); }
   catch (error) {
@@ -619,6 +623,8 @@ export async function* streamChat(
   }
   const request = validateChatRequest(modelId, groundedMessages, generation, nativeSearch);
   let release: (() => void) | undefined;
+  // Created once the response arrives; before that no search can have run, so a failure is a plain "failed".
+  let evidence: SearchEvidenceNormalizer | undefined;
   try {
     release = await gatewayScheduler.acquire("standard", signal);
     const init = jsonInit(request.body, signal);
@@ -628,7 +634,7 @@ export async function* streamChat(
     if (request.provider === "gemini") headers.set("x-goog-api-key", requireKey());
     const response = await gatewayFetch(request.path, { ...init, headers });
     const normalizer = new ProviderEventNormalizer(request.provider);
-    const evidence = nativeSearch ? new SearchEvidenceNormalizer(nativeSearch) : undefined;
+    evidence = nativeSearch ? new SearchEvidenceNormalizer(nativeSearch) : undefined;
     let lastSearch = JSON.stringify(search);
     const events = generation.advanced.serverCode && response.headers.get("content-type")?.includes("application/json")
       ? (async function* () { yield await readJsonObjectLimited(response, controller, "코드 도구 응답"); })()
@@ -652,12 +658,11 @@ export async function* streamChat(
       }
     }
     signal.throwIfAborted();
-    if (evidence) {
-      search = evidence.snapshot(true); yield { type: "web_search", search };
-      if (search.status === "failed") throw new Error("모델 자체 검색 도구가 실패했습니다. 추가 유료 호출은 하지 않았습니다.");
-    }
+    // A finished answer is stored as-is. Failed search calls are reported in the evidence, not by discarding the answer.
+    if (evidence) { search = evidence.snapshot(true); yield { type: "web_search", search }; }
   } catch (error) {
-    if (nativeSearch) yield { type: "web_search", search: { ...search, status: "failed" } };
+    // Cancellation or a later stream error must not rewrite a search that already ran as "failed".
+    if (nativeSearch) yield { type: "web_search", search: evidence ? evidence.snapshot(true) : { ...search, status: "failed" } };
     throw error;
   } finally {
     release?.();

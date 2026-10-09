@@ -50,3 +50,50 @@ export const geminiMultiQueryEvents = geminiEvents.map((event) => {
 
 export const claudePauseEvents = claudeEvents.map((event) => event.type === "message_delta"
   ? { ...event, delta: { stop_reason: "pause_turn" } } : event);
+
+// --- Review-fix fixtures (synthetic; shapes follow the Anthropic web_search / OpenAI Responses documents). ---
+const claudeSearchOk = claudeEvents.slice(1, 7); // server_tool_use srv_1 + its successful web_search_tool_result
+const claudeSearchFailed = [
+  { type: "content_block_start", index: 3, content_block: { type: "server_tool_use", id: "srv_2", name: "web_search", input: { query: "synthetic second query" } } },
+  { type: "content_block_stop", index: 3 },
+  { type: "content_block_start", index: 4, content_block: { type: "web_search_tool_result", tool_use_id: "srv_2",
+    content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" } } },
+  { type: "content_block_stop", index: 4 }
+];
+const claudeAnswer = [
+  { type: "content_block_start", index: 5, content_block: { type: "text", text: "" } },
+  { type: "content_block_delta", index: 5, delta: { type: "text_delta", text: "Complete answer." } },
+  { type: "content_block_stop", index: 5 }
+];
+// Failed searches are not billed, so usage counts only the searches that completed.
+const claudeEnd = (requests) => [
+  { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 7, ...(requests ? { server_tool_use: { web_search_requests: requests } } : {}) } },
+  { type: "message_stop" }
+];
+/** One search completed with a source, a second search failed, the answer finished normally. */
+export const claudePartialFailureEvents = [claudeEvents[0], ...claudeSearchOk, ...claudeSearchFailed, ...claudeAnswer, ...claudeEnd(1)];
+/** Every search failed but the model still answered and stopped normally. */
+export const claudeAllFailedEvents = [claudeEvents[0], ...claudeSearchFailed, ...claudeAnswer, ...claudeEnd(0)];
+/** A search completed, then the stream broke before the answer finished. */
+export const claudeExecutedThenStallEvents = [claudeEvents[0], ...claudeSearchOk];
+/** Non-streaming Messages response (stream:false, e.g. with serverCode); same blocks as the stream above. */
+export const claudeJsonMessage = {
+  id: "msg_synthetic", type: "message", role: "assistant", stop_reason: "end_turn",
+  content: [
+    { type: "server_tool_use", id: "srv_1", name: "web_search", input: { query: "synthetic public statistic" } },
+    { type: "web_search_tool_result", tool_use_id: "srv_1", content: [{ type: "web_search_result", ...source, encrypted_content: "synthetic-opaque-provider-data" }] },
+    { type: "text", text: "합성 통계 답변", citations: [{ type: "web_search_result_location", ...source, cited_text: "synthetic evidence", encrypted_index: "synthetic-index" }] }
+  ],
+  usage: { input_tokens: 10, output_tokens: 7, server_tool_use: { web_search_requests: 1 } }
+};
+/** Non-streaming Responses object. */
+export const responsesJsonResponse = {
+  id: "resp_synthetic", object: "response", status: "completed", usage: { input_tokens: 10, output_tokens: 7 },
+  output: [{ id: "ws_1", type: "web_search_call", status: "completed", action: { type: "search", query: "synthetic public statistic" } },
+    { type: "message", content: [{ type: "output_text", text: "합성 통계 답변", annotations: [openaiAnnotation] }] }]
+};
+/** Sonar bridge completion with `count` distinct sources. */
+export const sonarJsonResponse = (count) => ({
+  choices: [{ message: { content: "synthetic evidence summary" } }],
+  citations: Array.from({ length: count }, (_, i) => `https://example.test/sonar/${i}`)
+});
