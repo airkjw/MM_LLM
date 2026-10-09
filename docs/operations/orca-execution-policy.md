@@ -74,6 +74,10 @@ Fable 5.1은 질 대비 효과가 큰 지점에만 제한적으로 투입한다.
 - 대기는 `orca orchestration check --wait --timeout-ms 900000`을 백그라운드로 실행하고 완료 알림을
   받는다. 짧은 주기 반복 조회를 하지 않는다. 세 번 연속 빈 대기 뒤 fleet의 attention과
   literal nextAction을 확인한다.
+- 메시지 대기는 worker의 조용한 정지(API 오류로 끊긴 turn 등)를 깨우지 못한다. worker가 실행 중인 동안
+  실행 중 worker의 화면 tail에서 API 오류·10분 이상 무변화를 알리는 저비용 감시를 함께 둔다.
+  정지가 확인되면 같은 terminal에 재개 지시를 보내 맥락을 보존하고, 이 terminal은 user-owned가 되어
+  정식 release 대신 사용자 수동 종료가 필요함을 보고한다.
 - wave 공통 계약·금지사항은 Git 제외 `.orca/briefs/<wave>.md`에 한 번 쓰고 Task spec은 목표, 소유 파일,
   완료 조건, 지적 ID 위주로 3KB 이내로 쓴다.
 - worker 결과는 `--report-path` 파일과 세 문장 `worker_done`으로 받는다. transcript(`worker-read`)는

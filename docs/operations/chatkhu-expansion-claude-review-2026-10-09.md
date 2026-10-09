@@ -5,7 +5,9 @@
 - 재실행 gate(로컬 Linux, mock/합성, Node v24.21.0): `typecheck`, `test`(Node 350 + DOM 109 = 459),
   `ui:audit`, `build` 모두 exit 0. 실제 API·실계정·macOS/Windows 실기기 검증은 하지 않았다.
 - Critical(인증·tenant·승인 우회, 키·토큰 노출, 원음·평문 저장)은 발견하지 않았다.
-- 상태: 미수정. 수정은 사용자 항목 승인 후 [전환 기록](orca-claude-transition-2026-10-09.md)의 Run으로 진행한다.
+- 상태: 23건 전부 보정, 독립 리뷰 PASS(Run `run_5ed744afac3e`, 통합 브랜치 `airkjw/rf-integration-20261009`).
+  결과와 잔여 위험은 [전환 기록](orca-claude-transition-2026-10-09.md)의 "첫 Run 결과"와 아래 "보정 결과"에 있다.
+  main 병합 전이다.
 
 ## High
 
@@ -49,3 +51,13 @@
 
 일부 검색 실패(H1), 65개 이상 출처(H2), 검색 실행 후 취소(M2), 9개 이상 코드 결과(M1),
 문서 삭제 후 의미 검색 전송(M3), 두 번 끼어들기(M4), 시계 skew(M6), 렌더러 크래시(L2), 전체화면(L3).
+
+## 보정 결과 (run_5ed744afac3e)
+
+- 설계 변경: M4는 응답 종료가 아니라 truncate·interrupt 직후 항목을 잊는다(R-B 수용). M5는 main 입력 한도를
+  1초 bounded credit으로 바꿔 renderer 8프레임(800ms) 지연 burst를 허용하고 지속 과다 입력은 거절한다.
+  M6 초기 설정 타이머는 고정 10초다. L5는 가드 변경 없이 표시만 보정했다.
+- 리뷰 중 추가 보정: 응답 헤더 전 취소는 `missing`, 검색 호출 dedupe 1024, 검색 전부 실패 + 답변 0자는 기존 오류로
+  처리, commit 뒤 fsync 오류는 저장 결과 반환.
+- 잔여 위험(미수정·수용): 모든 검색이 실패하고 응답이 도구 호출만으로 끝나면 오류로 처리된다(기존과 동일).
+  배치 임베딩, serverCode JSON 응답 형식, Gemini grounding은 합성 fixture로만 검증했고 실계정 확인이 필요하다.
