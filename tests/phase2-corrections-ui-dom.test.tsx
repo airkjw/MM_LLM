@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert from "./dom-assert.ts";
 import test, { afterEach, before } from "node:test";
 import { Window } from "happy-dom";
 import type { ThreadSnapshot } from "../src/shared/contracts";

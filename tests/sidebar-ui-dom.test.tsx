@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert, { assertFocused } from "./dom-assert.ts";
 import test, { afterEach, before } from "node:test";
 import { Window } from "happy-dom";
 import type { Root } from "react-dom/client";
@@ -216,17 +216,6 @@ async function browserTabWithin(container: HTMLElement, shiftKey = false) {
 /** Accessible name used by these checks: aria-label, else the trimmed text (rail items use sr-only text). */
 function accessibleName(element: Element) {
   return element.getAttribute("aria-label") ?? element.textContent?.trim() ?? "";
-}
-
-/** Identity focus check. A failing assert.equal on DOM nodes makes node:assert inspect happy-dom's
- * object graph, which exhausts memory instead of reporting; describe the elements instead. */
-function assertFocused(expected: Element | null | undefined, message?: string) {
-  const active = document.activeElement;
-  if (active === expected) return;
-  const describe = (element: Element | null | undefined) => element
-    ? `<${element.tagName.toLowerCase()} class="${element.getAttribute("class") ?? ""}"> "${accessibleName(element)}"`
-    : String(element);
-  assert.fail(`${message ? `${message}: ` : ""}focus is on ${describe(active)}, expected ${describe(expected)}`);
 }
 
 function byLabel(label: string | RegExp) {

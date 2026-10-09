@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert, { assertFocused } from "./dom-assert.ts";
 import test, { afterEach, before } from "node:test";
 import { Window } from "happy-dom";
 import { readFileSync } from "node:fs";
@@ -89,12 +89,12 @@ test("real model picker uses arrow/Home/End, selects and restores focus", async 
   const trigger = document.querySelector(".model-trigger")!;
   await click(trigger);
   const input = document.querySelector('[role="combobox"]')!;
-  assert.equal(document.activeElement, input);
+  assertFocused(input);
   assert.equal(trigger.getAttribute("aria-haspopup"), "dialog");
   await key("End");
   assert.match(input.getAttribute("aria-activedescendant")!, /-2$/);
   await key("Home"); await key("ArrowDown"); await key("Enter");
-  assert.deepEqual(chosen, ["b"]); assert.equal(document.activeElement, trigger);
+  assert.deepEqual(chosen, ["b"]); assertFocused(trigger);
   assert.equal(document.querySelector('[role="dialog"]'), null);
 });
 test("confirmation cancels with Escape and requires explicit destructive action", async () => {
@@ -104,9 +104,9 @@ test("confirmation cancels with Escape and requires explicit destructive action"
   }}>열기</button>; }
   await render(<ConfirmProvider><Harness /></ConfirmProvider>);
   const trigger = document.querySelector("button")!; await click(trigger); await key("Escape");
-  assert.deepEqual(answers, [false]); assert.equal(document.activeElement, trigger);
+  assert.deepEqual(answers, [false]); assertFocused(trigger);
   await click(trigger); await click(document.querySelector(".danger-button")!);
-  assert.deepEqual(answers, [false, true]); assert.equal(document.activeElement, trigger);
+  assert.deepEqual(answers, [false, true]); assertFocused(trigger);
 });
 test("informational notices do not announce themselves as errors", async () => {
   await render(<Notice notice={{ id: 1, tone: "info", text: "모델 변경됨" }} onClose={() => {}} />);
@@ -298,7 +298,7 @@ test("real model picker keeps auxiliary types out and only labels verified nativ
     input.dispatchEvent(new browser.Event("input", { bubbles: true }));
   });
   assert.equal(checks, 0, "render, selection and typing never fetch model detail");
-  await key("Escape"); assert.equal(document.activeElement, trigger);
+  await key("Escape"); assertFocused(trigger);
 });
 
 function syntheticChatThread(overrides: Record<string, unknown> = {}) {
@@ -355,7 +355,7 @@ test("real ChatPanel deep route ignores native-only setting conflicts and keeps 
     assert.equal([...document.querySelectorAll("button")].filter((b) => b.textContent === "검색 기능 확인").length, 0);
     const select = document.querySelector<HTMLSelectElement>('[aria-label="웹 검색 방식"]')!;
     assert.deepEqual([...select.options].map((option) => option.value), ["always", "auto", "deep", "off"]);
-    select.focus(); assert.equal(document.activeElement, select);
+    select.focus(); assertFocused(select);
   }
 });
 
@@ -429,7 +429,7 @@ test("real ChatPanel explains unsupported Claude paused search and sends a fresh
     assert.match(document.querySelector('[aria-label="웹 검색 실행 상태"]')!.textContent!, /실행 확인.*합성 출처/s);
     assert.equal(requests.length, 0, "render/restore does not retry the paused turn");
     const send = document.querySelector<HTMLButtonElement>('[aria-label="메시지 전송"]')!;
-    send.focus(); assert.equal(document.activeElement, send);
+    send.focus(); assertFocused(send);
     await click(send);
     assert.equal(requests.length, 1); assert.equal(requests[0].text, "새 합성 질문");
     assert.equal(requests[0].continueIncompleteId, undefined);
@@ -481,7 +481,7 @@ test("real App research results use the existing modal focus layer in narrow win
     }
     const controls = [...dialog.querySelectorAll<HTMLButtonElement>('button:not([disabled])')];
     await act(async () => controls.at(-1)!.focus()); await key("Tab");
-    assert.equal(document.activeElement, controls[0]);
+    assertFocused(controls[0]);
     await key("Escape"); assert.equal(document.querySelector('.workspace-tools-dialog'), null);
     assert.equal(discoveries, 0);
   } finally { browser.innerWidth = originalWidth; style.remove(); }
