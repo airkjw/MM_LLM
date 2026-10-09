@@ -736,3 +736,94 @@ test("real App: the compare rail item is a screen listing saved runs read-only",
   assert.deepEqual(continued, [["saved-run", compareModels[0]]]);
   assert.equal(syntheses + compares, 0);
 });
+
+async function wait(ms: number) { await act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); }); }
+const paletteInput = () => document.querySelector<HTMLInputElement>('.command-palette [role="combobox"]')!;
+async function typePalette(value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(paletteInput(), value);
+    paletteInput().dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+}
+
+test("real App: Cmd/Ctrl+K inside the composer opens the palette and Escape returns focus to the composer", async () => {
+  compareFixture({ searchThreads: async () => [] });
+  await render(<ConfirmProvider><App /></ConfirmProvider>);
+  assert.equal(document.querySelector("#search-title"), null, "the old search dialog is gone");
+  const composer = composerInput();
+  composer.focus();
+  await key("k", { metaKey: true });
+  await wait(5);
+  assert.ok(document.querySelector('.command-palette[role="dialog"][aria-modal="true"]'), "the palette opens from inside a text field");
+  assertFocused(paletteInput());
+  await key("Escape");
+  assert.equal(document.querySelector(".command-palette"), null);
+  assertFocused(composer);
+});
+
+test("real App: choosing a conversation in the palette selects that thread", async () => {
+  const other = { id: "palette-other", title: "외래 대기시간 합성 대화", modelId: compareModels[0], createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(), webSearchMode: "off", reasoningMode: "auto", instruction: "", advanced: {},
+    attachmentConsent: true, messages: [], messageCount: 0 };
+  const loaded: string[] = []; const queries: string[] = [];
+  const { thread } = compareFixture({
+    searchThreads: async (query: string) => { queries.push(query); return [{ ...other, snippet: "합성 대기 지표" }]; }
+  });
+  window.mmllm.loadThread = async (id: string) => { loaded.push(id); return id === other.id ? other : thread; };
+  await render(<ConfirmProvider><App /></ConfirmProvider>);
+  loaded.length = 0;
+  document.body.focus();
+  await key("k", { ctrlKey: true });
+  await typePalette("대기");
+  await wait(220);
+  assert.deepEqual(queries, ["대기"]);
+  const option = [...document.querySelectorAll('.command-palette [role="option"][data-kind="thread"]')][0]!;
+  assert.match(option.textContent!, /외래 대기시간 합성 대화/);
+  assert.equal(option.querySelector("mark")?.textContent, "대기");
+  await key("Enter");
+  await wait(10);
+  assert.deepEqual(loaded, [other.id], "the palette uses the existing selectThread path");
+  assert.equal(document.querySelector(".command-palette"), null);
+  assert.match(document.querySelector(".chat-panel .panel-header h2")!.textContent!, /외래 대기시간 합성 대화/);
+});
+
+test("real App: palette commands run new thread, theme, credits and compare through the existing paths", async () => {
+  let creates = 0; const settingsWrites: unknown[] = []; const creditCalls: boolean[] = [];
+  const { thread } = compareFixture({
+    searchThreads: async () => { throw new Error("commands must not search"); },
+    createThread: async () => { creates++; return { ...syntheticChatThread(), id: `palette-new-${creates}`, modelId: compareModels[0] }; },
+    updateSettings: async (next: Record<string, unknown>) => { settingsWrites.push(next); return next; },
+    getCredits: async (force: boolean) => { creditCalls.push(force); return { total: { remaining: 900 } }; }
+  });
+  await render(<ConfirmProvider><App /></ConfirmProvider>);
+  const run = async (label: RegExp) => {
+    document.body.focus();
+    await key("k", { metaKey: true });
+    await typePalette("/");
+    const option = [...document.querySelectorAll<HTMLElement>('.command-palette [role="option"][data-kind="command"]')]
+      .find((item) => label.test(item.textContent!))!;
+    assert.ok(option, `command ${label} is listed`);
+    await click(option);
+    await wait(10);
+  };
+  const labels = () => [...document.querySelectorAll('.command-palette [role="option"]')].map((item) => item.textContent);
+  document.body.focus();
+  await key("k", { metaKey: true });
+  assert.deepEqual(labels(), ["새 대화⌘N", "모델 비교 시작⌘⇧C", "화면 모드 › 시스템", "화면 모드 › 라이트", "화면 모드 › 다크", "크레딧 새로고침"]
+    .map((text) => navigator.platform.includes("Mac") ? text : text.replace("⌘⇧", "Ctrl+Shift+").replace("⌘", "Ctrl+")));
+  assert.doesNotMatch(document.querySelector(".command-palette")!.textContent!, /새 창/);
+  await key("Escape");
+  await run(/새 대화/);
+  assert.equal(creates, 1);
+  await run(/화면 모드 › 다크/);
+  assert.equal(settingsWrites.length, 0, "choosing the saved theme writes nothing");
+  await run(/화면 모드 › 라이트/);
+  assert.equal((settingsWrites.at(-1) as { theme: string }).theme, "light");
+  assert.equal(document.documentElement.dataset.themePreference, "light", "the saved preference flows through the existing theme effect");
+  await run(/크레딧 새로고침/);
+  assert.deepEqual(creditCalls, [true]);
+  await run(/모델 비교 시작/);
+  assert.equal(document.querySelectorAll(".composer-model-token").length, 2);
+  assert.ok(document.querySelector(".model-popover"), "the compare command opens the picker on the second token");
+  assert.ok(thread);
+});

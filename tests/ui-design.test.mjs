@@ -152,6 +152,13 @@ expectMutationError("a composer add button without the 28px target row margin", 
   ".composer-model-add { display: inline-flex; align-items: center; gap: 4px; height: 24px; margin-block: 2px;",
   ".composer-model-add { display: inline-flex; align-items: center; gap: 4px; height: 24px; margin-block: 0;"
 ), /\.composer-model-add needs a block margin for a 28px target row/);
+expectMutationError("a command palette field without the control boundary", (source) => source.replace(
+  "border: 0 solid var(--color-border-control); border-bottom-width: 1px;", "border: 0 solid var(--color-border); border-bottom-width: 1px;"
+), /Control boundary.*command-palette-input/);
+expectMutationError("a comparison consent checkbox without the control boundary", (source) => source.replace(
+  '.compare-consent input[type="checkbox"] { outline: 1px solid var(--color-border-control);',
+  '.compare-consent input[type="checkbox"] { outline: 1px solid var(--color-border);'
+), /Control boundary.*compare-consent/);
 for (const pair of ["text-body/bg-subtle", "text-body/bg-hover"]) {
   expectMutationError(`the ${pair} composer token pair`, (source) => source.replace(
     "--color-text-body: #C9CDD2;", "--color-text-body: #5F6670;"), new RegExp(`dark: ${pair} is`));

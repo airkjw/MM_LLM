@@ -1,5 +1,5 @@
 import { Bot, CircleHelp, Edit3, FileText, FolderOpen, Paperclip, Plus, Search, Settings, ShieldCheck, Trash2, X } from "lucide-react";
-import type { AppSettings, ChatbotBookmark, ChatbotUsageReport, GatewayModel, ProjectSummary, ThreadSearchResult, ThreadSnapshot, ThreadSummary } from "../../shared/contracts";
+import type { AppSettings, ChatbotBookmark, ChatbotUsageReport, GatewayModel, ProjectSummary, ThreadSnapshot, ThreadSummary } from "../../shared/contracts";
 import { useState } from "react";
 import { ProjectRetrievalSettings } from "./ProjectRetrievalSettings";
 import { ResearchPanel } from "./ResearchPanel";
@@ -59,14 +59,6 @@ type Props = {
   replacementKey: string;
   setReplacementKey: React.Dispatch<React.SetStateAction<string>>;
   replaceApiKey: () => Promise<void>;
-  searchOpen: boolean;
-  closeSearch: () => void;
-  searchRef: React.RefObject<HTMLDivElement | null>;
-  searchQuery: string;
-  setSearchQuery: React.Dispatch<React.SetStateAction<string>>;
-  searchResults: ThreadSearchResult[];
-  setSearchOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  selectThread: (id: string) => Promise<void>;
   settingsOpen: boolean;
   settingsDraft: AppSettings | null;
   settingsSaving: boolean;
@@ -78,7 +70,7 @@ type Props = {
   researchOpen?: boolean; setResearchOpen?: (open: boolean | ((open: boolean) => boolean)) => void;
 };
 
-export function AppDialogs({ retrievalModels, onResearchEvidence, renameDialog, closeRename, renameRef, saveRenamedConversation, renameInputRef, setRenameDialog, toolsOpen, bookmarkBusy, closeTools, toolsRef, toolsTab, toolsNotice, clearToolsNotice, bookmarkDraft, setBookmarkDraft, saveBookmark, bookmarks, openChatbot, loadChatbotUsage, setBookmarks, setError, chatbotUsage, projectsOpen, projectBusy, closeProjects, projectsRef, selectedProjectId, setSelectedProjectId, setProjectDraft, projects, projectDraft, saveProject, removeProjectDocument, addDocumentToProject, thread, assignCurrentThreadToProject, createProjectThread, removeProject, keyReplaceOpen, keyReplacing, closeKeyReplace, keyReplaceRef, replacementKey, setReplacementKey, replaceApiKey, searchOpen, closeSearch, searchRef, searchQuery, setSearchQuery, searchResults, setSearchOpen, selectThread, settingsOpen, settingsDraft, settingsSaving, closeSettings, settingsRef, modelId, setSettingsDraft, saveGlobalSettings, ...researchControl }: Props) {
+export function AppDialogs({ retrievalModels, onResearchEvidence, renameDialog, closeRename, renameRef, saveRenamedConversation, renameInputRef, setRenameDialog, toolsOpen, bookmarkBusy, closeTools, toolsRef, toolsTab, toolsNotice, clearToolsNotice, bookmarkDraft, setBookmarkDraft, saveBookmark, bookmarks, openChatbot, loadChatbotUsage, setBookmarks, setError, chatbotUsage, projectsOpen, projectBusy, closeProjects, projectsRef, selectedProjectId, setSelectedProjectId, setProjectDraft, projects, projectDraft, saveProject, removeProjectDocument, addDocumentToProject, thread, assignCurrentThreadToProject, createProjectThread, removeProject, keyReplaceOpen, keyReplacing, closeKeyReplace, keyReplaceRef, replacementKey, setReplacementKey, replaceApiKey, settingsOpen, settingsDraft, settingsSaving, closeSettings, settingsRef, modelId, setSettingsDraft, saveGlobalSettings, ...researchControl }: Props) {
   const [researchOpenState, setResearchOpenState] = useState(false);
   const [researchOpen, setResearchOpen] = researchControl.setResearchOpen
     ? [Boolean(researchControl.researchOpen), researchControl.setResearchOpen] : [researchOpenState, setResearchOpenState];
@@ -214,20 +206,6 @@ export function AppDialogs({ retrievalModels, onResearchEvidence, renameDialog, 
           onClick={closeKeyReplace} disabled={keyReplacing}>취소</button>
           <button type="button" className="primary-button" disabled={keyReplacing || !replacementKey.trim()}
             onClick={() => void replaceApiKey()}>{keyReplacing ? "검증 중…" : "검증하고 교체"}</button></div>
-      </div></div>}
-      {searchOpen && <div className="dialog-backdrop" onMouseDown={(event) => {
-        if (event.target === event.currentTarget) closeSearch();
-      }}><div className="dialog-card search-dialog" role="dialog"
-        aria-modal="true" aria-labelledby="search-title" ref={searchRef} tabIndex={-1}>
-        <div className="dialog-title"><Search size={21} /><h3 id="search-title">대화 검색</h3></div>
-        <input className="dialog-search-input" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)}
-          placeholder="제목이나 대화 내용 검색" aria-label="대화 검색어" />
-        <div className="search-results">{searchQuery.trim() && !searchResults.length &&
-          <div className="empty-models">검색 결과가 없습니다.</div>}
-          {searchResults.map((item) => <button type="button" key={item.id} onClick={() => {
-            setSearchOpen(false); void selectThread(item.id);
-          }}><strong>{item.title}</strong><small>{item.snippet}</small></button>)}</div>
-        <button type="button" className="secondary-button" onClick={closeSearch}>닫기</button>
       </div></div>}
       {settingsOpen && settingsDraft && <div className="dialog-backdrop" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !settingsSaving) closeSettings();

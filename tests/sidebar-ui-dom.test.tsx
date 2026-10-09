@@ -867,7 +867,7 @@ test("real App: Ctrl/Cmd+B collapses only the list column and the rail stays", a
   assert.ok(!document.querySelector(".sidebar")?.classList.contains("collapsed"));
 });
 
-test("real App: the body header Cmd+K button opens search and focus returns to it, also after shrinking", async () => {
+test("real App: the body header Cmd+K button opens the command palette and focus returns to it, also after shrinking", async () => {
   await renderApp();
   const header = document.querySelector<HTMLElement>(".panel-header")!;
   const search = header.querySelector<HTMLButtonElement>(".header-search")!;
@@ -876,7 +876,9 @@ test("real App: the body header Cmd+K button opens search and focus returns to i
   assert.equal(search.getAttribute("role"), null);
   search.focus();
   await click(search);
-  assert.ok(document.querySelector("#search-title"), "the existing search dialog opens");
+  // Stage 3 (D3.7): the Cmd+K entry opens the command palette that replaced the search dialog.
+  assert.ok(document.querySelector('.command-palette[role="dialog"]'), "the command palette opens");
+  assert.equal(document.querySelector("#search-title"), null);
   await key("Escape");
   assertFocused(search);
 

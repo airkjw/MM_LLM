@@ -1,7 +1,7 @@
 import { CircleHelp, LoaderCircle, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { canSynthesizeCompare, COMPARE_SYNTHESIS_MODEL_ID } from "../../shared/compare-synthesis";
-import type { AppSettings, ChatbotBookmark, ChatbotUsageReport, CompareEvent, CompareRequest, CompareRun, CompareSynthesisEvent, GatewayModel, MediaResult, PickedAttachment, ProjectSummary, SessionState, ThreadSearchResult, ThreadSnapshot, ThreadSummary, UpdateState } from "../../shared/contracts";
+import type { AppSettings, ChatbotBookmark, ChatbotUsageReport, CompareEvent, CompareRequest, CompareRun, CompareSynthesisEvent, GatewayModel, MediaResult, PickedAttachment, ProjectSummary, SessionState, ThreadSnapshot, ThreadSummary, UpdateState } from "../../shared/contracts";
 import { CreditRefreshQueue } from "../../shared/credit-refresh";
 import { buildMeetingReductionRound, buildMeetingSummaryPlan, MEETING_SUMMARY_INSTRUCTION } from "../../shared/meeting-transcript";
 import { resolveLiveThreadModel } from "../../shared/model-catalog";
@@ -9,6 +9,7 @@ import { staleRefreshDelay } from "../../shared/refresh-policy";
 import { LatestRequestGate } from "../../shared/request-generation";
 import { isPristineThread } from "../../shared/thread-state";
 import { AppDialogs } from "./AppDialogs";
+import { CommandPalette, type PaletteCommand } from "./components/CommandPalette";
 import { useConfirm } from "./components/ConfirmDialog";
 import { Notice, useNotice } from "./components/Notice";
 import { Sidebar, type FocusReturnTarget, type MediaKind, type SidebarScreen } from "./components/Sidebar";
@@ -28,7 +29,17 @@ import { errorText, templates } from "./ui-shared";
 type Screen = Extract<SidebarScreen, "chat" | "compare" | "media">;
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
 const MEDIA_KINDS: ReadonlyArray<readonly [MediaKind, string]> = [["image", "이미지"], ["audio", "오디오"], ["video", "비디오"]];
-const SHORTCUT_LABEL = navigator.platform.includes("Mac") ? "⌘K" : "Ctrl K";
+const MAC = navigator.platform.includes("Mac");
+const SHORTCUT_LABEL = MAC ? "⌘K" : "Ctrl K";
+/** Palette commands (contract D3.7). "⌘↵ 새 창" is out of scope: the app has one window. */
+const PALETTE_COMMANDS: readonly PaletteCommand[] = [
+  { id: "new-thread", label: "새 대화", shortcut: MAC ? "⌘N" : "Ctrl+N" },
+  { id: "compare", label: "모델 비교 시작", shortcut: MAC ? "⌘⇧C" : "Ctrl+Shift+C" },
+  { id: "theme-system", label: "시스템", group: "화면 모드" },
+  { id: "theme-light", label: "라이트", group: "화면 모드" },
+  { id: "theme-dark", label: "다크", group: "화면 모드" },
+  { id: "credits", label: "크레딧 새로고침" }
+];
 const MEDIA_KIND_PANEL_ID = "media-kind-panel";
 const mediaKindTabId = (kind: MediaKind) => `media-kind-tab-${kind}`;
 const VOICE_UNAVAILABLE = "음성은 대화 화면에서 사용할 수 있습니다. 모델 목록을 불러온 뒤 다시 시도해 주세요.";
@@ -62,9 +73,7 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = useState<AppSettings | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<ThreadSearchResult[]>([]);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null);
   const [keyReplaceOpen, setKeyReplaceOpen] = useState(false);
   const [replacementKey, setReplacementKey] = useState("");
@@ -135,14 +144,13 @@ export default function App() {
     ) ?? document.querySelector<HTMLElement>('nav.rail .rail-item[aria-current="page"]'), []);
 
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
-  const closeSearch = useCallback(() => setSearchOpen(false), []);
+  const closePalette = useCallback(() => setPaletteOpen(false), []);
   const closeRename = useCallback(() => {
     setRenameDialog((current) => current?.busy ? current : null);
   }, []);
   const closeKeyReplace = useCallback(() => { setKeyReplaceOpen(false); setReplacementKey(""); }, []);
   const closeProjects = useCallback(() => { if (!projectBusy) setProjectsOpen(false); }, [projectBusy]);
   const settingsRef = useDialogFocus(settingsOpen, closeSettings, !settingsSaving, dialogRestoreFallback);
-  const searchRef = useDialogFocus(searchOpen, closeSearch, true, dialogRestoreFallback);
   const renameRef = useDialogFocus<HTMLFormElement>(
     Boolean(renameDialog), closeRename, !renameDialog?.busy, dialogRestoreFallback);
   const keyReplaceRef = useDialogFocus(keyReplaceOpen, closeKeyReplace, !keyReplacing, dialogRestoreFallback);
@@ -152,17 +160,17 @@ export default function App() {
     setToolsOpen(false);
   }, [bookmarkBusy]);
   const toolsRef = useDialogFocus(toolsOpen, closeTools, !bookmarkBusy, dialogRestoreFallback);
-  const openSearch = useCallback((returnFocus?: FocusReturnTarget) => {
-    rememberDialogReturn(returnFocus);
-    setSettingsOpen(false); setKeyReplaceOpen(false); setReplacementKey(""); setRenameDialog(null); setSearchOpen(true);
-  }, [rememberDialogReturn]);
+  // The palette restores focus to whatever had it when it opened (its trigger, or the field where Cmd/Ctrl+K was pressed).
+  const openPalette = useCallback(() => {
+    setSettingsOpen(false); setKeyReplaceOpen(false); setReplacementKey(""); setRenameDialog(null); setPaletteOpen(true);
+  }, []);
   const openSettings = useCallback((returnFocus?: FocusReturnTarget) => {
     rememberDialogReturn(returnFocus);
-    setSearchOpen(false); setKeyReplaceOpen(false); setReplacementKey(""); setRenameDialog(null); setSettingsOpen(true);
+    setPaletteOpen(false); setKeyReplaceOpen(false); setReplacementKey(""); setRenameDialog(null); setSettingsOpen(true);
   }, [rememberDialogReturn]);
   const openKeyReplace = useCallback((returnFocus?: FocusReturnTarget) => {
     rememberDialogReturn(returnFocus);
-    setSearchOpen(false); setSettingsOpen(false); setReplacementKey(""); setRenameDialog(null); setKeyReplaceOpen(true);
+    setPaletteOpen(false); setSettingsOpen(false); setReplacementKey(""); setRenameDialog(null); setKeyReplaceOpen(true);
   }, [rememberDialogReturn]);
   const loadBookmarks = useCallback(async () => {
     const epoch = uiEpochRef.current;
@@ -361,7 +369,7 @@ export default function App() {
     setCompareSynthesisBusy(false); setCompareRun(null); setCompareOriginId(null); setViewedCompareRun(null); setCompareShortcut(0);
     setBookmarks([]); setThread(null); setModelId(""); setScreen("chat"); setMediaKind("image"); setOpenedMediaJob(null);
     setAppSettings(null); setSettingsDraft(null); setSettingsOpen(false); setSettingsSaving(false);
-    setSearchOpen(false); setSearchQuery(""); setSearchResults([]); setRenameDialog(null);
+    setPaletteOpen(false); setRenameDialog(null);
     setKeyReplaceOpen(false); setReplacementKey(""); setKeyReplacing(false);
     setTemplateDraft(null); setEvidenceAppends([]); displacedChatbotDraftsRef.current.clear();
     evidenceCreationRef.current = null; setError("");
@@ -832,7 +840,7 @@ export default function App() {
 
   function openRenameConversation(item: ThreadSummary, returnFocus?: FocusReturnTarget) {
     rememberDialogReturn(returnFocus);
-    setSearchOpen(false); setSettingsOpen(false); setKeyReplaceOpen(false); setReplacementKey("");
+    setPaletteOpen(false); setSettingsOpen(false); setKeyReplaceOpen(false); setReplacementKey("");
     setRenameDialog({ thread: item, value: item.title, busy: false, error: "" });
   }
 
@@ -873,21 +881,29 @@ export default function App() {
     } catch (error) { if (gate.isLatest(request) && epoch === uiEpochRef.current) setError(errorText(error)); }
   }
 
-  useEffect(() => {
-    if (!searchOpen || !searchQuery.trim()) { setSearchResults([]); return; }
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void window.mmllm.searchThreads(searchQuery).then((items) => {
-        if (!cancelled) setSearchResults(items);
-      }).catch((error) => { if (!cancelled) setError(errorText(error)); });
-    }, 160);
-    return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [searchOpen, searchQuery]);
+  /** Theme from the palette: the same save path as the settings dialog; the theme effect then syncs main. */
+  async function applyThemePreference(theme: AppSettings["theme"]) {
+    if (!appSettings || settingsSaving || appSettings.theme === theme) return;
+    setSettingsSaving(true);
+    try {
+      const saved = await window.mmllm.updateSettings({ ...appSettings, theme });
+      setAppSettings(saved); setSettingsDraft(saved);
+    } catch (error) { setError(errorText(error)); }
+    finally { setSettingsSaving(false); }
+  }
+
+  function runPaletteCommand(id: string) {
+    if (id === "new-thread") void newThread();
+    else if (id === "compare") startCompareShortcut();
+    else if (id === "theme-system" || id === "theme-light" || id === "theme-dark") {
+      void applyThemePreference(id.slice("theme-".length) as AppSettings["theme"]);
+    } else if (id === "credits") void refreshCredits(true);
+  }
 
   // Cmd/Ctrl+Shift+C: open the conversation composer and ask it for a second model token (contract D3.7/D3.8).
   const startCompareShortcut = () => { setScreen("chat"); setCompareShortcut((value) => value + 1); };
-  const shortcutActions = useRef({ newThread, openSearch, setSidebarOpen, startCompareShortcut });
-  shortcutActions.current = { newThread, openSearch, setSidebarOpen, startCompareShortcut };
+  const shortcutActions = useRef({ newThread, openPalette, setSidebarOpen, startCompareShortcut });
+  shortcutActions.current = { newThread, openPalette, setSidebarOpen, startCompareShortcut };
   useEffect(() => {
     if (!session?.authenticated) return;
     const keydown = (event: KeyboardEvent) => {
@@ -898,7 +914,7 @@ export default function App() {
       if (appShortcutBlocked(document, key)) return;
       if (key === "c" && event.shiftKey) { event.preventDefault(); shortcutActions.current.startCompareShortcut(); }
       else if (key === "n" && !event.shiftKey) { event.preventDefault(); void shortcutActions.current.newThread(); }
-      else if (key === "k") { event.preventDefault(); shortcutActions.current.openSearch(); }
+      else if (key === "k") { event.preventDefault(); shortcutActions.current.openPalette(); }
       else if (key === "b" && !event.shiftKey) { event.preventDefault(); shortcutActions.current.setSidebarOpen((open) => !open); }
     };
     window.addEventListener("keydown", keydown);
@@ -968,10 +984,8 @@ export default function App() {
     tabs[next]?.focus();
   };
   const headerSearch = <button type="button" className="header-search" aria-keyshortcuts="Meta+K Control+K"
-    title={`대화 검색 (${SHORTCUT_LABEL})`} onClick={(event) => {
-      const trigger = event.currentTarget;
-      openSearch(() => trigger.isConnected ? trigger : null);
-    }}><Search size={15} aria-hidden="true" /><span className="header-search-label">대화 검색</span>
+    title={`명령 또는 대화 검색 (${SHORTCUT_LABEL})`} onClick={openPalette}>
+    <Search size={15} aria-hidden="true" /><span className="header-search-label">명령 또는 대화 검색</span>
     <kbd aria-hidden="true">{SHORTCUT_LABEL}</kbd></button>;
   const mediaHeader = <div className="header-center">
     <div className="media-kind-tabs" role="tablist" aria-label="미디어 종류">{MEDIA_KINDS.map(([kind, label]) =>
@@ -1078,14 +1092,6 @@ export default function App() {
         replacementKey={replacementKey}
         setReplacementKey={setReplacementKey}
         replaceApiKey={replaceApiKey}
-        searchOpen={searchOpen}
-        closeSearch={closeSearch}
-        searchRef={searchRef}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        searchResults={searchResults}
-        setSearchOpen={setSearchOpen}
-        selectThread={selectThread}
         settingsOpen={settingsOpen}
         settingsDraft={settingsDraft}
         settingsSaving={settingsSaving}
@@ -1101,6 +1107,8 @@ export default function App() {
         <button type="button" onClick={refreshModels}>새로고침</button></div>}
       {backgroundNotice && <div className="offline-banner" role="status">{backgroundNotice}</div>}
       {!toolsOpen && <Notice notice={notice} onClose={clearNotice} floating />}
+      <CommandPalette open={paletteOpen} onClose={closePalette} searchThreads={(query) => window.mmllm.searchThreads(query)}
+        onSelectThread={(id) => void selectThread(id)} commands={PALETTE_COMMANDS} onRunCommand={runPaletteCommand} />
       {screen === "chat" && thread && llmModels.length > 0
         ? <ChatPanel key={thread.id} thread={thread} modelId={modelId}
           voicePanel={<VoicePanel key={`voice-${uiEpochRef.current}-${thread.id}`} models={session.models}
