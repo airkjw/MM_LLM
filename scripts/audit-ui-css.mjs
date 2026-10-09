@@ -73,6 +73,8 @@ const CONTRAST_PAIRS = [
 for (let index = 1; index <= 6; index++) {
   CONTRAST_PAIRS.push([`speaker-${index}`, "bg", 3], [`speaker-${index}`, "bg-hover", 3]);
 }
+// Rules whose border-color may repeat the amber face because the same rule fills its background with it.
+const AMBER_FACE_BORDER_SELECTORS = [".privacy-modal-actions .privacy-modal-primary", ".deid-check input:checked + .custom-check"];
 const CONTROL_BOUNDARIES = [
   ".login-card form input", ".composer-card", ".model-search", ".web-mode", ".reasoning-mode",
   ".model-trigger", ".media-textarea", ".media-controls select", ".meeting-options input",
@@ -564,6 +566,21 @@ export function auditCss(css) {
     if (!mediaText.includes(media)) errors.push(`Missing ${media} safeguard`);
   }
 
+  // The amber face is 1.84:1 against bg, so it may only be a fill. Borders and indicators use --color-accent-graphic.
+  root.walkDecls((declaration) => {
+    const property = canonicalProperty(declaration.prop);
+    const value = canonicalValue(declaration.value);
+    if (!/var\(\s*--color-accent(?:-hover)?\s*[,)]/.test(value)) return;
+    if (["background", "background-color", "accent-color"].includes(property)) return;
+    const rule = declaration.parent?.type === "rule" ? declaration.parent : null;
+    const selectors = (rule?.selectors ?? []).map(canonicalSelector);
+    if (property === "border-color" && selectors.length && selectors.every((selector) => AMBER_FACE_BORDER_SELECTORS.includes(selector))) {
+      const sameFace = rule.nodes.some((node) => node.type === "decl" && ["background", "background-color"].includes(canonicalProperty(node.prop)) &&
+        canonicalValue(node.value) === value);
+      if (sameFace) return;
+    }
+    errors.push(`Non-fill use of --color-accent: ${selectors.join(", ")} (${property}: ${value}); use --color-accent-graphic for borders and indicators`);
+  });
   root.walkAtRules("import", () => { errors.push("CSS @import is forbidden; fonts are bundled locally"); });
   const fontFaces = [];
   root.walkAtRules("font-face", (atRule) => fontFaces.push(declarations(atRule)));

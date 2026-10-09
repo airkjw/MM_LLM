@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { auditCss, auditUiCssFile, contrastRatio } from "../scripts/audit-ui-css.mjs";
 import { auditThemeStartup } from "../scripts/audit-theme-startup.mjs";
 
@@ -127,8 +130,8 @@ expectMutationError("the stop-button semantic map", (source) => source.replace(
   ".send-button.stop, .send-button.stop:hover:not(:disabled) { background: var(--color-border); color: var(--color-text); }"
 ), /send-button\.stop/);
 expectMutationError("the active navigation contrast map", (source) => source.replace(
-  ".creation-tile.active { border-color: var(--color-accent); color: var(--color-accent-text); background: var(--color-accent-subtle); font-weight: 600; }",
-  ".creation-tile.active { border-color: var(--color-accent); color: var(--color-text-tertiary); background: var(--color-accent-subtle); font-weight: 600; }"
+  ".creation-tile.active { border-color: var(--color-accent-graphic); color: var(--color-accent-text); background: var(--color-accent-subtle); font-weight: 600; }",
+  ".creation-tile.active { border-color: var(--color-accent-graphic); color: var(--color-text-tertiary); background: var(--color-accent-subtle); font-weight: 600; }"
 ), /creation-tile\.active must use/);
 expectMutationError("higher-specificity active navigation conflicts", (source) =>
   `${source}\n.app-shell .creation-tile.active { color: var(--color-text-tertiary); }`, /audited-selector conflict/);
@@ -281,6 +284,53 @@ expectMutationError("missing reduce-motion app setting selector", (source) => so
   ':root[data-reduce-motion="true"]', ':root[data-reduce-motion-off="true"]'), /data-reduce-motion/);
 expectMutationError("missing theme transition rule", (source) => source.replace(
   "transition: background-color .25s ease, color .25s ease, border-color .25s ease;", ""), /theme transition/);
+
+expectMutationError("amber face used as a border on the active navigation tile", (source) => source.replace(
+  ".creation-tile.active { border-color: var(--color-accent-graphic);", ".creation-tile.active { border-color: var(--color-accent);"), /Non-fill use of --color-accent.*creation-tile\.active/);
+expectMutationError("amber face used as a composer focus indicator", (source) => source.replace(
+  ".composer-card:focus-within { border-color: var(--color-accent-graphic);", ".composer-card:focus-within { border-color: var(--color-accent);"), /Non-fill use of --color-accent.*composer-card:focus-within/);
+expectMutationError("amber face used as an input focus border", (source) => source.replace(
+  ".login-card form input:focus { border-color: var(--color-accent-graphic);", ".login-card form input:focus { border-color: var(--color-accent);"), /Non-fill use of --color-accent.*login-card/);
+expectMutationError("amber face used as an indicator shadow", (source) =>
+  `${source}\n.rail-item[aria-current="page"] { box-shadow: inset 2px 0 var(--color-accent); }`, /Non-fill use of --color-accent.*rail-item/);
+expectMutationError("amber hover face used as text color", (source) =>
+  `${source}\n.x { color: var(--color-accent-hover); }`, /Non-fill use of --color-accent.*color: var\(--color-accent-hover\)/);
+expectMutationError("amber face border on a rule that no longer fills it", (source) => source.replace(
+  ".deid-check input:checked + .custom-check { background: var(--color-accent);",
+  ".deid-check input:checked + .custom-check { background: var(--color-accent-subtle);"), /Non-fill use of --color-accent.*custom-check/);
+
+test("amber fills, accent-color and same-face borders stay allowed by the non-fill rule", () => {
+  const extra = `${css}\n.fill { background: var(--color-accent); }\n.fill:hover { background-color: var(--color-accent-hover); }\n` +
+    `.check { accent-color: var(--color-accent); }`;
+  assert.deepEqual(auditCss(extra).errors, []);
+});
+
+// Runs the real audit script with a source edit, in a temp dir whose node_modules points at the repo's.
+async function mutatedAudit(mutate) {
+  const dir = mkdtempSync(join(tmpdir(), "audit-mutation-"));
+  try {
+    const root = fileURLToPath(new URL("..", import.meta.url));
+    symlinkSync(join(root, "node_modules"), join(dir, "node_modules"));
+    const original = readFileSync(join(root, "scripts/audit-ui-css.mjs"), "utf8");
+    const changed = mutate(original);
+    assert.notEqual(changed, original, "audit mutation must change the script");
+    writeFileSync(join(dir, "audit.mjs"), changed);
+    return await import(pathToFileURL(join(dir, "audit.mjs")).href);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test("D1.3 text-md is a verified font-size path in the audit", () => {
+  assert.deepEqual(auditCss(`${css}\n.x { font-size: var(--text-md); }`).errors, []);
+});
+
+test("UI audit rejects removing md from the font-size token pattern", async () => {
+  const probe = `${css}\n.x { font-size: var(--text-md); }`;
+  const mutated = await mutatedAudit((source) => source.replace("text-(?:xs|sm|base|md|lg|", "text-(?:xs|sm|base|lg|"));
+  assert.deepEqual(mutated.auditCss(css).errors, [], "mutated audit still passes CSS that does not use --text-md");
+  assert.ok(mutated.auditCss(probe).errors.some((error) => /Unverified font-size path: var\(--text-md\)/.test(error)));
+});
 
 expectMutationError("missing bundled @font-face rules", (source) => source.replaceAll(/@font-face\s*\{[^}]*\}/g, ""), /Missing @font-face/);
 
