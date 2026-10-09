@@ -1,5 +1,5 @@
 import { estimateFingerprint, normalizeEstimateRequest, parseMediaQuote, QUOTE_LABELS, QUOTE_NOTICE, quoteBoundWithContext } from "../../shared/media-estimate";
-import { CircleHelp, Copy, Download, Image as ImageIcon, LoaderCircle, MessageCircle, Mic2, Music2, Paperclip, Plus, Sparkles, Video, X } from "lucide-react";
+import { CircleHelp, Copy, Download, FolderOpen, Image as ImageIcon, LoaderCircle, MessageCircle, Mic2, Music2, Paperclip, Plus, Sparkles, Video, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AudioRequest, GatewayModel, MediaEstimateRequest, MediaQuote, MediaResult, PendingMediaJob, PickedAttachment } from "../../shared/contracts";
 import { audioLaneForModel, imageCapability, musicCapability, sttEstimate, supportsMultiSpeakerTts, TTS_VOICES, videoCapability } from "../../shared/media-capabilities";
@@ -9,21 +9,32 @@ import { useConfirm } from "./components/ConfirmDialog";
 import { DiagnosticButton } from "./components/DiagnosticButton";
 import { Notice, useNotice } from "./components/Notice";
 import { type MediaKind } from "./components/Sidebar";
-
-import { ModelPicker } from "./ModelPicker";
+import { modelLabel } from "./model-names";
 import { DeidCheck, errorText, readDroppedFiles } from "./ui-shared";
 type Screen = MediaKind;
 const AUDIO_LANES = ["tts", "stt", "music"] as const;
+const KIND_TABS: ReadonlyArray<readonly [Exclude<MediaKind, "chat">, string]> = [["image", "이미지"], ["audio", "오디오"], ["video", "비디오"]];
+const kindTabId = (kind: string) => `media-kind-tab-${kind}`;
+const KIND_PANEL_ID = "media-kind-panel";
+/** Shown when a kind change or a job row is refused because generation or a cost check is still running. */
+export const MEDIA_BUSY_NOTICE = "생성 또는 비용 확인이 진행 중입니다. 끝나거나 취소한 뒤에 바꿔 주세요.";
 /** A job opened from the list column. A new object per click, so the same row can be opened again. */
 export type MediaJobRequest = { id: string; kind: PendingMediaJob["kind"] };
 export function MediaPanel({
-  screen, models, workspaceEpochRef, onUsageChanged, onSummarizeTranscript, headerSearch, openJob, onBusyChange, tabPanel
+  screen, models, workspaceEpochRef, onUsageChanged, onSummarizeTranscript, headerSearch, openJob, onBusyChange, tabPanel,
+  onKindChange, busyRefusal, project
 }: { screen: Exclude<Screen, "chat">; models: GatewayModel[]; onUsageChanged: () => void; headerSearch?: import("react").ReactNode;
   workspaceEpochRef: { current: number };
   onSummarizeTranscript: (result: MediaResult) => Promise<void>;
   openJob?: MediaJobRequest | null; onBusyChange?: (busy: boolean) => void;
-  /** Set when the header kind tabs control this panel. */
-  tabPanel?: { id: string; labelledBy: string } }) {
+  /** Set when kind tabs outside the panel (the legacy header tabs) control it. */
+  tabPanel?: { id: string; labelledBy: string };
+  /** Set to let the panel render its own kind segment (image | audio | video); the parent owns the kind. */
+  onKindChange?: (kind: Exclude<MediaKind, "chat">) => void;
+  /** The parent bumps this each time it refuses to open a media job because work is in flight. */
+  busyRefusal?: number;
+  /** The current conversation's project, shown as a display-only chip. */
+  project?: { id: string; name: string } | null }) {
   const confirm = useConfirm();
   const [audioLane, setAudioLane] = useState<"tts" | "stt" | "music">("tts");
   const [modelId, setModelId] = useState("");
@@ -63,6 +74,12 @@ export function MediaPanel({
   const quoteIdRef = useRef<string | null>(null);
   const quoteBusyRef = useRef(false);
   const { notice, setError, setInfo, clear: clearNotice } = useNotice();
+  const busyRefusalSeen = useRef(busyRefusal ?? 0);
+  useEffect(() => {
+    if ((busyRefusal ?? 0) === busyRefusalSeen.current) return;
+    busyRefusalSeen.current = busyRefusal ?? 0;
+    setInfo(MEDIA_BUSY_NOTICE);
+  }, [busyRefusal, setInfo]);
   const [result, setResult] = useState<MediaResult | null>(null);
   const [jobs, setJobs] = useState<PendingMediaJob[]>([]);
   const [visibleSegments, setVisibleSegments] = useState(250);
@@ -436,16 +453,48 @@ export function MediaPanel({
     void audio.play().catch(() => undefined);
   }
 
+  const mediaBusy = busy || quoting;
+  function chooseKind(kind: Exclude<MediaKind, "chat">) {
+    if (kind === screen) return;
+    if (mediaBusy) { setInfo(MEDIA_BUSY_NOTICE); return; }
+    onKindChange?.(kind);
+  }
+  // Manual activation: arrows/Home/End only move focus; Enter, Space or a click selects.
+  function moveKindFocus(event: React.KeyboardEvent<HTMLButtonElement>) {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const tabs = [...(event.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])];
+    const current = tabs.indexOf(event.currentTarget);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+      : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    tabs[next]?.focus();
+  }
+  const panelProps = onKindChange ? { id: KIND_PANEL_ID, "aria-labelledby": kindTabId(screen) } : tabPanel
+    ? { id: tabPanel.id, "aria-labelledby": tabPanel.labelledBy } : {};
+  const quoteBar = displayedQuote
+    ? <div className="media-bar-cost"><strong>≈ {displayedQuote.credits.toLocaleString("ko-KR")}cr</strong>
+      <span>{quoteBoundWithContext(displayedQuote, { referenceImages: picked.length }).label} 견적{screen === "image" ? ` · ${imageCount}장` : ""}</span></div>
+    : null;
+
   return <div className="media-panel">
     <div className="panel-header media-header"><div className="panel-heading"><span className="panel-section">미디어</span><h2>{titles[screen][0]}</h2></div>
       {headerSearch}
-      <ModelPicker models={available} selected={modelId} onSelect={setModelId} disabled={busy} />
+      {project && <span className="media-project-chip" title="이 대화가 연결된 프로젝트">
+        <FolderOpen size={14} aria-hidden="true" /><span>{project.name}</span></span>}
     </div>
-    <div className="media-scroll" id={tabPanel?.id} role={tabPanel ? "tabpanel" : undefined}
-      aria-labelledby={tabPanel?.labelledBy}>
-      <div className="media-intro"><p>{screen === "image" ? "프롬프트와 참고 이미지로 필요한 시각 자료를 만드세요." :
-        screen === "video" ? "장면을 설명하고 길이와 비율을 설정하세요." : "텍스트를 음성으로 만들거나, 녹음을 전사하고 정리하세요."}</p>
-        <span>설정 · 생성 · 저장</span></div>
+    <div className="media-layout" role={onKindChange || tabPanel ? "tabpanel" : undefined} {...panelProps}>
+      <div className="media-form">
+        <div className="media-form-scroll">
+          {onKindChange && <div className="media-kind-segment" role="tablist" aria-label="미디어 종류">
+            {KIND_TABS.map(([kind, label]) => <button type="button" role="tab" key={kind} id={kindTabId(kind)}
+              aria-controls={KIND_PANEL_ID} aria-selected={screen === kind} tabIndex={screen === kind ? 0 : -1}
+              aria-disabled={mediaBusy && screen !== kind ? true : undefined}
+              onClick={() => chooseKind(kind)} onKeyDown={moveKindFocus}>
+              {kind === "image" ? <ImageIcon size={15} aria-hidden="true" /> : kind === "audio" ? <Mic2 size={15} aria-hidden="true" /> : <Video size={15} aria-hidden="true" />}
+              {label}</button>)}
+          </div>}
+          <p className="media-intro">{screen === "image" ? "프롬프트와 참고 이미지로 필요한 시각 자료를 만드세요." :
+            screen === "video" ? "장면을 설명하고 길이와 비율을 설정하세요." : "텍스트를 음성으로 만들거나, 녹음을 전사하고 정리하세요."}</p>
       {screen === "audio" && <div className="lane-tabs" role="tablist" aria-label="오디오 기능">
         {([
           ["tts", "텍스트 → 음성", Mic2], ["stt", "받아쓰기", MessageCircle],
@@ -467,10 +516,13 @@ export function MediaPanel({
           }}
           onClick={() => setAudioLane(lane)}><Icon size={16} />{title}</button>)}
       </div>}
-      <div className="media-workspace" id={screen === "audio" ? "audio-lane-panel" : undefined}
-        role={screen === "audio" ? "tabpanel" : undefined}>
-        <div className="media-form">
-          <h3 className="media-card-heading">작업 설정</h3>
+        <div className="media-fields" id={screen === "audio" ? "audio-lane-panel" : undefined}
+          role={screen === "audio" ? "tabpanel" : undefined}>
+          <label className="media-model-field">모델
+            <select value={modelId} disabled={busy || !available.length} onChange={(event) => setModelId(event.target.value)}>
+              {!available.length && <option value="">사용 가능한 모델 없음</option>}
+              {available.map((model) => <option key={model.id} value={model.id}>{modelLabel(model.id)} · {model.id}</option>)}
+            </select></label>
           <label className="field-label">{screen === "audio" && audioLane === "stt" ? "오디오 파일" :
             screen === "audio" && audioLane === "tts" ? "읽을 텍스트" : "프롬프트"}</label>
           {screen === "audio" && audioLane === "stt"
@@ -587,7 +639,6 @@ export function MediaPanel({
               연주곡</label>}
           </div>}
           <div className="media-confirm"><DeidCheck checked={deidentified} onChange={setDeidentified} /></div>
-          <div className="media-cost-note">{costNote}</div>
           {quoteKind && <div className="media-quote" aria-label="공식 생성 견적">
             <button type="button" className="secondary-button" disabled={busy || quoting || !modelId} onClick={() => void checkCost()}>{quoting ? "비용 확인 중…" : "비용 확인"}</button>
             {(quoting || displayedQuote) && <button type="button" className="secondary-button" onClick={cancelQuote}>비용 확인 취소</button>}
@@ -599,14 +650,6 @@ export function MediaPanel({
               {displayedQuote.note && <p>{displayedQuote.note}</p>}
             </div>}
           </div>}
-          <button className="primary-button media-submit" type="button"
-            disabled={busy || quoting || !canRun || !deidentified || !modelId} onClick={() => void submit()}>
-            {busy ? <><LoaderCircle size={17} className="spin" />작업 중...</> :
-              <><Sparkles size={17} />{screen === "audio" && audioLane === "stt" ? "받아쓰기 시작" : quoteKind && !displayedQuote ? "견적 없이 생성" : "생성하기"}</>}
-          </button>
-          {pollNotice && <p className="notice-info" role="status">{pollNotice}</p>}
-          <Notice notice={notice} onClose={clearNotice} />
-          {notice?.tone === "error" && <DiagnosticButton stage="media" modelId={modelId} />}
           {result?.creditDisplay && <div className="media-credit-result" aria-live="polite">{result.creditDisplay}</div>}
           {result?.usage && <div className="media-metadata" aria-label="사용 토큰">
             입력 {result.usage.inputTokens.toLocaleString()} · 출력 {result.usage.outputTokens.toLocaleString()} ·
@@ -615,9 +658,26 @@ export function MediaPanel({
           {result?.videoModelId && <div className="media-metadata">처리 모델 ID: {result.videoModelId}</div>}
           {result?.musicStructure && <div className="media-metadata">음악 구조: {result.musicStructure}</div>}
         </div>
+        </div>
+        <div className="media-bar">
+          {pollNotice && <p className="notice-info" role="status">{pollNotice}</p>}
+          <Notice notice={notice} onClose={clearNotice} />
+          {notice?.tone === "error" && <DiagnosticButton stage="media" modelId={modelId} />}
+          <div className="media-cost-note">{costNote}</div>
+          <div className="media-bar-row">
+            {quoteBar}
+            <button className="primary-button media-submit" type="button"
+              disabled={busy || quoting || !canRun || !deidentified || !modelId} onClick={() => void submit()}>
+              {busy ? <><LoaderCircle size={17} className="spin" />작업 중...</> :
+                <><Sparkles size={17} />{screen === "audio" && audioLane === "stt" ? "받아쓰기 시작" : quoteKind && !displayedQuote ? "견적 없이 생성" : "생성하기"}</>}
+            </button>
+          </div>
+        </div>
+      </div>
         <div className="media-result" aria-live="polite" aria-busy={busy ||
           Boolean(result?.jobId && !["completed", "failed"].includes(result.status ?? ""))}>
-          <h3 className="media-card-heading">결과</h3>
+          <div className="media-result-head"><h3 className="media-card-heading">결과</h3>
+            {jobs.length > 0 && <span className="media-result-count">{jobs.length}</span>}</div>
           {jobs.length > 1 && <div className="job-list"><strong>이 화면의 작업 {jobs.length}개</strong>
             {jobs.map((job) => <button type="button" key={job.id} onClick={() => showJob(job)}
               aria-current={result?.jobId === job.id ? "true" : undefined}>
@@ -626,7 +686,7 @@ export function MediaPanel({
           {!result && <div className="result-placeholder"><span>{icon}</span>
             <strong>결과가 여기에 나타납니다</strong>
             <small>자료와 설정을 확인하고 작업을 시작하세요.</small></div>}
-          {result?.jobId && result.status !== "completed" && result.status !== "failed" && <div className="result-placeholder">
+          {result?.jobId && result.status !== "completed" && result.status !== "failed" && <div className="result-placeholder is-active">
             <LoaderCircle size={28} className="spin" /><strong>생성 중입니다</strong>
             <small>앱을 다시 열어도 작업을 계속 확인합니다.<br />경과 {Math.max(0,
               Math.floor((result.elapsedMs ?? 0) / 1000))}초</small>
@@ -692,7 +752,6 @@ export function MediaPanel({
           {(result?.jobId || result?.sourceAudioUrl) && ["completed", "failed"].includes(result.status ?? "") &&
             <button type="button" className="tracking-stop" onClick={() => void dismissResult()}>결과 닫기</button>}
         </div>
-      </div>
     </div>
   </div>;
 }
