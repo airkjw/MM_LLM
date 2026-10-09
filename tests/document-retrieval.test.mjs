@@ -9,7 +9,7 @@ const hooks = registerHooks({ resolve(specifier, context, next) {
     if (!existsSync(fileURLToPath(url)) && existsSync(fileURLToPath(url) + '.ts')) return next(url.href + '.ts', context); }
   return next(specifier, context);
 }});
-const { parseEmbeddingResponse, parseRerankResponse, validateSemanticIndex, hybridCandidates, retrievalResult, TEXT_EMBEDDING_DIMENSIONS, validateRetrievalSettings } = await import('../src/shared/document-retrieval.ts');
+const { MAX_SEMANTIC_INDEX_BYTES, MAX_SEMANTIC_CHUNKS, EMBED_BATCH, estimateSemanticIndexBytes, parseEmbeddingResponse, parseRerankResponse, validateSemanticIndex, hybridCandidates, retrievalResult, TEXT_EMBEDDING_DIMENSIONS, validateRetrievalSettings } = await import('../src/shared/document-retrieval.ts');
 test.after(() => hooks.deregister());
 const model = 'text-embedding-3-small'; const vec = () => [1, ...Array(1535).fill(0)];
 test('actual embedding parser reorders exact indices and rejects dimension mixing, NaN/Infinity/zero and duplicates', () => {
@@ -43,4 +43,9 @@ test('actual semantic-only hybrid target beyond first 20 survives zero lexical r
   const ranked = hybridCandidates(chunks, index, vec(), 'synonym query'); assert.equal(ranked.length, 20); assert.equal(ranked[0].position, 34);
   const result = retrievalResult(ranked, 'synthetic notice', 1000); assert.ok(result.hits.length <= 5); assert.ok(result.text.length <= 1000); assert.match(result.text, /known answer 42/);
   assert.equal(retrievalResult(ranked, 'notice', 1).text, '');
+});
+test('L7 semantic index limit stays under the 18MB vault plaintext limit and fits every reviewed model at the chunk cap', () => {
+  assert.ok(Number.isInteger(MAX_SEMANTIC_INDEX_BYTES)); assert.ok(MAX_SEMANTIC_INDEX_BYTES <= 18 * 1024 * 1024 - 1024 * 1024);
+  for (const dimension of Object.values(TEXT_EMBEDDING_DIMENSIONS)) assert.ok(estimateSemanticIndexBytes(MAX_SEMANTIC_CHUNKS, dimension) <= MAX_SEMANTIC_INDEX_BYTES);
+  assert.ok(estimateSemanticIndexBytes(MAX_SEMANTIC_CHUNKS, 4096) > MAX_SEMANTIC_INDEX_BYTES); assert.equal(EMBED_BATCH, 8);
 });

@@ -76,17 +76,18 @@ const now = "2026-10-08T00:00:00Z";
 const project: ProjectSummary = { id: "synthetic-project", name: "합성", instruction: "", threadCount: 0, createdAt: now, updatedAt: now,
   documents: [{ id: "synthetic-document", name: "합성.pdf", mime: "application/pdf", size: 20, createdAt: now }] };
 const models: GatewayModel[] = [{ id: "text-embedding-3-small", type: "embedding" }, { id: "qwen3-rerank", type: "rerank" }];
-function projectApi(initial: RetrievalSettings = { ...LOCAL_RETRIEVAL }) {
-  let saved = { ...initial }; const counts = { configure: 0, index: 0, search: 0, cancel: 0 };
-  const status = (): RetrievalStatus => ({ settings: saved, documents: [{ id: "synthetic-document", name: "合成.pdf", completed: counts.index ? 1 : 0, total: 1 }], uncertain: 0, running: false });
+function projectApi(initial: RetrievalSettings = { ...LOCAL_RETRIEVAL }, uncertain = 0) {
+  let saved = { ...initial }; const counts = { configure: 0, index: 0, search: 0, cancel: 0 }; const resumes: boolean[] = [];
+  const status = (): RetrievalStatus => ({ settings: saved, documents: [{ id: "synthetic-document", name: "合成.pdf", completed: counts.index ? 1 : 0, total: 1 }], uncertain: counts.index ? 0 : uncertain, running: false });
   Object.assign(browser, { mmllm: { getProjectRetrieval: async () => status(), configureProjectRetrieval: async (_id: string, settings: RetrievalSettings) => { counts.configure++; saved = { ...settings }; },
-    startProjectIndex: async (_request: string, _project: string, consent: boolean, resume: boolean) => { assert.equal(consent, true); assert.equal(resume, true); counts.index++; return status(); },
+    startProjectIndex: async (_request: string, _project: string, consent: boolean, resume: boolean) => { assert.equal(consent, true); resumes.push(resume); counts.index++; return status(); },
     searchProjectDocuments: async () => { counts.search++; return { hits: [], text: "", notice: "合成 검색" }; }, cancelResearch: async () => { counts.cancel++; } } });
-  return { counts, saved: () => saved };
+  return { counts, saved: () => saved, resumes };
 }
+const dialogTitle = () => document.querySelector('[role="dialog"] h2')?.textContent;
 const projectUi = () => <ConfirmProvider><ProjectRetrievalSettings project={project} models={models} onEvidence={() => {}} /></ConfirmProvider>;
 test("actual project DOM separates query/rerank consent from index-start confirmation and sends no paid requests on edits", async () => {
-  const { counts, saved } = projectApi(); await render(projectUi());
+  const { counts, saved, resumes } = projectApi(); await render(projectUi());
   await select(field("검색 방식").querySelector("select")!, "semantic");
   await select(field("임베딩 모델").querySelector("select")!, "text-embedding-3-small");
   assert.equal(button("검색 설정 저장").disabled, true); await click(field("질의를 선택한 모델").querySelector("input")!);
@@ -95,7 +96,8 @@ test("actual project DOM separates query/rerank consent from index-start confirm
   await click(button("검색 설정 저장")); assert.equal(counts.configure, 1); assert.equal(saved().rerankConsent, true); assert.equal(counts.index, 0);
   await click(button("색인 시작 동의")); assert.match(document.querySelector('[role="dialog"]')!.textContent!, /중복 과금/);
   await act(async () => { document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
-  assert.equal(counts.index, 0); await click(button("색인 시작 동의")); await click(button("동의하고 색인 시작")); assert.equal(counts.index, 1);
+  assert.equal(counts.index, 0); await click(button("색인 시작 동의")); assert.equal(dialogTitle(), "의미 색인 시작");
+  await click(button("동의하고 색인 시작")); assert.equal(counts.index, 1); assert.deepEqual(resumes, [false]);
   assert.match(document.body.textContent!, /1\/1청크/); await click(button("저장한 설정으로 문서 검색")); assert.equal(counts.search, 1);
   assert.match(document.body.textContent!, /후보 최대 20개 전체.*최종 5개/);
 });
@@ -149,4 +151,24 @@ test("actual ResearchPanel optional enum query -> papers -> omission deletes the
   await select(scope, ""); await click(button("검색 실행"));
   assert.deepEqual(args, [{ words: "Synthetic" }, { words: "Synthetic", scope: "papers" }, { words: "Synthetic" }]);
   assert.equal(Object.hasOwn(args[2], "scope"), false); assert.equal(document.querySelector('[role="alert"]'), null);
+});
+
+test("L1 project index sends resume consent only after the user approves a resume of uncertain chunks", async () => {
+  const semantic: RetrievalSettings = { mode: "semantic", embeddingModelId: models[0].id, queryConsent: true, rerankConsent: false };
+  const { counts, resumes } = projectApi(semantic, 3); await render(projectUi());
+  assert.match(document.body.textContent!, /미확정 3청크/); await click(button("색인 재개 동의"));
+  assert.equal(dialogTitle(), "의미 색인 재개"); assert.match(document.querySelector('[role="dialog"]')!.textContent!, /중복 과금/);
+  await act(async () => { document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  assert.equal(counts.index, 0); await click(button("색인 재개 동의")); await click(button("동의하고 색인 재개"));
+  assert.equal(counts.index, 1); assert.deepEqual(resumes, [true]);
+});
+test("L1 a stale zero-uncertain status sends resume false, shows the main rejection and refreshes without retrying", async () => {
+  const semantic: RetrievalSettings = { mode: "semantic", embeddingModelId: models[0].id, queryConsent: true, rerankConsent: false };
+  const { counts, resumes } = projectApi(semantic); await render(projectUi()); let uncertain = 0;
+  window.mmllm.getProjectRetrieval = async () => ({ settings: semantic, documents: [{ id: "synthetic-document", name: "合成.pdf", completed: 0, total: 1 }], uncertain, running: false });
+  window.mmllm.startProjectIndex = async (_request: string, _project: string, _consent: boolean, resume: boolean) => {
+    resumes.push(resume); counts.index++; uncertain = 1; throw new Error("이전 중단 요청의 과금 여부가 미확정입니다. 재개 동의가 필요합니다."); };
+  await click(button("색인 시작 동의")); await click(button("동의하고 색인 시작"));
+  assert.deepEqual(resumes, [false]); assert.equal(counts.index, 1);
+  assert.match(document.querySelector('[role="alert"]')!.textContent!, /재개 동의/); assert.ok(button("색인 재개 동의"));
 });

@@ -3,6 +3,13 @@ export const SEMANTIC_INDEX_VERSION = 1;
 export const MAX_SEMANTIC_CHUNKS = 200;
 export const RETRIEVAL_CANDIDATES = 20;
 export const RETRIEVAL_FINAL = 5;
+/** Leaves envelope headroom under the 18MB vault plaintext limit in project-vault-crypto. */
+export const MAX_SEMANTIC_INDEX_BYTES = 16 * 1024 * 1024;
+/** One `/embeddings/` request carries at most this many chunks (and EMBED_BATCH_CHARS characters). */
+export const EMBED_BATCH = 8;
+export const EMBED_BATCH_CHARS = 48_000;
+/** Upper-bound JSON size of a completed index: ~24 bytes per float plus per-chunk provenance. */
+export const estimateSemanticIndexBytes = (chunks: number, dimension: number) => chunks * (dimension * 24 + 256);
 export const TEXT_EMBEDDING_DIMENSIONS: Record<string, number> = {
   "text-embedding-3-small": 1536, "text-embedding-3-large": 3072, "gemini-embedding-2": 3072,
   "text-embedding-v4": 1024, "qwen3.7-text-embedding": 1024, "tongyi-embedding-vision-plus": 1152

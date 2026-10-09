@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { GatewayModel, ProjectSummary } from "../../shared/contracts";
-import { LOCAL_RETRIEVAL, REVIEWED_RERANK_MODELS, TEXT_EMBEDDING_DIMENSIONS,
+import { LOCAL_RETRIEVAL, MAX_SEMANTIC_INDEX_BYTES, REVIEWED_RERANK_MODELS, TEXT_EMBEDDING_DIMENSIONS,
   type RetrievalResult, type RetrievalSettings, type RetrievalStatus } from "../../shared/document-retrieval";
 import { useConfirm } from "./components/ConfirmDialog";
 import { errorText } from "./ui-shared";
@@ -39,12 +39,16 @@ export function ProjectRetrievalSettings({ project, models, onEvidence }: {
     if (starting.current || request.current) return;
     starting.current = true;
     try {
-    const consent = await confirm({ title: status?.uncertain ? "의미 색인 재개" : "의미 색인 시작",
-      message: `${status?.settings.embeddingModelId ?? settings.embeddingModelId}로 대기 문서의 추출 텍스트 청크를 원격 처리합니다. 입력 토큰과 조직 개인정보 필터에 비용이 발생할 수 있습니다. 원본과 벡터는 이 기기에 암호화 보관합니다. 첨부 전송 동의와 별도의 동의입니다. 중단·실패한 미확정 청크를 재개하면 중복 과금될 수 있습니다.`,
-      confirmLabel: "동의하고 색인 시작" });
+    // Resume consent is only sent when the user approved a dialog that named the unconfirmed chunks.
+    const resume = Boolean(status?.uncertain && status.uncertain > 0);
+    const consent = await confirm({ title: resume ? "의미 색인 재개" : "의미 색인 시작",
+      message: `${status?.settings.embeddingModelId ?? settings.embeddingModelId}로 대기 문서의 추출 텍스트 청크를 원격 처리합니다. 입력 토큰과 조직 개인정보 필터에 비용이 발생할 수 있습니다. 원본과 벡터는 이 기기에 암호화 보관합니다. 첨부 전송 동의와 별도의 동의입니다. ${resume
+        ? `과금 여부가 미확정인 ${status!.uncertain}청크를 다시 보내므로 중복 과금될 수 있습니다.`
+        : "중단·실패한 미확정 청크를 재개하면 중복 과금될 수 있으며, 재개는 별도로 확인합니다."}`,
+      confirmLabel: resume ? "동의하고 색인 재개" : "동의하고 색인 시작" });
     if (!consent || !alive.current) return;
     await run(async (id) => {
-      const next = await window.mmllm.startProjectIndex(id, project.id, true, true);
+      const next = await window.mmllm.startProjectIndex(id, project.id, true, resume);
       if (alive.current && request.current === id) { setStatus(next); setMessage("색인이 완료되었습니다. 새 문서는 다시 시작하기 전까지 대기합니다."); }
     });
     } finally { starting.current = false; }
@@ -72,7 +76,7 @@ export function ProjectRetrievalSettings({ project, models, onEvidence }: {
       {settings.rerankConsent && <label className="settings-field">재정렬 모델<select value={settings.rerankModelId ?? ""} disabled={busy}
         onChange={(event) => editSettings((old) => ({ ...old, rerankModelId: event.target.value || undefined }))}>
         <option value="">현재 계정의 모델 선택</option>{reranks.map((model) => <option key={model.id}>{model.id}</option>)}</select></label>}
-      <small>앱 상한: 프로젝트 200청크·벡터 22MB, 후보 20/최종 5. 모델 변경은 재색인이 필요합니다. 유료 실패 후 모델 대체나 재시도는 직접 선택합니다.</small>
+      <small>앱 상한: 프로젝트 200청크·벡터 {MAX_SEMANTIC_INDEX_BYTES / 1024 / 1024}MB, 후보 20/최종 5. 모델 변경은 재색인이 필요합니다. 유료 실패 후 모델 대체나 재시도는 직접 선택합니다.</small>
     </>}
     <button type="button" className="secondary-button" disabled={busy || settings.mode === "semantic" &&
       (!settings.embeddingModelId || !settings.queryConsent || settings.rerankConsent && !settings.rerankModelId)}
