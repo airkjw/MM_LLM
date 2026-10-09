@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert, { assertFocused } from "./dom-assert.ts";
 import test, { afterEach, before } from "node:test";
 import { Window } from "happy-dom";
 import * as React from "react";
@@ -98,7 +98,7 @@ test("a main-process theme push changes only the root dataset and keeps the open
 
   assert.equal(document.documentElement.dataset.theme, "dark");
   assert.equal(document.querySelector(".model-popover"), popover, "the popover is not remounted");
-  assert.equal(document.activeElement, focused, "focus stays on the same element");
+  assertFocused(focused, "focus stays on the same element");
   assert.equal(document.querySelector(".composer-input"), input, "the composer is not remounted");
   assert.equal(input.value, "합성 초안");
   assert.deepEqual(f.themeWrites, writesBefore, "a push never sends a theme back to main");

@@ -211,7 +211,7 @@ function ChatKeyboardShortcuts({ messages, running, stop }: {
 export function ChatPanel({
   thread, modelId, models, onModelChange, onThreadUpdated, onRefreshThreads, onUsageChanged,
   onTemplateStart, initialDraft, onDraftApplied, evidenceAppends = NO_EVIDENCE, onEvidenceApplied,
-  composerRef, voicePanel
+  composerRef, voicePanel, headerSearch
 }: {
   thread: ThreadSnapshot; modelId: string; models: GatewayModel[];
   onModelChange: (id: string) => void;
@@ -225,6 +225,7 @@ export function ChatPanel({
   onEvidenceApplied?: (ids: string[]) => void;
   composerRef?: Ref<ComposerHandle>;
   voicePanel?: ReactNode;
+  headerSearch?: ReactNode;
 }) {
   const confirm = useConfirm();
   const [messages, setMessages] = useState<PublicMessage[]>(thread.messages);
@@ -627,6 +628,7 @@ export function ChatPanel({
       </div>}
       <div className="panel-header">
         <div className="panel-heading"><span className="panel-section">대화</span><h2 title={thread.title}>{thread.title === "새 대화" ? "새로운 대화" : thread.title}</h2></div>
+        {headerSearch}
         <div className="panel-actions">{!chatbotTarget && <ModelPicker models={displayModels} selected={modelId} onSelect={onModelChange}
             disabled={isRunning || controlsPending} />}
           {chatbotTarget && <span className="chatbot-target"><Sparkles size={14} />{chatbotTarget.alias}</span>}</div>

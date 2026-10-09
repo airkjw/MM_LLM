@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+import assert, { assertFocused } from "./dom-assert.ts";
 import test, {before,afterEach} from 'node:test';
 import {Window} from 'happy-dom';
 import * as React from 'react';
@@ -51,7 +51,7 @@ test('actual App applies dictation final after existing composer draft without a
  await click(button('시작'));assert.equal(f.counts.connect,2);await click(document.querySelector('.account-trigger')!);await click(document.querySelector('.logout-action')!);assert.equal(f.counts.logout,1);assert.equal(f.counts.sub,0);assert.equal(f.track.stops,2);assert.equal(Context.all.every(c=>c.closed===1),true);assert.equal(document.querySelector('.voice-panel'),null);
 });
 test('actual panel keyboard focus, narrow portrait and both themes retain native controls and session cleanup on unmount',async()=>{
- for(const theme of ['light','dark']){const f=fixture();document.documentElement.dataset.theme=theme;browser.innerWidth=680;browser.innerHeight=820;await panel(f);const summary=document.querySelector('summary')!;(summary as HTMLElement).focus();assert.equal(document.activeElement,summary);await start();button('음소거').focus();assert.equal(document.activeElement,button('음소거'));assert.equal(document.querySelectorAll('.voice-panel select').length,2);assert.equal(document.querySelector('[aria-label="음성 외부 전송과 과금 동의"]')!.tagName,'INPUT');await render(<></>);assert.equal(f.track.stops,1);assert.equal(Context.all[0].closed,1);assert.equal(f.counts.sub,0);}
+ for(const theme of ['light','dark']){const f=fixture();document.documentElement.dataset.theme=theme;browser.innerWidth=680;browser.innerHeight=820;await panel(f);const summary=document.querySelector('summary')!;(summary as HTMLElement).focus();assertFocused(summary);await start();button('음소거').focus();assertFocused(button('음소거'));assert.equal(document.querySelectorAll('.voice-panel select').length,2);assert.equal(document.querySelector('[aria-label="음성 외부 전송과 과금 동의"]')!.tagName,'INPUT');await render(<></>);assert.equal(f.track.stops,1);assert.equal(Context.all[0].closed,1);assert.equal(f.counts.sub,0);}
 });
 
 test('actual voice save double click issues one save request',async()=>{
@@ -88,7 +88,7 @@ test('actual pending save synchronously blocks same-batch Start, model and mode 
   await act(async()=>{button('텍스트 저장').focus();button('텍스트 저장').click();button('시작').click();mode.value='dictation';mode.dispatchEvent(new browser.Event('change',{bubbles:true}));model.value='gemini-3.8-live';model.dispatchEvent(new browser.Event('change',{bubbles:true}));});
   assert.equal(f.counts.save,1);assert.equal(f.counts.prepare,1);assert.equal(f.counts.connect,1);assert.equal(f.counts.mic,1);
   assert.equal(mode.value,'conversation');assert.equal(model.value,'gpt-realtime-2.1-mini');assert.equal(mode.disabled,true);assert.equal(model.disabled,true);assert.equal(button('시작').disabled,true);
-  assert.equal(document.activeElement,button('텍스트 저장'));
+  assertFocused(button('텍스트 저장'));
   await act(async()=>pending.resolve({...thread}));await flush();assert.equal(button('시작').disabled,false);await click(button('시작'));assert.equal(f.counts.connect,2);assert.doesNotMatch(document.body.textContent!,/텍스트 저장됨/);await render(<></>);
  }
 });
@@ -203,7 +203,7 @@ test('registered activity remains accessible beside mic/time through queued exte
   document.documentElement.dataset.theme=theme;browser.innerWidth=420;browser.innerHeight=820;
   const f=fixture();await panel(f);const status=()=>document.querySelector('.voice-actions [role="status"]')!;
   assert.match(status().textContent!,/시작 전/);assert.doesNotMatch(status().textContent!,/응답 중|생각 중/);
-  await start();button('음소거').focus();assert.equal(document.activeElement,button('음소거'));assert.equal(status().getAttribute('aria-live'),'polite');
+  await start();button('음소거').focus();assertFocused(button('음소거'));assert.equal(status().getAttribute('aria-live'),'polite');
   await act(async()=>f.emit({type:'audio',sequence:1,sampleRate:24000,bytes:new Uint8Array(4800)}));await act(async()=>f.emit({type:'activity',activity:'thinking'}));
   assert.match(status().textContent!,/마이크 켜짐.*응답 중.*0초/);
   await click(button('음소거'));assert.match(status().textContent!,/마이크 음소거.*응답 중/);

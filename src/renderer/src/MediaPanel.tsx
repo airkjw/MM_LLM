@@ -8,17 +8,22 @@ import { LatestRequestGate } from "../../shared/request-generation";
 import { useConfirm } from "./components/ConfirmDialog";
 import { DiagnosticButton } from "./components/DiagnosticButton";
 import { Notice, useNotice } from "./components/Notice";
-import { type SidebarScreen } from "./components/Sidebar";
+import { type MediaKind } from "./components/Sidebar";
 
 import { ModelPicker } from "./ModelPicker";
 import { DeidCheck, errorText, readDroppedFiles } from "./ui-shared";
-type Screen = SidebarScreen;
+type Screen = MediaKind;
 const AUDIO_LANES = ["tts", "stt", "music"] as const;
+/** A job opened from the list column. A new object per click, so the same row can be opened again. */
+export type MediaJobRequest = { id: string; kind: PendingMediaJob["kind"] };
 export function MediaPanel({
-  screen, models, workspaceEpochRef, onUsageChanged, onSummarizeTranscript
-}: { screen: Exclude<Screen, "chat">; models: GatewayModel[]; onUsageChanged: () => void;
+  screen, models, workspaceEpochRef, onUsageChanged, onSummarizeTranscript, headerSearch, openJob, onBusyChange, tabPanel
+}: { screen: Exclude<Screen, "chat">; models: GatewayModel[]; onUsageChanged: () => void; headerSearch?: import("react").ReactNode;
   workspaceEpochRef: { current: number };
-  onSummarizeTranscript: (result: MediaResult) => Promise<void> }) {
+  onSummarizeTranscript: (result: MediaResult) => Promise<void>;
+  openJob?: MediaJobRequest | null; onBusyChange?: (busy: boolean) => void;
+  /** Set when the header kind tabs control this panel. */
+  tabPanel?: { id: string; labelledBy: string } }) {
   const confirm = useConfirm();
   const [audioLane, setAudioLane] = useState<"tts" | "stt" | "music">("tts");
   const [modelId, setModelId] = useState("");
@@ -51,6 +56,10 @@ export function MediaPanel({
   const [quote, setQuote] = useState<MediaQuote | null>(null);
   const [quoteError, setQuoteError] = useState("");
   const [quoting, setQuoting] = useState(false);
+  const onBusyChangeRef = useRef(onBusyChange);
+  onBusyChangeRef.current = onBusyChange;
+  useEffect(() => { onBusyChangeRef.current?.(busy || quoting); }, [busy, quoting]);
+  useEffect(() => () => onBusyChangeRef.current?.(false), []);
   const quoteIdRef = useRef<string | null>(null);
   const quoteBusyRef = useRef(false);
   const { notice, setError, setInfo, clear: clearNotice } = useNotice();
@@ -179,18 +188,21 @@ export function MediaPanel({
     if (current) void releaseLocalResult(current, false);
   }, []);
   useEffect(() => {
+    if (openJob?.kind === "stt") setAudioLane("stt");
+  }, [openJob]);
+  useEffect(() => {
     let active = true;
     const kind = screen === "image" ? "image" : screen === "video" ? "video"
       : audioLane === "stt" ? "stt" : null;
     if (!kind) return () => { active = false; };
     void window.mmllm.listMediaJobs().then((allJobs) => {
       const matching = allJobs.filter((item) => item.kind === kind);
-      const job = matching[0];
+      const job = (openJob?.kind === kind ? matching.find((item) => item.id === openJob.id) : undefined) ?? matching[0];
       if (active) setJobs(matching);
       if (active && job) showJob(job);
     }).catch((error) => { if (active) setError(errorText(error)); });
     return () => { active = false; };
-  }, [screen, audioLane]);
+  }, [screen, audioLane, openJob]);
 
   function showJob(job: PendingMediaJob) {
     setResult(job.result ? { ...job.result, jobId: job.id, kind: job.kind,
@@ -426,9 +438,11 @@ export function MediaPanel({
 
   return <div className="media-panel">
     <div className="panel-header media-header"><div className="panel-heading"><span className="panel-section">미디어</span><h2>{titles[screen][0]}</h2></div>
+      {headerSearch}
       <ModelPicker models={available} selected={modelId} onSelect={setModelId} disabled={busy} />
     </div>
-    <div className="media-scroll">
+    <div className="media-scroll" id={tabPanel?.id} role={tabPanel ? "tabpanel" : undefined}
+      aria-labelledby={tabPanel?.labelledBy}>
       <div className="media-intro"><p>{screen === "image" ? "프롬프트와 참고 이미지로 필요한 시각 자료를 만드세요." :
         screen === "video" ? "장면을 설명하고 길이와 비율을 설정하세요." : "텍스트를 음성으로 만들거나, 녹음을 전사하고 정리하세요."}</p>
         <span>설정 · 생성 · 저장</span></div>
@@ -605,7 +619,8 @@ export function MediaPanel({
           Boolean(result?.jobId && !["completed", "failed"].includes(result.status ?? ""))}>
           <h3 className="media-card-heading">결과</h3>
           {jobs.length > 1 && <div className="job-list"><strong>이 화면의 작업 {jobs.length}개</strong>
-            {jobs.map((job) => <button type="button" key={job.id} onClick={() => showJob(job)}>
+            {jobs.map((job) => <button type="button" key={job.id} onClick={() => showJob(job)}
+              aria-current={result?.jobId === job.id ? "true" : undefined}>
               {job.label} · {job.status === "completed" ? "완료" : job.status === "failed" ? "실패" : "진행 중"}
             </button>)}</div>}
           {!result && <div className="result-placeholder"><span>{icon}</span>

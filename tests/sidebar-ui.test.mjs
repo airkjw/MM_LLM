@@ -4,6 +4,10 @@ import { readFileSync } from "node:fs";
 import { creditBalancePresentation, creditPresentation } from "../src/shared/credit-usage.ts";
 
 const sidebar = readFileSync(new URL("../src/renderer/src/components/Sidebar.tsx", import.meta.url), "utf8");
+const rail = readFileSync(new URL("../src/renderer/src/components/Rail.tsx", import.meta.url), "utf8");
+const listColumn = readFileSync(new URL("../src/renderer/src/components/ChatListColumn.tsx", import.meta.url), "utf8");
+// Stage 2 split the sidebar into the rail and the list column; the semantics are checked across the shell.
+const shell = [sidebar, rail, listColumn].join("\n");
 const app = readFileSync(new URL("../src/renderer/src/App.tsx", import.meta.url), "utf8");
 const css = readFileSync(new URL("../src/renderer/src/styles.css", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
@@ -60,26 +64,32 @@ test("credit presentation only draws a ratio with a meaningful denominator", () 
 });
 
 test("sidebar exposes the accepted compact navigation and account semantics", () => {
-  assert.doesNotMatch(sidebar, /className="nav-item"|thread-tools|credit-card/);
-  assert.match(sidebar, />미디어</);
-  assert.match(sidebar, /role="dialog" aria-modal="false"/);
-  assert.match(sidebar, /role="menu"/);
-  assert.match(sidebar, /role="menuitem"/);
-  assert.match(sidebar, /잔액 없음/);
-  assert.match(sidebar, /업데이트 오류/);
-  assert.match(sidebar, /대화 삭제/);
-  assert.doesNotMatch(sidebar, /402/);
-  assert.doesNotMatch(sidebar, /API에서 제공한 남은 잔액/);
+  assert.doesNotMatch(shell, /className="nav-item"|thread-tools/);
+  // D2.5: the credit summary card lives only at the bottom of the list column, not on the rail.
+  assert.match(listColumn, /className=\{`credit-card/);
+  assert.doesNotMatch(rail + sidebar, /credit-card/);
+  assert.match(rail, /\{ id: "media", label: "미디어", icon: ImageIcon \}/);
+  assert.match(rail, /<nav className="rail" aria-label="주 탐색">/);
+  assert.match(rail, /role="dialog" aria-modal="false"/);
+  assert.match(listColumn, /role="menu"/);
+  assert.match(listColumn, /role="menuitem"/);
+  assert.match(shell, /잔액 없음/);
+  assert.match(rail, /업데이트 오류/);
+  assert.match(listColumn, /대화 삭제/);
+  assert.doesNotMatch(shell, /402/);
+  assert.doesNotMatch(shell, /API에서 제공한 남은 잔액/);
   assert.doesNotMatch(app, /id: "chat", label: "대화"/);
   assert.match(app, /useResponsiveSidebarState\(\)/);
 });
 
 test("sidebar CSS keeps one scroll region and the agreed responsive widths", () => {
-  assert.match(css, /\.sidebar \{[^}]*width: 232px;[^}]*overflow: hidden;/s);
+  assert.match(css, /\.rail \{[^}]*flex: none;[^}]*width: 56px;/s);
+  assert.match(css, /\.sidebar \{[^}]*width: 260px;[^}]*overflow: hidden;/s);
   assert.match(css, /\.thread-list \{[^}]*flex: 1 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto;/s);
-  assert.match(css, /\.sidebar-account-area \{[^}]*flex: 0 0 52px;/s);
-  assert.match(css, /min-width: 721px\) and \(max-width: 1100px\)[^{]*\{[\s\S]*?\.sidebar \{ width: 224px;/);
-  assert.match(css, /max-width: 720px[\s\S]*?\.sidebar \{[^}]*position: fixed;[^}]*width: 232px;/);
+  assert.match(css, /\.credit-card \{[^}]*flex: none;/s, "the credit card stays pinned below the one scroll region");
+  assert.match(css, /min-width: 721px\) and \(max-width: 1100px\)[^{]*\{[\s\S]*?\.sidebar \{ width: 240px;/);
+  assert.match(css, /max-width: 720px[\s\S]*?\.sidebar \{[^}]*position: fixed;[^}]*inset: 0 auto 0 56px;[^}]*width: 260px;/);
+  assert.doesNotMatch(css, /(^|[\s,}])\.rail \{[^}]*(display: none|visibility: hidden|transform:)/m, "the rail is never hidden at any width");
   assert.match(css, /forced-colors: active[\s\S]*?\.thread-list[^}]*scrollbar-color: auto;/);
 });
 

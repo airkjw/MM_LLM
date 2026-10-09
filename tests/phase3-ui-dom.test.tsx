@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert, { assertFocused } from "./dom-assert.ts";
 import test, { afterEach, before } from "node:test";
 import { Window } from "happy-dom";
 import type { ThreadSnapshot } from "../src/shared/contracts";
@@ -216,8 +216,8 @@ test('actual quote DOM labels all four bounds and rejects model-kind/absent pric
 test('actual code/quote UI keeps keyboard focus, narrow layout and theme token styling',async()=>{
   await chat();const trigger=document.querySelector('button[title="대화 설정"]')!;await click(trigger);
   const checkbox=document.querySelector<HTMLInputElement>('input[aria-label="서버 코드 실행 사용"]')!;
-  checkbox.focus();assert.equal(document.activeElement,checkbox);await key('Escape');assert.equal(document.querySelector('input[aria-label="서버 코드 실행 사용"]'),null);
-  assert.equal(document.activeElement,trigger);
+  checkbox.focus();assertFocused(checkbox);await key('Escape');assert.equal(document.querySelector('input[aria-label="서버 코드 실행 사용"]'),null);
+  assertFocused(trigger);
   browser.happyDOM.setWindowSize({width:390,height:780});await render(<></>);await media();await click(button('비용 확인'));
   const quote=document.querySelector<HTMLElement>('.media-quote')!;assert.match(quote.textContent!,/확정 견적/);
   const css=await import('node:fs/promises').then(fs=>fs.readFile(new URL('../src/renderer/src/styles.css',import.meta.url),'utf8'));

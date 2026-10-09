@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import ts from "typescript";
 import { applyThemePreference, publishResolvedTheme } from "../src/main/theme-application.ts";
@@ -150,7 +151,7 @@ test("renderer code never reads the OS color scheme; main's nativeTheme decides"
   for (const name of ["App.tsx", "ChatPanel.tsx"]) {
     assert.doesNotMatch(readSource(`../src/renderer/src/${name}`), /prefers-color-scheme/, name);
   }
-  for (const [path, source] of rendererSources(new URL("../src/renderer/src/", import.meta.url).pathname)) {
+  for (const [path, source] of rendererSources(fileURLToPath(new URL("../src/renderer/src/", import.meta.url)))) {
     assert.doesNotMatch(source, /prefers-color-scheme/, path);
   }
 });
