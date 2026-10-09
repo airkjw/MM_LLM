@@ -1,115 +1,160 @@
+@font-face {
+  font-family: "Pretendard Variable"; font-style: normal; font-weight: 45 920; font-display: swap;
+  src: url("/fonts/pretendard/PretendardVariable.woff2") format("woff2-variations");
+}
+@font-face {
+  font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap;
+  src: url("/fonts/jetbrains-mono/JetBrainsMono-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono"; font-style: normal; font-weight: 500; font-display: swap;
+  src: url("/fonts/jetbrains-mono/JetBrainsMono-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono"; font-style: normal; font-weight: 600; font-display: swap;
+  src: url("/fonts/jetbrains-mono/JetBrainsMono-SemiBold.woff2") format("woff2");
+}
+
 :root {
   color-scheme: light;
-  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", "Malgun Gothic", sans-serif;
+  font-family: var(--font-sans);
   font-size: 16px;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 
-  /* Neutral graphite surfaces with a functional blue accent. Component rules consume these tokens in both themes. */
-  --color-bg: #FFFFFF;
-  --color-bg-clear: #FFFFFF00;
-  --color-bg-sidebar: #F4F5F7;
-  --color-bg-subtle: #EEF0F3;
-  --color-bg-hover: #E8EBEF;
-  --color-bg-selected: #E2E7EF;
-  --color-text: #1A202C;
-  --color-text-secondary: #465264;
-  --color-text-tertiary: #626D7D;
-  --color-border: #DEE3EA;
-  --color-border-strong: #C7CFDB;
-  --color-border-control: #818C9C;
-  --color-accent: #245DCE;
-  --color-accent-hover: #184CB4;
-  --color-accent-subtle: #EDF3FE;
-  --color-accent-text: #214EA5;
-  --color-accent-graphic: #245DCE;
-  --color-progress-fill: #245DCE;
-  --color-progress-track: #DEE3EA;
-  --color-on-accent: #FFFFFF;
-  --color-focus-ring: #245DCE;
-  --color-focus-halo: #245DCE26;
+  /* Console surfaces: base / panel / raised. Amber is a surface and graphic color; amber text uses --color-accent-text.
+     Values follow design_handoff_console_redesign/tokens.css except the five contract overrides (contract D1.1) that
+     the audit thresholds require: border-control, progress-fill, success, and tertiary text in light, tertiary text in dark. */
+  --color-bg: #F6F7F8;
+  --color-bg-clear: #F6F7F800;
+  --color-bg-sidebar: #FFFFFF;
+  --color-bg-subtle: #EDEFF2;
+  --color-bg-hover: #E4E7EB;
+  --color-bg-selected: #EDEFF2;
+  --color-text: #15171A;
+  --color-text-body: #2E333A;
+  --color-text-secondary: #4F5660;
+  --color-text-tertiary: #5F6670;
+  --color-border: #E7E9EC;
+  --color-border-strong: #DCDFE3;
+  --color-border-control: #858C96;
+  --color-accent: #E5B04A;
+  --color-accent-hover: #D9A23A;
+  --color-accent-subtle: #FBF0D9;
+  --color-accent-text: #8A5A00;
+  --color-accent-graphic: #B57F12;
+  --color-progress-fill: #A66F04;
+  --color-progress-track: #DCDFE3;
+  --color-on-accent: #1A1306;
+  --color-focus-ring: #8A5A00;
+  --color-focus-halo: #E5B04A40;
   --color-danger: #B3261E;
-  --color-danger-bg: #FDF1F0;
+  --color-danger-bg: #FBE9E7;
   --color-warning: #7A5300;
   --color-warning-bg: #FFF6E0;
-  --color-info: #36558F;
-  --color-info-bg: #EEF3FC;
-  --color-new: #765006;
-  --color-new-bg: #FFF4DC;
+  --color-info: #3E5F8A;
+  --color-info-bg: #EEF3F9;
+  --color-new: #8A5A00;
+  --color-new-bg: #FBF0D9;
+  --color-success: #28764A;
+  --color-success-bg: #E4F2E9;
   --color-speaker-1: #245DCE;
   --color-speaker-2: #36558F;
   --color-speaker-3: #14745B;
   --color-speaker-4: #9B3D69;
   --color-speaker-5: #7A5300;
   --color-speaker-6: #8A3B2E;
-  --color-overlay: #141B28A6;
-  --color-media-canvas: #11151C;
-  --color-shadow: #101C3012;
-  --shadow-sm: 0 1px 3px var(--color-shadow);
+  --color-overlay: #15171A47;
+  --color-media-canvas: #EDEFF2;
+  --color-shadow: #15171A0F;
+  --color-shadow-strong: #15171A38;
+  --shadow-sm: 0 1px 2px var(--color-shadow);
   --shadow-md: 0 4px 16px var(--color-shadow);
-  --shadow-lg: 0 12px 32px var(--color-shadow);
+  --shadow-lg: 0 12px 32px -8px var(--color-shadow-strong);
 
-  /* 12px is an intentional accessibility floor even when the root uses the small setting. */
+  /* Shape. Theme independent. */
+  --radius-xs: 5px;
+  --radius-sm: 6px;
+  --radius-md: 7px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-2xl: 12px;
+
+  /* Families. Pretendard Variable for UI text, JetBrains Mono for figures, IDs, shortcuts and meta. */
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
+
+  /* README px sizes on a 16px root, expressed in rem so the 15/16/18px font-size setting keeps scaling them.
+     12px is an intentional accessibility floor even when the root uses the small setting. */
   --text-xs: max(12px, 0.75rem);
   --text-sm: max(12px, 0.8125rem);
-  --text-base: 0.9375rem;
+  --text-base: 0.875rem;
+  --text-md: 0.9375rem;
   --text-lg: 1.0625rem;
-  --text-xl: 1.25rem;
+  --text-xl: 1.375rem;
   --text-2xl: 1.5rem;
-  --text-display: clamp(1.9375rem, 3vw, 2.625rem);
+  --text-display: clamp(1.9375rem, 3vw, 2.75rem);
   --body-font-size: var(--text-base);
-
-
 }
 :root[data-font-size="small"] { font-size: 15px; }
 :root[data-font-size="medium"] { font-size: 16px; }
 :root[data-font-size="large"] { font-size: 18px; }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --color-bg: #12161D;
-  --color-bg-clear: #12161D00;
-  --color-bg-sidebar: #181D26;
-  --color-bg-subtle: #202733;
-  --color-bg-hover: #283241;
-  --color-bg-selected: #303E53;
-  --color-text: #E9EEF5;
-  --color-text-secondary: #C3CDDC;
-  --color-text-tertiary: #9BA9BD;
-  --color-border: #303A48;
-  --color-border-strong: #455267;
-  --color-border-control: #78889F;
-  --color-accent: #245DCE;
-  --color-accent-hover: #245DCE;
-  --color-accent-subtle: #1C2F4B;
-  --color-accent-text: #A4C5FF;
-  --color-accent-graphic: #A4C5FF;
-  --color-progress-fill: #8DB5FF;
-  --color-progress-track: #303A48;
-  --color-on-accent: #FFFFFF;
-  --color-focus-ring: #8DB5FF;
-  --color-focus-halo: #669BFF38;
-  --color-danger: #F2B8B5;
-  --color-danger-bg: #3A2123;
+  --color-bg: #0D0E10;
+  --color-bg-clear: #0D0E1000;
+  --color-bg-sidebar: #131518;
+  --color-bg-subtle: #1D2024;
+  --color-bg-hover: #23272C;
+  --color-bg-selected: #1D2024;
+  --color-text: #ECEEF0;
+  --color-text-body: #C9CDD2;
+  --color-text-secondary: #A3A9B1;
+  --color-text-tertiary: #898F98;
+  --color-border: #1F2227;
+  --color-border-strong: #2A2E33;
+  --color-border-control: #646B75;
+  --color-accent: #E5B04A;
+  --color-accent-hover: #F0C065;
+  --color-accent-subtle: #2A2316;
+  --color-accent-text: #E5B04A;
+  --color-accent-graphic: #E5B04A;
+  --color-progress-fill: #E5B04A;
+  --color-progress-track: #2A2E33;
+  --color-on-accent: #1A1306;
+  --color-focus-ring: #E5B04A;
+  --color-focus-halo: #E5B04A38;
+  --color-danger: #F08A7E;
+  --color-danger-bg: #2B1716;
   --color-warning: #F0CF8E;
   --color-warning-bg: #3A2F17;
-  --color-info: #B9C9F2;
-  --color-info-bg: #263148;
-  --color-new: #F0CF8E;
-  --color-new-bg: #3A2F17;
+  --color-info: #AFC4E6;
+  --color-info-bg: #1C2633;
+  --color-new: #E5B04A;
+  --color-new-bg: #2A2316;
+  --color-success: #6FBF8E;
+  --color-success-bg: #16261C;
   --color-speaker-1: #A4C5FF;
   --color-speaker-2: #8FB4FF;
   --color-speaker-3: #75D8B0;
   --color-speaker-4: #F3A6C7;
   --color-speaker-5: #F0CF8E;
   --color-speaker-6: #F2A89A;
-  --color-overlay: #060A11C7;
-  --color-media-canvas: #0C1119;
-  --color-shadow: #02050A66;
+  --color-overlay: #0000008C;
+  --color-media-canvas: #08090A;
+  --color-shadow: #00000099;
+  --color-shadow-strong: #000000B3;
+  /* Dark separates depth by surface step instead of shadow. */
+  --shadow-sm: none;
+  --shadow-md: none;
 }
 
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; height: 100%; margin: 0; }
 html, body, #root { color: var(--color-text); background: var(--color-bg); }
+html, body, .sidebar, .rail, .panel, .composer-card, .dialog-card {
+  transition: background-color .25s ease, color .25s ease, border-color .25s ease;
+}
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 input[type="checkbox"], input[type="radio"] {
@@ -732,16 +777,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 a:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
+  box-shadow: inset 0 0 0 1px var(--color-focus-ring), 0 0 0 3px var(--color-focus-halo);
 }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
   .spin { animation: none; }
 }
+/* Same body as the media block, for the app setting "reduce motion" (setting key and UI arrive in stage 4). */
+:root[data-reduce-motion="true"] *, :root[data-reduce-motion="true"] *::before, :root[data-reduce-motion="true"] *::after {
+  scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
+}
+:root[data-reduce-motion="true"] .spin { animation: none; }
 
 @media (forced-colors: active) {
   button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible,
-  a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid currentColor; }
+  a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid currentColor; box-shadow: none; }
   .thread-list, .account-popover, .chat-viewport, .media-scroll, .model-options { scrollbar-color: auto; }
   .thread-list::-webkit-scrollbar, .thread-list::-webkit-scrollbar-track, .thread-list::-webkit-scrollbar-thumb { all: revert; }
   .primary-button, .send-button, .brand-mark, .assistant-avatar { forced-color-adjust: auto; }

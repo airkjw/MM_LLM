@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { auditCss, auditUiCssFile, contrastRatio } from "../scripts/audit-ui-css.mjs";
 import { auditThemeStartup } from "../scripts/audit-theme-startup.mjs";
 
@@ -119,8 +119,8 @@ expectMutationError("typed control boundary conflicts", (source) =>
 expectMutationError("stateful control boundary conflicts", (source) =>
   `${source}\n.model-trigger:hover { border-color: var(--color-border); }`, /audited-selector conflict.*model-trigger/);
 expectMutationError("non-text accent contrast failures", (source) => source.replace(
-  /(--color-accent-graphic:\s*)#A4C5FF/,
-  "$1#1C2F4B"
+  /(--color-accent-graphic:\s*)#E5B04A/,
+  "$1#2A2316"
 ), /accent-graphic\/accent-subtle/);
 expectMutationError("the stop-button semantic map", (source) => source.replace(
   ".send-button.stop, .send-button.stop:hover:not(:disabled) { background: var(--color-text); color: var(--color-bg); }",
@@ -162,6 +162,136 @@ expectMutationError(":is disabled state conflicts", (source) =>
   `${source}\n:is(button:disabled) { background: var(--color-bg); }`, /audited-selector conflict.*button:disabled/);
 expectMutationError("stateful disabled state conflicts", (source) =>
   `${source}\nbutton:disabled:hover { background: var(--color-bg); }`, /audited-selector conflict.*button:disabled/);
+
+// ---- Stage 1 (W1a): tokens, typography, fonts, transitions (contract §B1 D1.1-D1.6) ----
+function rootTokens(source, selector) {
+  const block = source.match(new RegExp(`^${selector.replace(/[[\]"]/g, "\\$&")}\\s*\\{([\\s\\S]*?)^\\}`, "m"))?.[1] ?? "";
+  return Object.fromEntries([...block.matchAll(/^\s*(--[a-z0-9-]+):\s*([^;]+);/gim)].map((match) => [match[1], match[2].trim()]));
+}
+const lightTokens = rootTokens(css, ":root");
+const darkTokens = rootTokens(css, ':root[data-theme="dark"]');
+
+test("D1.1 contract overrides replace the tokens.css values that miss the audit thresholds", () => {
+  assert.equal(lightTokens["--color-border-control"], "#858C96");
+  assert.equal(lightTokens["--color-progress-fill"], "#A66F04");
+  assert.equal(lightTokens["--color-success"], "#28764A");
+  assert.equal(lightTokens["--color-text-tertiary"], "#5F6670");
+  assert.equal(darkTokens["--color-text-tertiary"], "#898F98");
+  for (const [token, light, dark] of [
+    ["--color-bg", "#F6F7F8", "#0D0E10"], ["--color-bg-sidebar", "#FFFFFF", "#131518"],
+    ["--color-accent", "#E5B04A", "#E5B04A"], ["--color-on-accent", "#1A1306", "#1A1306"],
+    ["--color-accent-text", "#8A5A00", "#E5B04A"], ["--color-text-body", "#2E333A", "#C9CDD2"]
+  ]) {
+    assert.equal(lightTokens[token], light, `light ${token}`);
+    assert.equal(darkTokens[token], dark, `dark ${token}`);
+  }
+});
+
+test("D1.2 new tokens exist in both themes and the audit pairs cover them", () => {
+  for (const token of ["--color-text-body", "--color-success", "--color-success-bg"]) {
+    assert.ok(lightTokens[token] && darkTokens[token], `${token} must exist in both themes`);
+  }
+  for (const radius of ["xs", "sm", "md", "lg", "xl", "2xl"]) assert.ok(lightTokens[`--radius-${radius}`], `--radius-${radius}`);
+  assert.match(lightTokens["--font-sans"], /^"Pretendard Variable"/);
+  assert.match(lightTokens["--font-mono"], /^"JetBrains Mono"/);
+  const result = auditUiCssFile();
+  for (const pair of ["text-body/bg", "text-body/bg-sidebar", "text-tertiary/bg-subtle", "text-tertiary/bg-selected",
+    "text-tertiary/bg-hover", "accent-text/bg-subtle", "success/success-bg", "success/bg-sidebar",
+    "accent-graphic/bg", "accent-graphic/bg-sidebar", "accent-graphic/bg-subtle", "on-accent/accent", "on-accent/accent-hover"]) {
+    for (const theme of ["light", "dark"]) assert.ok(result.contrasts[theme][pair] > 0, `${theme} ${pair} must be audited`);
+  }
+  for (const theme of ["light", "dark"]) {
+    assert.equal(result.contrasts[theme]["accent/bg"], undefined, "amber surface is face-only and is not held to 3:1 against bg");
+  }
+  assert.ok(contrastRatio(lightTokens["--color-border-control"], lightTokens["--color-bg"]) >= 3);
+  assert.ok(contrastRatio(lightTokens["--color-progress-fill"], lightTokens["--color-progress-track"]) >= 3);
+});
+
+test("D1.3 typography tokens move the README sizes onto rem so the font-size setting still scales them", () => {
+  assert.deepEqual({
+    xs: lightTokens["--text-xs"], sm: lightTokens["--text-sm"], base: lightTokens["--text-base"], md: lightTokens["--text-md"],
+    lg: lightTokens["--text-lg"], xl: lightTokens["--text-xl"], xxl: lightTokens["--text-2xl"], display: lightTokens["--text-display"]
+  }, {
+    xs: "max(12px, 0.75rem)", sm: "max(12px, 0.8125rem)", base: "0.875rem", md: "0.9375rem",
+    lg: "1.0625rem", xl: "1.375rem", xxl: "1.5rem", display: "clamp(1.9375rem, 3vw, 2.75rem)"
+  });
+  assert.doesNotMatch(css, /@media[^{]*prefers-color-scheme/);
+});
+
+test("D1.5 fonts are bundled locally with OFL licenses and public-root @font-face sources", () => {
+  const dir = new URL("../src/renderer/public/fonts/", import.meta.url);
+  for (const file of ["pretendard/PretendardVariable.woff2", "pretendard/OFL.txt", "jetbrains-mono/OFL.txt",
+    "jetbrains-mono/JetBrainsMono-Regular.woff2", "jetbrains-mono/JetBrainsMono-Medium.woff2", "jetbrains-mono/JetBrainsMono-SemiBold.woff2"]) {
+    assert.ok(existsSync(new URL(file, dir)) && statSync(new URL(file, dir)).size > 1000, `${file} must be bundled`);
+  }
+  for (const folder of ["pretendard", "jetbrains-mono"]) {
+    assert.match(readFileSync(new URL(`${folder}/OFL.txt`, dir), "utf8"), /SIL OPEN FONT LICENSE Version 1\.1/);
+  }
+  const faces = [...css.matchAll(/@font-face\s*\{([^}]*)\}/g)].map((match) => match[1]);
+  assert.equal(faces.length, 4, "Pretendard Variable plus JetBrains Mono 400/500/600");
+  for (const face of faces) {
+    assert.match(face, /font-display:\s*swap/);
+    const url = face.match(/url\(["']?([^)"']+)["']?\)/)?.[1] ?? "";
+    assert.match(url, /^\/fonts\/(?:pretendard|jetbrains-mono)\/[\w-]+\.woff2$/, "bundled public font path, rewritten relative by Vite");
+    assert.ok(existsSync(new URL(url.replace("/fonts/", ""), dir)), `${url} must exist under public/fonts`);
+  }
+  assert.doesNotMatch(css, /@import/);
+  assert.doesNotMatch(css, /url\(\s*["']?(?:https?:)?\/\//);
+  assert.match(css, /^:root\s*\{[^}]*font-family:\s*var\(--font-sans\)/m);
+});
+
+test("D1.6 theme transition applies to the shell surfaces and is zeroed by both motion switches", () => {
+  const rule = css.match(/^html, body, \.sidebar, \.rail, \.panel, \.composer-card, \.dialog-card \{([^}]*)\}/m);
+  assert.ok(rule, "transition rule must list the contract selectors");
+  assert.match(rule[1], /transition:\s*background-color \.25s ease, color \.25s ease, border-color \.25s ease/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[^}]*transition-duration:\s*0\.01ms !important/);
+  assert.match(css, /:root\[data-reduce-motion="true"\] \*[^{]*\{[^}]*transition-duration:\s*0\.01ms !important/);
+});
+
+expectMutationError("text-body contrast failures", (source) => source.replace(
+  /(--color-text-body:\s*)#2E333A/, "$1#C9CDD2"), /text-body\/bg/);
+expectMutationError("missing text-body token", (source) => source.replaceAll(/\s*--color-text-body:[^;]+;/g, ""), /--color-text-body is missing/);
+expectMutationError("missing success token", (source) => source.replaceAll(/\s*--color-success:[^;]+;/g, ""), /--color-success is missing/);
+expectMutationError("missing success-bg token", (source) => source.replaceAll(/\s*--color-success-bg:[^;]+;/g, ""), /--color-success-bg is missing/);
+expectMutationError("success badge contrast failures", (source) => source.replace(
+  /(--color-success:\s*)#28764A/, "$1#7FBF9A"), /success\/success-bg/);
+expectMutationError("tertiary text on hover surface failures", (source) => source.replace(
+  /(--color-text-tertiary:\s*)#5F6670/, "$1#7A818B"), /text-tertiary\/bg-hover/);
+expectMutationError("tertiary text on subtle surface failures in dark theme", (source) => source.replace(
+  /(--color-text-tertiary:\s*)#898F98/, "$1#6A7078"), /text-tertiary\/bg-(?:subtle|selected)/);
+expectMutationError("accent text on subtle surface failures", (source) => source.replace(
+  /(--color-accent-text:\s*)#8A5A00/, "$1#C99A3A"), /accent-text\/bg-subtle/);
+expectMutationError("accent graphic on base surface failures", (source) => source.replace(
+  /(--color-accent-graphic:\s*)#B57F12/, "$1#E0C48A"), /accent-graphic\/bg(?:-sidebar)? is/);
+expectMutationError("on-accent text on amber hover face failures", (source) => source.replace(
+  /(--color-accent-hover:\s*)#D9A23A/, "$1#2A2316"), /on-accent\/accent-hover/);
+expectMutationError("on-accent text on amber face failures", (source) => source.replace(
+  /(--color-on-accent:\s*)#1A1306/, "$1#E5B04A"), /on-accent\/accent is/);
+expectMutationError("text-md below the 12px floor", (source) => source.replace(
+  /--text-md:\s*0\.9375rem;/, "--text-md: 0.7rem;"), /--text-md does not enforce/);
+expectMutationError("text-md redefinition outside :root", (source) => `${source}\n.tiny { --text-md: 1px; }`, /Typography token redefined/);
+expectMutationError("CSS @import of remote fonts", (source) => `@import url("https://fonts.example/x.css");\n${source}`, /@import is forbidden/);
+expectMutationError("unresolved ./fonts/ @font-face sources", (source) => source.replace(
+  "/fonts/pretendard/PretendardVariable.woff2", "./fonts/pretendard/PretendardVariable.woff2"), /@font-face source must be a bundled public/);
+expectMutationError("remote @font-face sources", (source) => source.replace(
+  "/fonts/pretendard/PretendardVariable.woff2", "https://fonts.example/Pretendard.woff2"), /@font-face source must be a bundled public/);
+expectMutationError("@font-face without font-display swap", (source) => source.replace(
+  /(@font-face \{[^}]*?)font-display:\s*swap;/, "$1font-display: block;"), /font-display: swap/);
+expectMutationError("missing reduce-motion app setting selector", (source) => source.replaceAll(
+  ':root[data-reduce-motion="true"]', ':root[data-reduce-motion-off="true"]'), /data-reduce-motion/);
+expectMutationError("missing theme transition rule", (source) => source.replace(
+  "transition: background-color .25s ease, color .25s ease, border-color .25s ease;", ""), /theme transition/);
+
+expectMutationError("missing bundled @font-face rules", (source) => source.replaceAll(/@font-face\s*\{[^}]*\}/g, ""), /Missing @font-face/);
+
+test("D1.4 focus ring keeps the outline and adds the README inset ring plus halo", () => {
+  const rule = css.match(/^button:focus-visible, input:focus-visible[^{]*\{([^}]*)\}/m)?.[1] ?? "";
+  assert.match(rule, /outline:\s*2px solid var\(--color-focus-ring\)/);
+  assert.match(rule, /box-shadow:\s*inset 0 0 0 1px var\(--color-focus-ring\), 0 0 0 3px var\(--color-focus-halo\)/);
+  const forced = css.match(/@media \(forced-colors: active\) \{([\s\S]*?)\n\}/)?.[1] ?? "";
+  assert.match(forced, /outline:\s*2px solid currentColor;\s*box-shadow:\s*none/);
+});
+
 expectMutationError("malformed CSS", (source) => `${source}\n.broken {`, /CSS parse failed/);
 
 expectStartupMutation("comment-spoofed bootstrap tag", (sources) => ({
