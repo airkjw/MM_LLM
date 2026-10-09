@@ -183,7 +183,7 @@ a { color: inherit; }
 .login-card form label { font-weight: 700; font-size: var(--text-sm); }
 .login-card form input { width: 100%; border: 1px solid var(--color-border-control); border-radius: 7px; padding: 12px 42px 12px 13px;
   background: var(--color-bg-sidebar); }
-.login-card form input:focus { border-color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-focus-halo); }
+.login-card form input:focus { border-color: var(--color-accent-graphic); box-shadow: 0 0 0 3px var(--color-focus-halo); }
 .primary-button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 47px;
   border: none; border-radius: 8px; color: var(--color-on-accent); background: var(--color-accent);
   padding: 12px 18px; font-weight: 700; box-shadow: 0 8px 20px var(--color-shadow); }
@@ -231,7 +231,7 @@ a { color: inherit; }
   border: 1px solid var(--color-bg-clear); border-radius: 6px; color: var(--color-text-secondary); background: var(--color-bg-clear);
   font-size: var(--text-sm); }
 .creation-tile:hover { border-color: var(--color-border-strong); background: var(--color-bg-hover); }
-.creation-tile.active { border-color: var(--color-accent); color: var(--color-accent-text); background: var(--color-accent-subtle); font-weight: 600; }
+.creation-tile.active { border-color: var(--color-accent-graphic); color: var(--color-accent-text); background: var(--color-accent-subtle); font-weight: 600; }
 .history-title { margin-top: 6px; margin-bottom: 1px; }
 .history-title > span { display: inline-flex; align-items: baseline; gap: 5px; }
 .history-title b { font-weight: 500; }
@@ -451,8 +451,8 @@ a { color: inherit; }
 .chat-footer > * { width: min(860px, 100%); margin-left: auto; margin-right: auto; }
 .composer-card { display: flex; flex-direction: column; border: 1px solid var(--color-border-control); border-radius: 10px;
   background: var(--color-bg); box-shadow: var(--shadow-sm); padding: 0 10px 10px; }
-.composer-card:focus-within { border-color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-focus-halo); }
-.composer-card.drop-active { border-color: var(--color-accent); background: var(--color-accent-subtle);
+.composer-card:focus-within { border-color: var(--color-accent-graphic); box-shadow: 0 0 0 3px var(--color-focus-halo); }
+.composer-card.drop-active { border-color: var(--color-accent-graphic); background: var(--color-accent-subtle);
   box-shadow: 0 10px 30px var(--color-shadow), 0 0 0 4px var(--color-shadow); }
 .composer-drop-hint { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 67px;
   margin: 1px 2px 5px; border: 1px dashed var(--color-border-strong); border-radius: 8px; color: var(--color-text-tertiary);
@@ -524,7 +524,7 @@ a { color: inherit; }
 .field-label { display: block; margin-bottom: 10px; font-size: var(--text-xs); color: var(--color-text-tertiary); font-weight: 700; }
 .media-textarea { width: 100%; min-height: 145px; border: 1px solid var(--color-border-control); border-radius: 8px;
   resize: vertical; background: var(--color-bg); color: var(--color-text-secondary); padding: 14px; font-size: var(--text-xs); line-height: 1.7; }
-.media-textarea:focus { border-color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-focus-halo); }
+.media-textarea:focus { border-color: var(--color-accent-graphic); box-shadow: 0 0 0 3px var(--color-focus-halo); }
 .media-textarea::placeholder { color: var(--color-text-tertiary); }
 .media-controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
 .media-controls label { display: flex; flex-direction: column; gap: 7px; font-size: var(--text-xs); color: var(--color-text-tertiary); font-weight: 700; }
@@ -552,7 +552,7 @@ a { color: inherit; }
 .meeting-options small, .speaker-grid small { color: var(--color-text-tertiary); font-size: var(--text-xs); font-weight: 400; }
 .reference-button { display: inline-flex; align-items: center; gap: 6px; border: 1px dashed var(--color-border-control); border-radius: 10px;
   background: var(--color-bg-sidebar); color: var(--color-text-tertiary); padding: 9px 11px; margin: 16px 0 0; font-size: var(--text-xs); }
-.reference-button.drop-active, .file-drop.drop-active { border-color: var(--color-accent); color: var(--color-accent-text);
+.reference-button.drop-active, .file-drop.drop-active { border-color: var(--color-accent-graphic); color: var(--color-accent-text);
   background: var(--color-accent-subtle); box-shadow: 0 0 0 3px var(--color-shadow); }
 .media-form .attachment-row { margin-top: 10px; }
 .media-confirm { border-top: 1px solid var(--color-bg-hover); padding-top: 16px; margin-top: 20px; }
