@@ -563,7 +563,7 @@ export function ChatPanel({
     ? "Sonar는 검색 끄기·공통 근거 전용 답변을 지원하지 않습니다. 다른 모델을 선택하거나 검색 방식을 자동·항상으로 바꿔 주세요." : undefined;
   const searchSettingsError = searchCapability?.status === "supported" && searchCapability.provider && thread.webSearchMode !== "off" && thread.webSearchMode !== "deep"
     ? nativeSearchSettingsError(searchCapability.provider, thread.advanced) : undefined;
-  const searchRouteLabel = thread.webSearchMode === "deep" ? "Sonar 공통 검색 후 선택 모델 답변 · 3~4개 검색어 교차 조사"
+  const searchRouteLabel = thread.webSearchMode === "deep" ? "Sonar 공통 검색 후 선택 모델 답변 · 3~4개 검색어 교차 조사 · 총 최대 6회 API 호출"
     : searchCapability?.status === "supported" ? "모델 자체 검색 · 도구 추가 과금 가능"
     : searchCapability?.status === "unsupported" ? "자체 검색 미지원 · Sonar 검색 후 선택 모델 답변 · 추가 요청"
     : "자체 검색 미확인 · 전송 시 확인, 미확인/미지원은 Sonar 추가 요청";
@@ -786,6 +786,15 @@ export function ChatPanel({
   const modelsLocked = isRunning || controlsPending || compareBusy;
   const pickerFallback = () => document.querySelector<HTMLElement>(".chat-panel .composer-input");
   const routeVisible = !chatbotTarget && thread.webSearchMode !== "off";
+  // A comparison never uses the models' own search: main runs one billed shared Sonar search and gives the same
+  // evidence to every model, so the visible route states that path instead of the primary model's chat route.
+  const compareRouteLabel = thread.webSearchMode === "deep"
+    ? `비교 웹 근거: 딥리서치 · 최대 5회 조사 + 모델별 합성 · Sonar 공통 검색 추가 요청`
+    : thread.webSearchMode === "auto"
+      ? `비교 웹 근거: 필요할 때 검색 · Sonar 공통 검색 1회 후 ${composerModels.length}개 모델에 동일하게 제공 · 추가 요청`
+      : `비교 웹 근거: 항상 검색 · 공통 1회 · Sonar 공통 검색 후 ${composerModels.length}개 모델에 동일하게 제공 · 추가 요청`;
+  const routeLabel = compareMode ? compareRouteLabel
+    : thread.webSearchMode === "auto" ? `검색할 때: ${searchRouteLabel}` : searchRouteLabel;
   const footerPrefix = chatbotTarget ? "Studio Chatbot · 원격 감사 로그가 저장될 수 있음"
     : thread.purpose === "meeting-summary" ? "로컬 회의 요약 · 웹 검색 꺼짐" : "";
   return <AssistantRuntimeProvider runtime={runtime}>
@@ -914,7 +923,7 @@ export function ChatPanel({
                       disabled={compareMode ? compareSendBlocked : Boolean(sonarRestriction) || !selectedModel && !chatbotTarget}><ArrowUp size={16} /></ComposerPrimitive.Send>}
               </div>
             </ComposerPrimitive.Root>
-            {compareMode && pending.length > 0 && <div className="compare-consent">
+            {compareMode && pending.length > 0 && <div className="composer-compare-consent">
               <label className="deid-check"><input type="checkbox" checked={compareConfirmed} disabled={compareBusy}
                 aria-describedby={!compareConfirmed ? "compare-consent-hint" : undefined}
                 onChange={(event) => setCompareConfirmed(event.target.checked)} />
@@ -923,7 +932,7 @@ export function ChatPanel({
             </div>}
             {compareModelError && <div className="inline-error" role="status">Sonar는 검색 끄기가 확인되지 않아 비교 답변에 사용할 수 없습니다. Sonar 선택을 해제하고 다른 모델을 직접 선택해 주세요.</div>}
             {routeVisible && <div className="composer-route"><Globe2 size={13} aria-hidden="true" />
-              <span role="status">{thread.webSearchMode === "auto" ? `검색할 때: ${searchRouteLabel}` : searchRouteLabel}</span>
+              <span role="status">{routeLabel}</span>
               {thread.webSearchMode !== "deep" && !compareMode && <button type="button" className="text-button" disabled={isRunning || controlsPending || !selectedModel}
                 onClick={async () => {
                   const id = modelId; const owner = thread.id; setControlsPending(true); setError("");

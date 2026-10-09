@@ -291,7 +291,7 @@ test("real inline comparison requires a visible attachment consent and sends con
   try {
     const { requests } = await openRealComparison();
     await click(attachButton());
-    const checkbox = document.querySelector<HTMLInputElement>(".compare-consent .deid-check input")!;
+    const checkbox = document.querySelector<HTMLInputElement>(".composer-compare-consent .deid-check input")!;
     assert.ok(checkbox, "attachments with two or more models show the existing consent checkbox below the composer");
     assert.match(checkbox.closest(".deid-check")!.textContent!, /환자 식별정보나 개인정보를 제거했습니다. 자료는 선택한 모델 수만큼 외부 전송·과금될 수 있습니다./);
     const css = window.getComputedStyle(checkbox);
@@ -317,7 +317,7 @@ test("real inline comparison requires a visible attachment consent and sends con
 
 test("real inline comparison without attachments runs immediately and a server error releases the busy state", async () => {
   const { requests, emit } = await openRealComparison();
-  assert.equal(document.querySelector(".compare-consent"), null, "no attachment, no consent checkbox");
+  assert.equal(document.querySelector(".composer-compare-consent"), null, "no attachment, no consent checkbox");
   assert.equal(sendButton().disabled, false);
   await click(sendButton());
   assert.equal(requests.length, 1);
@@ -336,9 +336,9 @@ test("real inline comparison without attachments runs immediately and a server e
 test("adding another comparison attachment resets consent before sending", async () => {
   const { requests } = await openRealComparison();
   await click(attachButton());
-  await click(document.querySelector(".compare-consent .deid-check input")!);
+  await click(document.querySelector(".composer-compare-consent .deid-check input")!);
   await click(attachButton());
-  assert.equal(document.querySelector<HTMLInputElement>(".compare-consent .deid-check input")!.checked, false);
+  assert.equal(document.querySelector<HTMLInputElement>(".composer-compare-consent .deid-check input")!.checked, false);
   assert.equal(sendButton().disabled, true);
   await click(sendButton()); assert.equal(requests.length, 0);
 });
@@ -346,7 +346,7 @@ test("adding another comparison attachment resets consent before sending", async
 test("comparison startup errors release busy state and preserve attachments and the question for retry", async () => {
   await openRealComparison();
   await click(attachButton());
-  await click(document.querySelector(".compare-consent .deid-check input")!);
+  await click(document.querySelector(".composer-compare-consent .deid-check input")!);
   window.mmllm.streamCompare = () => { throw new Error("비교 연결을 시작하지 못했습니다."); };
   await click(sendButton());
   assert.match(document.querySelector('[role="alert"]')!.textContent!, /비교 연결을 시작/);
@@ -685,6 +685,11 @@ test("composer reasoning menu lists only the selected model's choices and saves 
   assert.match(document.querySelector(".reasoning-unavailable")!.textContent!, /사고 강도: 자동/);
 });
 
+// Inside text fields only the platform's command key acts (R-3 F5): Cmd on macOS, Ctrl elsewhere.
+const MAC_PLATFORM = navigator.platform.includes("Mac");
+const MOD = MAC_PLATFORM ? { metaKey: true } : { ctrlKey: true };
+const OTHER_MOD = MAC_PLATFORM ? { ctrlKey: true } : { metaKey: true };
+
 test("real App: Cmd/Ctrl+N and Cmd/Ctrl+Shift+C work inside the composer, other shortcuts stay text", async () => {
   let creates = 0;
   const { thread } = compareFixture({ createThread: async () => { creates++; return { ...syntheticChatThread(), id: `new-${creates}`, modelId: compareModels[0] }; },
@@ -692,10 +697,10 @@ test("real App: Cmd/Ctrl+N and Cmd/Ctrl+Shift+C work inside the composer, other 
   await render(<ConfirmProvider><App /></ConfirmProvider>);
   assert.ok(thread);
   composerInput().focus();
-  await key("n", { ctrlKey: true });
+  await key("n", MOD);
   assert.equal(creates, 2, "the startup thread plus one Ctrl+N from inside the composer");
   composerInput().focus();
-  await key("C", { metaKey: true, shiftKey: true });
+  await key("C", { ...MOD, shiftKey: true });
   const tokens = [...document.querySelectorAll(".composer-model-token")];
   assert.equal(tokens.length, 2, "a second model token was added");
   assert.ok(document.querySelector(".model-popover"), "the picker opens on the new token");
@@ -752,7 +757,7 @@ test("real App: Cmd/Ctrl+K inside the composer opens the palette and Escape retu
   assert.equal(document.querySelector("#search-title"), null, "the old search dialog is gone");
   const composer = composerInput();
   composer.focus();
-  await key("k", { metaKey: true });
+  await key("k", MOD);
   await wait(5);
   assert.ok(document.querySelector('.command-palette[role="dialog"][aria-modal="true"]'), "the palette opens from inside a text field");
   assertFocused(paletteInput());
@@ -826,4 +831,128 @@ test("real App: palette commands run new thread, theme, credits and compare thro
   assert.equal(document.querySelectorAll(".composer-model-token").length, 2);
   assert.ok(document.querySelector(".model-popover"), "the compare command opens the picker on the second token");
   assert.ok(thread);
+});
+
+test("R-3 F5: inside text fields only the platform command key acts; outside, Cmd and Ctrl both still work", async () => {
+  const { platformCommandModifier } = await import("../src/renderer/src/shortcut-policy");
+  assert.equal(platformCommandModifier({ metaKey: true, ctrlKey: false }, true), true);
+  assert.equal(platformCommandModifier({ metaKey: false, ctrlKey: true }, true), false, "macOS keeps Ctrl+K/Ctrl+N for Cocoa editing");
+  assert.equal(platformCommandModifier({ metaKey: false, ctrlKey: true }, false), true);
+  assert.equal(platformCommandModifier({ metaKey: true, ctrlKey: false }, false), false);
+  assert.equal(platformCommandModifier({ metaKey: true, ctrlKey: true }, true), false);
+  compareFixture({ searchThreads: async () => [] });
+  await render(<ConfirmProvider><App /></ConfirmProvider>);
+  composerInput().focus();
+  await key("k", OTHER_MOD);
+  assert.equal(document.querySelector(".command-palette"), null, "the other platform's modifier stays a field key");
+  for (const modifier of [MOD, OTHER_MOD]) {
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    document.body.focus();
+    await act(async () => { document.body.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "k", bubbles: true, cancelable: true, ...modifier })); });
+    assert.ok(document.querySelector(".command-palette"), "outside fields either modifier opens the palette");
+    await key("Escape");
+  }
+});
+
+async function compareRouteApp(webSearchMode: string) {
+  // A fresh App per mode: re-rendering the same root keeps the previously loaded thread.
+  if (root) await act(async () => root!.unmount()); root = null; host?.remove(); host = null;
+  compareFixture({ getSession: async () => ({ authenticated: true, credits: { total: { remaining: 1000 } }, models: [
+    { id: compareModels[0], type: "llm", searchCapability: { status: "supported", provider: "openai", reason: "synthetic" } },
+    ...compareModels.slice(1).map((id) => ({ id, type: "llm" }))] }) }, { webSearchMode });
+  await render(<ConfirmProvider><App /></ConfirmProvider>);
+}
+const routeText = () => document.querySelector(".composer-route [role=\"status\"]")?.textContent ?? "";
+
+test("R-3 F1/F2: compare mode shows the billed shared Sonar search route, not the native-search primary route", async () => {
+  await compareRouteApp("always");
+  assert.match(routeText(), /모델 자체 검색/, "a single chat with a native-search model shows its own route");
+  await addCompareModel(compareModels[1]);
+  assert.equal(routeText(), "비교 웹 근거: 항상 검색 · 공통 1회 · Sonar 공통 검색 후 2개 모델에 동일하게 제공 · 추가 요청");
+  assert.doesNotMatch(document.querySelector(".chat-panel")!.textContent!, /모델 자체 검색/);
+  assert.equal([...document.querySelectorAll("button")].filter((b) => b.textContent === "검색 기능 확인").length, 0);
+  await compareRouteApp("deep");
+  await addCompareModel(compareModels[1]); await addCompareModel(compareModels[2]);
+  assert.equal(routeText(), "비교 웹 근거: 딥리서치 · 최대 5회 조사 + 모델별 합성 · Sonar 공통 검색 추가 요청");
+  await compareRouteApp("auto");
+  await addCompareModel(compareModels[2]);
+  assert.match(routeText(), /^비교 웹 근거: 필요할 때 검색 · Sonar 공통 검색 1회 후 2개 모델에 동일하게 제공 · 추가 요청$/);
+});
+
+test("R-3 F2: a single-chat deep route shows its call cap in the visible route line", async () => {
+  Object.assign(browser, { mmllm: { discardAttachments: async () => {} } });
+  const thread = syntheticChatThread({ webSearchMode: "deep" });
+  await render(<ConfirmProvider><ChatPanel {...syntheticChatProps} thread={thread} modelId={thread.modelId}
+    models={[{ id: thread.modelId, type: "llm" }]} /></ConfirmProvider>);
+  assert.match(routeText(), /Sonar 공통 검색 후 선택 모델 답변 · 3~4개 검색어 교차 조사 · 총 최대 6회 API 호출/);
+});
+
+test("R-3 F3: project retrieval consent labels keep their layout; the composer consent has its own class", async () => {
+  const style = document.createElement("style");
+  style.textContent = readFileSync(new URL("../src/renderer/src/styles.css", import.meta.url), "utf8");
+  document.head.append(style);
+  try {
+    const now = new Date().toISOString();
+    const project = { id: "synthetic-layout-project", name: "합성 연구", instruction: "", documents: [], threadCount: 0, createdAt: now, updatedAt: now };
+    compareFixture({ listProjects: async () => [project], getProjectRetrieval: async () => ({
+      settings: { mode: "semantic", embeddingModelId: "text-embedding-3-small", queryConsent: false, rerankConsent: false },
+      documents: [], uncertain: 0, running: false }) });
+    await render(<ConfirmProvider><App /></ConfirmProvider>);
+    await click([...document.querySelectorAll("button")].find((button) => button.textContent?.includes("프로젝트") && button.closest(".rail"))!);
+    await wait(10);
+    const labels = [...document.querySelectorAll<HTMLElement>(".retrieval-settings label.compare-consent")];
+    assert.equal(labels.length, 2);
+    for (const label of labels) {
+      assert.notEqual(browser.getComputedStyle(label).display, "grid", "the checkbox stays on the consent sentence's line");
+      assert.equal(label.classList.contains("composer-compare-consent"), false);
+    }
+    const css = style.textContent;
+    assert.doesNotMatch(css, /(^|\n)\.compare-consent\s*\{/, "no unscoped .compare-consent base rule");
+    assert.match(css, /\.composer-compare-consent \{ display: grid;/);
+  } finally { style.remove(); }
+});
+
+test("R-3 F4: a held digit and a continuation already in progress never start a second continuation", async () => {
+  let calls = 0;
+  const { requests, emit } = await openRealComparison({ continueCompare: () => { calls++; return new Promise(() => {}); } });
+  await click(sendButton());
+  await emit({ type: "done", run: { id: "run-f4", prompt: requests[0].prompt, modelIds: compareModels, webSearchMode: "off",
+    createdAt: new Date().toISOString(), attachmentNames: [],
+    results: compareModels.map((modelId) => ({ modelId, status: "completed" as const, text: "합성" })) } });
+  (document.activeElement as HTMLElement | null)?.blur?.();
+  const press = async (repeat: boolean) => act(async () => {
+    document.body.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "2", repeat, bubbles: true, cancelable: true }));
+  });
+  await press(true);
+  assert.equal(calls, 0, "an auto-repeated keydown is ignored");
+  await press(false); await press(false); await press(false);
+  await click([...document.querySelectorAll<HTMLButtonElement>(".compare-continue")][0]);
+  assert.equal(calls, 1, "one continuation while the first is still in flight");
+});
+
+test("R-3 F7: switching or creating a conversation from the palette focuses the new composer", async () => {
+  const other = { id: "palette-focus-other", title: "포커스 합성 대화", modelId: compareModels[0], createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(), webSearchMode: "off", reasoningMode: "auto", instruction: "", advanced: {},
+    attachmentConsent: true, messages: [], messageCount: 0 };
+  let creates = 0;
+  const { thread } = compareFixture({ searchThreads: async () => [{ ...other, snippet: "합성" }],
+    createThread: async () => { creates++; return { ...syntheticChatThread(), id: `palette-focus-new-${creates}`, modelId: compareModels[0] }; } });
+  window.mmllm.loadThread = async (id: string) => id === other.id ? other : thread;
+  await render(<ConfirmProvider><App /></ConfirmProvider>);
+  composerInput().focus();
+  const before = composerInput();
+  await key("k", MOD);
+  await typePalette("포커스");
+  await wait(220);
+  await key("Enter");
+  await wait(20);
+  assert.match(document.querySelector(".chat-panel .panel-header h2")!.textContent!, /포커스 합성 대화/);
+  assert.notEqual(composerInput() === before, true, "the composer was replaced with the thread");
+  assertFocused(composerInput());
+  await key("k", MOD);
+  await typePalette("/새 대화");
+  await key("Enter");
+  await wait(20);
+  assert.equal(creates, 1);
+  assertFocused(composerInput());
 });

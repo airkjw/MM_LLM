@@ -18,6 +18,14 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   return target instanceof Element && Boolean(target.closest(EDITABLE));
 }
 
+/**
+ * The platform's command modifier: Cmd only on macOS (Ctrl+K/Ctrl+N stay the Cocoa text-editing keys there),
+ * Ctrl only elsewhere. Used for shortcuts that act inside text fields.
+ */
+export function platformCommandModifier(event: Pick<KeyboardEvent, "metaKey" | "ctrlKey">, mac: boolean): boolean {
+  return mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+}
+
 /** Cmd/Ctrl+K, Cmd/Ctrl+N and Cmd/Ctrl+Shift+C stay global inside text fields (contract D3.8); other keys do not. */
 export function worksInsideEditable(key: string, shiftKey: boolean): boolean {
   const value = key.toLowerCase();
@@ -29,7 +37,8 @@ export function worksInsideEditable(key: string, shiftKey: boolean): boolean {
  * no dialog, popover or menu is open, so typing "1" in the composer always inserts the character.
  */
 export function digitShortcut(event: KeyboardEvent, root: ParentNode = document): number | null {
-  if (event.defaultPrevented || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return null;
+  // A held key repeats keydown; only the first press acts (no duplicate continuation or template start).
+  if (event.defaultPrevented || event.repeat || event.isComposing || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return null;
   if (!/^[1-9]$/.test(event.key)) return null;
   if (isEditableTarget(event.target) || isEditableTarget(document.activeElement)) return null;
   if (hasBlockingModal(root) || root.querySelector("[data-focus-layer]")) return null;

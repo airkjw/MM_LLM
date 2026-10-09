@@ -156,9 +156,9 @@ expectMutationError("a command palette field without the control boundary", (sou
   "border: 0 solid var(--color-border-control); border-bottom-width: 1px;", "border: 0 solid var(--color-border); border-bottom-width: 1px;"
 ), /Control boundary.*command-palette-input/);
 expectMutationError("a comparison consent checkbox without the control boundary", (source) => source.replace(
-  '.compare-consent input[type="checkbox"] { outline: 1px solid var(--color-border-control);',
-  '.compare-consent input[type="checkbox"] { outline: 1px solid var(--color-border);'
-), /Control boundary.*compare-consent/);
+  '.composer-compare-consent input[type="checkbox"] { outline: 1px solid var(--color-border-control);',
+  '.composer-compare-consent input[type="checkbox"] { outline: 1px solid var(--color-border);'
+), /Control boundary.*composer-compare-consent/);
 for (const pair of ["text-body/bg-subtle", "text-body/bg-hover"]) {
   expectMutationError(`the ${pair} composer token pair`, (source) => source.replace(
     "--color-text-body: #C9CDD2;", "--color-text-body: #5F6670;"), new RegExp(`dark: ${pair} is`));

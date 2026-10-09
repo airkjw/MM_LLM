@@ -77,14 +77,15 @@ for (let index = 1; index <= 6; index++) {
 const AMBER_FACE_BORDER_SELECTORS = [".privacy-modal-actions .privacy-modal-primary", ".deid-check input:checked + .custom-check"];
 // Stage 3 (32 -> 29): the web/reasoning selects (.web-mode, .reasoning-mode) and the model trigger (.model-trigger)
 // became buttons inside the audited .composer-card boundary; their coverage moved to COMPOSER_BUTTON_STATES below.
-// The compare dialog's .compare-controls select became the composer comparison consent checkbox, and the search
+// The compare dialog's .compare-controls select became the composer comparison consent checkbox
+// (.composer-compare-consent; R-3 F3 renamed it from .compare-consent, which project retrieval labels use), and the search
 // dialog's .dialog-search-input became the command palette field (.command-palette-input, underline boundary).
 const CONTROL_BOUNDARIES = [
   ".login-card form input", ".composer-card", ".model-search", ".media-textarea", ".media-controls select", ".meeting-options input",
   ".settings-field input", ".settings-field select", ".settings-field textarea", ".settings-inline select",
   ".advanced-grid input", ".advanced-grid select", ".advanced-section select", ".command-palette-input", ".custom-check",
   ".advanced-section textarea", ".media-controls input", ".speaker-grid input", ".speaker-grid select",
-  ".music-options input", ".music-options textarea", ".compare-consent input[type=\"checkbox\"]", ".bookmark-form input",
+  ".music-options input", ".music-options textarea", ".composer-compare-consent input[type=\"checkbox\"]", ".bookmark-form input",
   ".project-editor .settings-field input", "input[type=\"checkbox\"]", ".reference-button", ".file-drop",
   ".manual-tool-card textarea", ".voice-options select"
 ];

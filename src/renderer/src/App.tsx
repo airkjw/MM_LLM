@@ -14,7 +14,7 @@ import { useConfirm } from "./components/ConfirmDialog";
 import { Notice, useNotice } from "./components/Notice";
 import { Sidebar, type FocusReturnTarget, type MediaKind, type SidebarScreen } from "./components/Sidebar";
 import { ModelPreferences } from "./model-preferences";
-import { appShortcutBlocked, isEditableTarget, worksInsideEditable } from "./shortcut-policy";
+import { appShortcutBlocked, isEditableTarget, platformCommandModifier, worksInsideEditable } from "./shortcut-policy";
 import { useResponsiveSidebarState } from "./sidebar-responsive";
 import { ThemePersistence } from "./theme-persistence";
 import { useDialogFocus } from "./use-focus-layer";
@@ -119,6 +119,9 @@ export default function App() {
   }
   const renameInputRef = useRef<HTMLInputElement>(null);
   const pendingWorkspaceFocusRef = useRef(false);
+  const continueInFlightRef = useRef(false);
+  // Set when the palette switches or creates a conversation: the old composer (its focus target) is replaced.
+  const pendingComposerFocusRef = useRef(false);
   const dialogReturnFocusRef = useRef<FocusReturnTarget | null>(null);
   const creditRefreshRef = useRef<{
     lastAt: number; timer: number | null; inFlight: Promise<void> | null;
@@ -205,6 +208,15 @@ export default function App() {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [loading, session?.authenticated]);
+
+  // After the palette switched or created a conversation, the new composer takes focus (the opener was replaced).
+  useEffect(() => {
+    if (!pendingComposerFocusRef.current || !thread) return;
+    pendingComposerFocusRef.current = false;
+    const frame = window.requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>(".chat-panel .composer-input")?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [thread?.id]);
 
   // The voice rail item opens the existing per-conversation voice disclosure until stage 4 gives it a screen.
   useEffect(() => {
@@ -607,7 +619,9 @@ export default function App() {
   }
 
   async function continueCompare(runId: string, selectedModel: string) {
-    if (compareBusy || compareSynthesisBusy) return;
+    // One continuation at a time: repeated clicks or digit presses must not create duplicate threads.
+    if (compareBusy || compareSynthesisBusy || continueInFlightRef.current) return;
+    continueInFlightRef.current = true;
     const key = `compare:continue:${runId}:${selectedModel}`;
     const gate = actionGatesRef.current.get(key) ?? new LatestRequestGate();
     actionGatesRef.current.set(key, gate);
@@ -617,6 +631,7 @@ export default function App() {
       if (!gate.isLatest(request) || epoch !== uiEpochRef.current) return;
       setToolsOpen(false); setThread(next); setModelId(next.modelId); setScreen("chat"); await refreshThreads();
     } catch (error) { if (gate.isLatest(request) && epoch === uiEpochRef.current) setError(errorText(error)); }
+    finally { continueInFlightRef.current = false; }
   }
 
   async function saveBookmark() {
@@ -891,7 +906,7 @@ export default function App() {
   }
 
   function runPaletteCommand(id: string) {
-    if (id === "new-thread") void newThread();
+    if (id === "new-thread") { pendingComposerFocusRef.current = true; void newThread(); }
     else if (id === "compare") startCompareShortcut();
     else if (id === "theme-system" || id === "theme-light" || id === "theme-dark") {
       void applyThemePreference(id.slice("theme-".length) as AppSettings["theme"]);
@@ -908,7 +923,8 @@ export default function App() {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.isComposing) return;
       const key = event.key.toLowerCase();
       // Only Cmd/Ctrl+K, N and Shift+C stay global inside text fields; everything else is the field's.
-      if (isEditableTarget(event.target) && !worksInsideEditable(key, event.shiftKey)) return;
+      if (isEditableTarget(event.target) &&
+        (!worksInsideEditable(key, event.shiftKey) || !platformCommandModifier(event, MAC))) return;
       if (appShortcutBlocked(document, key)) return;
       if (key === "c" && event.shiftKey) { event.preventDefault(); shortcutActions.current.startCompareShortcut(); }
       else if (key === "n" && !event.shiftKey) { event.preventDefault(); void shortcutActions.current.newThread(); }
@@ -1106,7 +1122,7 @@ export default function App() {
       {backgroundNotice && <div className="offline-banner" role="status">{backgroundNotice}</div>}
       {!toolsOpen && <Notice notice={notice} onClose={clearNotice} floating />}
       <CommandPalette open={paletteOpen} onClose={closePalette} searchThreads={(query) => window.mmllm.searchThreads(query)}
-        onSelectThread={(id) => void selectThread(id)} commands={PALETTE_COMMANDS} onRunCommand={runPaletteCommand} />
+        onSelectThread={(id) => { if (id !== thread?.id) pendingComposerFocusRef.current = true; void selectThread(id); }} commands={PALETTE_COMMANDS} onRunCommand={runPaletteCommand} />
       {screen === "chat" && thread && llmModels.length > 0
         ? <ChatPanel key={thread.id} thread={thread} modelId={modelId}
           voicePanel={<VoicePanel key={`voice-${uiEpochRef.current}-${thread.id}`} models={session.models}
