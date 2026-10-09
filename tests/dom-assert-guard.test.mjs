@@ -45,7 +45,9 @@ test("failing DOM-node comparisons raise a short AssertionError within seconds a
   assert.ok(report.elapsedMs < 5000, `guarded failures took ${report.elapsedMs} ms`);
   assert.ok(report.maxRssKb < 300 * 1024, `child peak RSS ${Math.round(report.maxRssKb / 1024)} MB`);
   const expectedNames = ["focus", "focusHelper", "queryVsNull", "absentHelper", "closestVsNull", "notEqualSame",
-    "sameNodeHelper", "deepList", "windowCompare", "matchOnNode", "nestedObject", "mapOfNodes", "classList", "computedStyle", "nestedArray"];
+    "sameNodeHelper", "deepList", "windowCompare", "matchOnNode", "nestedObject", "mapOfNodes", "classList", "computedStyle", "nestedArray",
+    "holeVsUndefined", "nullProtoVsPlain", "notDeepEqualSameMap", "notDeepEqualSameSet", "notDeepEqualSameArray", "notDeepEqualSameObject",
+    "mapDifferentValue", "setDifferentNode", "classInstanceUnknown", "mapObjectKeyUnknown"];
   assert.deepEqual(Object.keys(report.results), expectedNames);
   for (const [name, result] of Object.entries(report.results)) {
     assert.equal(result.threw, true, `${name} must fail`);
@@ -65,6 +67,10 @@ test("failing DOM-node comparisons raise a short AssertionError within seconds a
   assert.match(report.results.mapOfNodes.message, /\[Map\(1\)\]/);
   assert.match(report.results.classList.message, /\[DOMTokenList\(1\): "primary"\]/);
   assert.match(report.results.computedStyle.message, /actual \[CSSStyleDeclaration/);
+  assert.match(report.results.notDeepEqualSameMap.message, /expected values to differ \(notDeepEqual\)/);
+  assert.match(report.results.classInstanceUnknown.message, /fail-closed/);
+  assert.deepEqual(report.passes, { holesEqual: true, nullProtoEqual: true, mapEqual: true, setEqual: true, notDeepEqualMap: true,
+    notDeepEqualSet: true, notDeepEqualArray: true, notDeepEqualObject: true, notDeepEqualProto: true, notDeepEqualHole: true });
   assert.match(report.results.nestedArray.message, /actual \[\[<button\.primary> "저장"\]\]/);
 });
 
@@ -106,7 +112,11 @@ test("plain-data deepEqual keeps node:assert's message and diff", async () => {
 const GUARD_IMPORT = /^import\s+assert(?:\s*,\s*\{[^}]*\})?\s+from\s+["'](?:\.\/|\.\.\/)dom-assert\.ts["'];?\s*$/m;
 const RAW_ASSERT_IMPORT = /(?:from\s+|require\(\s*|import\s*\(\s*|import\s+|getBuiltinModule\(\s*)["'](?:node:)?assert(?:\/strict)?["']/;
 // node:test's TestContext carries its own node:assert (t.assert.equal, ctx.assert, const { assert } = t).
-const CONTEXT_ASSERT = /(?<!console)\.assert\b|\{[^}]*\bassert\b[^}]*\}\s*=\s*(?!require|await)\w/;
+const CONTEXT_ASSERT = new RegExp([
+  String.raw`(?<!console)\.assert\b`, // t.assert / ctx.assert
+  String.raw`\{[^}]*\bassert\b[^}]*\}\s*=\s*(?!require|await)\w`, // const { assert } = t
+  String.raw`\(\s*\{[^}]*\bassert\b[^}]*\}\s*[,)]` // test("x", async ({ assert }) => ...) / ({ assert: a }, done)
+].join("|"));
 
 /** Returns the reasons a happy-dom test source is not protected from the DOM-node inspect OOM. */
 export function domAssertViolations(source) {
@@ -155,6 +165,11 @@ test("the static rule catches unguarded DOM-node assertion files", () => {
   assert.ok(domAssertViolations('import assert from "./dom-assert.ts";\ntest("x", (t) => { t.assert.equal(document.activeElement, el); });').some((p) => p.includes("t.assert")));
   assert.ok(domAssertViolations('import assert from "./dom-assert.ts";\ntest("x", (ctx) => { ctx.assert.ok(1); });').some((p) => p.includes("t.assert")));
   assert.ok(domAssertViolations('import assert from "./dom-assert.ts";\ntest("x", (t) => { const { assert: a } = t; });').some((p) => p.includes("t.assert")));
+  for (const destructured of ['test("x", async ({ assert }) => { assert.equal(el, null); });', 'test("x", ({ assert: a }) => a.ok(1));',
+    'test("x", function ({ mock, assert }, done) { done(); });', 'test("x", ({assert}) => {});']) {
+    assert.ok(domAssertViolations(`import assert from "./dom-assert.ts";\n${destructured}`).some((p) => p.includes("t.assert")), destructured);
+  }
+  assert.deepEqual(domAssertViolations('import assert from "./dom-assert.ts";\nconst { mock } = t; foo({ other }, 1);'), []);
   assert.ok(domAssertViolations('import assert from "./dom-assert.ts";\nconst raw = process.getBuiltinModule("node:assert");').includes("imports node:assert directly"));
   assert.ok(domAssertViolations('import assert from "./dom-assert.ts";\nconst raw = process.getBuiltinModule(\'assert/strict\');').includes("imports node:assert directly"));
   assert.deepEqual(domAssertViolations('import assert from "../dom-assert.ts";\nconsole.assert(true);'), []);

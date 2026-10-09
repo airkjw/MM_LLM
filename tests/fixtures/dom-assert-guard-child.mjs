@@ -12,6 +12,7 @@ const button = document.querySelector("button");
 const input = document.querySelector("input");
 button.focus();
 
+class Holder { constructor(node) { this.node = node; } }
 const cases = {
   focus: () => assert.equal(document.activeElement, input, "focus moves to the name field"),
   focusHelper: () => assertFocused(input, "focus helper"),
@@ -28,7 +29,18 @@ const cases = {
   mapOfNodes: () => assert.deepEqual(new Map([[1, button]]), new Map()),
   classList: () => assert.equal(button.classList, null),
   computedStyle: () => assert.equal(browser.getComputedStyle(button), null),
-  nestedArray: () => assert.deepEqual([[button]], [[null]])
+  nestedArray: () => assert.deepEqual([[button]], [[null]]),
+  // The guarded structural comparison must never pass where node:assert would fail.
+  holeVsUndefined: () => assert.deepEqual([, button], [undefined, button]),
+  nullProtoVsPlain: () => assert.deepEqual(Object.assign(Object.create(null), { a: button }), { a: button }),
+  notDeepEqualSameMap: () => assert.notDeepEqual(new Map([[1, button]]), new Map([[1, button]])),
+  notDeepEqualSameSet: () => assert.notDeepEqual(new Set([button]), new Set([button])),
+  notDeepEqualSameArray: () => assert.notDeepEqual([button], [button]),
+  notDeepEqualSameObject: () => assert.notDeepEqual({ a: button }, { a: button }),
+  mapDifferentValue: () => assert.deepEqual(new Map([[1, button]]), new Map([[1, input]])),
+  setDifferentNode: () => assert.deepEqual(new Set([button]), new Set([input])),
+  classInstanceUnknown: () => assert.notDeepEqual(new Holder(button), new Holder(input)),
+  mapObjectKeyUnknown: () => assert.deepEqual(new Map([[{ k: 1 }, button]]), new Map([[{ k: 1 }, button]]))
 };
 const results = {};
 const started = Date.now();
@@ -48,4 +60,18 @@ assert.equal(document.querySelector(".missing"), null);
 assert.deepEqual([...document.querySelectorAll("main > *")], [button, input]);
 assertFocused(button);
 assertAbsent(document, ".missing");
-console.log(JSON.stringify({ results, elapsedMs: Date.now() - started, maxRssKb: process.resourceUsage().maxRSS }));
+const attempt = (run) => { try { run(); return true; } catch { return false; } };
+const nullProto = () => Object.assign(Object.create(null), { a: button });
+const passes = {
+  holesEqual: attempt(() => assert.deepEqual([, button], [, button])),
+  nullProtoEqual: attempt(() => assert.deepEqual(nullProto(), nullProto())),
+  mapEqual: attempt(() => assert.deepEqual(new Map([[1, button]]), new Map([[1, button]]))),
+  setEqual: attempt(() => assert.deepEqual(new Set([button]), new Set([button]))),
+  notDeepEqualMap: attempt(() => assert.notDeepEqual(new Map([[1, button]]), new Map([[1, input]]))),
+  notDeepEqualSet: attempt(() => assert.notDeepEqual(new Set([button]), new Set([input]))),
+  notDeepEqualArray: attempt(() => assert.notDeepEqual([button], [input])),
+  notDeepEqualObject: attempt(() => assert.notDeepEqual({ a: button }, { a: input })),
+  notDeepEqualProto: attempt(() => assert.notDeepEqual(nullProto(), { a: button })),
+  notDeepEqualHole: attempt(() => assert.notDeepEqual([, button], [undefined, button]))
+};
+console.log(JSON.stringify({ results, passes, elapsedMs: Date.now() - started, maxRssKb: process.resourceUsage().maxRSS }));

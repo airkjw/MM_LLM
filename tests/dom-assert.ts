@@ -112,27 +112,73 @@ export function describeValue(value: Operand, depth = 0): string {
   return `[${name}]`;
 }
 
-/** Structural equality where DOM objects and any non-plain object compare by identity. */
-function sameShape(actual: Operand, expected: Operand, deep: boolean, depth = 0): boolean {
-  if (Object.is(actual, expected)) return true;
-  if (!deep || depth > 32 || typeof actual !== "object" || typeof expected !== "object" || actual === null || expected === null) return false;
-  if (isDomObject(actual) || isDomObject(expected)) return false;
-  if (actual instanceof Date && expected instanceof Date) return actual.getTime() === expected.getTime();
-  if (actual instanceof RegExp && expected instanceof RegExp) return String(actual) === String(expected);
-  if (Array.isArray(actual) && Array.isArray(expected)) {
-    return actual.length === expected.length && actual.every((item, index) => sameShape(item, expected[index], deep, depth + 1));
-  }
-  if (!Array.isArray(actual) && !Array.isArray(expected) && isPlainObject(actual) && isPlainObject(expected)) {
-    const left = Object.entries(actual);
-    return left.length === Object.keys(expected).length
-      && left.every(([key, item]) => Object.hasOwn(expected, key) && sameShape(item, (expected as Record<string, unknown>)[key], deep, depth + 1));
-  }
-  return false;
+type Verdict = "same" | "different" | "unknown";
+
+/** A Map key / Set item without an identical counterpart: DOM objects differ by identity, other objects might still deep-match. */
+function unmatched(item: Operand): Verdict {
+  return typeof item === "object" && item !== null && !isDomObject(item) ? "unknown" : "different";
 }
 
-function failure(operator: string, actual: Operand, expected: Operand, message?: string | Error, negated = false): never {
+function ownKeys(value: object) {
+  return [...Object.keys(value), ...Object.getOwnPropertySymbols(value).filter((key) => Object.prototype.propertyIsEnumerable.call(value, key))];
+}
+
+/**
+ * Three-valued strict structural comparison for operands that must not reach node:assert. DOM objects and every
+ * object whose structure is not modelled here compare by identity; when two distinct such objects meet the verdict
+ * is "unknown", which fails closed for positive and negated assertions alike (never pass where node:assert would fail).
+ */
+function compare(actual: Operand, expected: Operand, deep: boolean, depth = 0): Verdict {
+  if (Object.is(actual, expected)) return "same";
+  if (typeof actual !== "object" || typeof expected !== "object" || actual === null || expected === null) return "different";
+  if (isDomObject(actual) || isDomObject(expected)) return "different";
+  if (!deep) return "different";
+  if (depth > 32) return "unknown";
+  if (Object.getPrototypeOf(actual) !== Object.getPrototypeOf(expected)) return "different";
+  const all = (pairs: Iterable<[Operand, Operand]>): Verdict => {
+    let unknown = false;
+    for (const [left, right] of pairs) {
+      const verdict = compare(left, right, deep, depth + 1);
+      if (verdict === "different") return "different";
+      if (verdict === "unknown") unknown = true;
+    }
+    return unknown ? "unknown" : "same";
+  };
+  if (actual instanceof Date && expected instanceof Date) return actual.getTime() === expected.getTime() ? "same" : "different";
+  if (actual instanceof RegExp && expected instanceof RegExp) return String(actual) === String(expected) ? "same" : "different";
+  if (Array.isArray(actual) && Array.isArray(expected)) {
+    const left = ownKeys(actual); const right = ownKeys(expected);
+    if (actual.length !== expected.length || left.length !== right.length) return "different";
+    // Own keys (not indices) so array holes differ from undefined, like node's strict comparison.
+    if (left.some((key) => !Object.hasOwn(expected, key))) return "different";
+    return all(left.map((key) => [(actual as never)[key], (expected as never)[key]] as [Operand, Operand]));
+  }
+  if (actual instanceof Map && expected instanceof Map) {
+    if (actual.size !== expected.size) return "different";
+    const pairs: [Operand, Operand][] = [];
+    for (const [key, item] of actual) {
+      if (!expected.has(key)) return unmatched(key); // object keys: node would deep-match them
+      pairs.push([item, expected.get(key)]);
+    }
+    return all(pairs);
+  }
+  if (actual instanceof Set && expected instanceof Set) {
+    if (actual.size !== expected.size) return "different";
+    for (const item of actual) if (!expected.has(item)) return unmatched(item);
+    return "same";
+  }
+  if (isPlainObject(actual) && isPlainObject(expected)) {
+    const left = ownKeys(actual); const right = ownKeys(expected);
+    if (left.length !== right.length || left.some((key) => !Object.hasOwn(expected, key))) return "different";
+    return all(left.map((key) => [(actual as never)[key], (expected as never)[key]] as [Operand, Operand]));
+  }
+  return "unknown";
+}
+
+function failure(operator: string, actual: Operand, expected: Operand, message?: string | Error, negated = false, unknown = false): never {
   if (message instanceof Error) throw message;
-  const verb = negated ? "expected values to differ" : "values differ";
+  const verb = unknown ? "cannot compare these values structurally without inspecting them (fail-closed; compare their properties)"
+    : negated ? "expected values to differ" : "values differ";
   const detail = `${verb} (${operator}): actual ${describeValue(actual)}, expected ${negated ? "not " : ""}${describeValue(expected)}`;
   // No actual/expected properties: those would carry the DOM objects into the test runner's error serialization.
   // The operator is renamed because node appends its own value diff to messages of the strictEqual family.
@@ -144,8 +190,9 @@ type Comparison = (actual: Operand, expected: Operand, message?: string | Error)
 function guardComparison(operator: string, original: Comparison, deep: boolean, negated: boolean): Comparison {
   return (actual, expected, message) => {
     if (isAssertSafe(actual) && isAssertSafe(expected)) return original(actual, expected, message);
-    if (sameShape(actual, expected, deep) !== negated) return;
-    return failure(operator, actual, expected, message, negated);
+    const verdict = compare(actual, expected, deep);
+    if (verdict === (negated ? "different" : "same")) return;
+    return failure(operator, actual, expected, message, negated, verdict === "unknown");
   };
 }
 
