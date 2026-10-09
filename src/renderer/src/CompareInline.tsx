@@ -1,5 +1,5 @@
 import { Columns3, Paperclip, Sparkles, Square } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { serializeCompareAnalysis } from "../../shared/compare-export";
 import type { CompareRun } from "../../shared/contracts";
 import { webSearchStatusLabel } from "../../shared/search-evidence";
@@ -52,7 +52,8 @@ export function CompareInline({ run, busy, synthesis, continueDisabled, onContin
     {run && <>
       <div className="compare-inline-divider"><Columns3 size={14} aria-hidden="true" />
         <span>{run.results.length}개 모델 비교{run.webSearch ? ` · ${webSearchStatusLabel(run.webSearch)}` : ""}</span></div>
-      <div className="compare-inline-columns" aria-live="polite">{run.results.map((result, index) => {
+      <div className="compare-inline-columns" aria-live="polite"
+        style={{ "--compare-columns": Math.max(1, run.results.length) } as CSSProperties}>{run.results.map((result, index) => {
         const canContinue = Boolean(result.text) && result.status !== "running";
         return <article className="compare-inline-column" key={result.modelId}
           aria-label={`답변 ${String.fromCharCode(65 + index)} · ${modelLabel(result.modelId)}`}>

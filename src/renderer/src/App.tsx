@@ -184,13 +184,11 @@ export default function App() {
     if (tab === "chatbot") await loadBookmarks();
   }, [rememberDialogReturn, toolsOpen, loadBookmarks]);
   // Leaving the research view inside the tools dialog shows the chatbot tools, which need the bookmarks.
-  const toggleResearch = useCallback((open: boolean | ((open: boolean) => boolean)) => {
-    setResearchOpen((current) => {
-      const next = typeof open === "function" ? open(current) : open;
-      if (current && !next) { setToolsTab("chatbot"); void loadBookmarks(); }
-      return next;
-    });
-  }, [loadBookmarks]);
+  const toggleResearch = (open: boolean | ((open: boolean) => boolean)) => {
+    const next = typeof open === "function" ? open(researchOpen) : open;
+    if (researchOpen && !next) { setToolsTab("chatbot"); void loadBookmarks(); }
+    setResearchOpen(next);
+  };
 
   useEffect(() => {
     if (!renameDialog) return;
@@ -544,7 +542,7 @@ export default function App() {
 
   /** Starts an inline comparison from the composer; false leaves the draft and attachments with the composer. */
   function startCompare(request: CompareRequest, originId: string): boolean {
-    if (compareBusy || compareSynthesisBusy) return false;
+    if (compareBusy || compareSynthesisBusy) { setError("진행 중인 비교나 종합분석이 끝난 뒤 다시 시도해 주세요."); return false; }
     if (request.modelIds.length < 2 || request.modelIds.length > 3 || new Set(request.modelIds).size !== request.modelIds.length) {
       setError("서로 다른 모델을 2~3개 선택해 주세요."); return false;
     }

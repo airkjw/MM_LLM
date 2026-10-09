@@ -617,6 +617,9 @@ export function ChatPanel({
     }
     setTokenPickerRequest({ index: 1, id: compareShortcut });
   }, [compareShortcut]);
+  // The token's picker opens in its own effect (children run first); then the request is spent, so a later
+  // replacement or re-added token never reopens it.
+  useEffect(() => { if (tokenPickerRequest) setTokenPickerRequest(null); }, [tokenPickerRequest]);
   // Start cards answer 1–4 only while the empty start screen is visible (contract D3.1).
   const templateKeysRef = useRef({ enabled: false, choose: (_item: typeof templates[number]) => {} });
   useEffect(() => {
@@ -856,7 +859,7 @@ export function ChatPanel({
               {!chatbotTarget && <div className="composer-models" role="group" aria-label="대화 모델">
                 <ModelPicker models={displayModels} selected={modelId} onSelect={choosePrimaryModel} disabled={modelsLocked}
                   compare={compare ? { ids: composerModels, onAdd: addCompareModel } : undefined} restoreFallback={pickerFallback} />
-                {composerModels.slice(1).map((id, offset) => <span className="composer-compare-token" key={id}>
+                {composerModels.slice(1).map((id, offset) => <span className="composer-compare-token" key={`slot-${offset}`}>
                   <ModelPicker models={displayModels} selected={id} variant="compare" disabled={modelsLocked}
                     onSelect={(next) => replaceCompareModel(offset + 1, next)} unavailable={unavailableForCompare}
                     compare={{ ids: composerModels, onAdd: addCompareModel }} restoreFallback={pickerFallback}
