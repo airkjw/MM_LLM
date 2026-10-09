@@ -26,12 +26,11 @@ import { SettingsScreen, type SettingsCategory } from "./SettingsScreen";
 import { CompareScreen } from "./CompareInline";
 import { VoicePanel } from './VoicePanel';
 import { Login } from "./Login";
-import { MediaPanel, type MediaJobRequest } from "./MediaPanel";
+import { MEDIA_BUSY_NOTICE, MediaPanel, type MediaJobRequest } from "./MediaPanel";
 import { ProjectsScreen } from "./ProjectsScreen";
 import { errorText, readDroppedFiles, templates } from "./ui-shared";
 /** Every rail destination is a rendered screen (stage 4). */
 type Screen = SidebarScreen;
-const MEDIA_BUSY_NOTICE = "진행 중인 미디어 작업이 끝난 뒤 다시 선택해 주세요.";
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
 const MAC = navigator.platform.includes("Mac");
 const SHORTCUT_LABEL = MAC ? "⌘K" : "Ctrl K";
@@ -74,6 +73,8 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = useState<AppSettings | null>(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const settingsSavingRef = useRef(false);
+  /** A default instruction left behind a running save; App (not the settings screen) owns it so leaving the screen cannot lose it. */
+  const [pendingInstruction, setPendingInstruction] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState("");
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("general");
   // Once visited, the media screen stays mounted (hidden) so a paid generation survives navigating away.
@@ -367,7 +368,7 @@ export default function App() {
     setCompareSynthesisBusy(false); setCompareRun(null); setCompareOriginId(null); setViewedCompareRun(null); setCompareShortcut(0);
     setBookmarks([]); setThread(null); setModelId(""); setScreen("chat"); setMediaKind("image"); setOpenedMediaJob(null);
     setMediaVisited(false); setChatbotSelectedId(null); setChatbotStatus({}); setChatbotUsage(null);
-    setAppSettings(null); setSettingsDraft(null); setSettingsSaving(false); settingsSavingRef.current = false;
+    setAppSettings(null); setSettingsDraft(null); setSettingsSaving(false); settingsSavingRef.current = false; setPendingInstruction(null);
     setSettingsError(""); setSettingsCategory("general"); pendingComposerFocusRef.current = null;
     setPaletteOpen(false); setRenameDialog(null);
     setKeyReplaceOpen(false); setReplacementKey(""); setKeyReplacing(false);
@@ -533,7 +534,11 @@ export default function App() {
         }
         await window.mmllm.addProjectDocument(projectId, attachment.id, true);
         pending = pending.slice(1);
-        if (epoch !== uiEpochRef.current) break;
+        if (epoch !== uiEpochRef.current) {
+          // The session ended mid-loop: files still waiting for confirmation must not stay behind in main.
+          if (pending.length) await window.mmllm.discardAttachments(pending.map((item) => item.id));
+          return;
+        }
       }
       if (epoch !== uiEpochRef.current) return;
       await refreshProjects();
@@ -915,6 +920,20 @@ export default function App() {
     }
   }
 
+  /** Settings screen entry: a default instruction refused because a save is running is held and applied after it. */
+  async function changeSettings(patch: Partial<AppSettings>): Promise<boolean | null> {
+    const result = await applySettings(patch);
+    if (result === null && typeof patch.defaultInstruction === "string") setPendingInstruction(patch.defaultInstruction);
+    return result;
+  }
+  useEffect(() => {
+    if (pendingInstruction === null || settingsSaving || !appSettings) return;
+    const value = pendingInstruction;
+    setPendingInstruction(null);
+    if (value === appSettings.defaultInstruction) return;
+    void applySettings({ defaultInstruction: value }).then((result) => { if (result === null) setPendingInstruction(value); });
+  }, [pendingInstruction, settingsSaving, appSettings]);
+
   function openRenameConversation(item: ThreadSummary, returnFocus?: FocusReturnTarget) {
     rememberDialogReturn(returnFocus);
     setPaletteOpen(false); setKeyReplaceOpen(false); setReplacementKey("");
@@ -1141,7 +1160,7 @@ export default function App() {
         onContinue={(runId, selected) => void continueCompare(runId, selected)} onError={setError}
         onStartNew={startCompareShortcut} />}
       {screen === "research" && <ResearchScreen onEvidence={appendEvidence} headerCenter={headerCenter} />}
-      {screen === "projects" && <ProjectsScreen projects={projects} selectedProjectId={selectedProjectId}
+      {screen === "projects" && <ProjectsScreen headerSearch={headerCenter} projects={projects} selectedProjectId={selectedProjectId}
         onSelectProject={setSelectedProjectId} threads={threads} currentThread={thread} models={session.models} busy={projectBusy}
         onSaveProject={saveProject} onDeleteProject={removeProject} onAddDocument={addDocumentToProject}
         onDropDocuments={addDroppedDocumentsToProject} onRemoveDocument={removeProjectDocument}
@@ -1153,7 +1172,7 @@ export default function App() {
         onApply={(text) => { if (thread) setEvidenceAppends((current) => [...current, { id: crypto.randomUUID(), threadId: thread.id, text }]); }}
         onSaved={applyThreadUpdate} onUsageChanged={handleUsageChanged} headerSearch={headerCenter} />}
       {screen === "settings" && settingsDraft && <SettingsScreen category={settingsCategory} onCategoryChange={setSettingsCategory}
-        settings={settingsDraft} saving={settingsSaving} error={settingsError} onChange={(patch) => applySettings(patch)}
+        settings={settingsDraft} saving={settingsSaving} error={settingsError} onChange={changeSettings} pendingInstruction={pendingInstruction}
         updateState={updateState} credits={credits} modelId={modelId}
         onUpdateAction={() => void (updateState?.status === "ready"
           ? window.mmllm.installUpdate()

@@ -363,6 +363,8 @@ test('D4.6 voice screen without a conversation shows the empty state and offers 
 test('D4.6 voice screen header names the connected conversation and hosts the header search',async()=>{
  const f=fixture();await screenPanel(f,{headerSearch:<button type="button" className="header-search">검색</button>});
  assert.match(document.querySelector('.voice-header h2')!.textContent!,/외래 대기시간 개선안/);assert.ok(document.querySelector('.voice-header .header-search'));
+ assert.equal(document.querySelector('.voice-header h2')!.textContent,'외래 대기시간 개선안에 연결된 음성 세션','title and note read as one phrase in one heading');
+ assert.equal(document.querySelectorAll('.voice-header h2').length,1);
 });
 test('D4.6 voice screen purpose toggle switches to Soniox dictation, resets consent and exposes pressed state',async()=>{
  const f=fixture();await screenPanel(f);const modes=()=>[...document.querySelectorAll<HTMLButtonElement>('.voice-mode button')];

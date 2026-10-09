@@ -126,7 +126,7 @@ export function VoicePanel({models,threadId,canApply,onApply,onSaved,onUsageChan
                 <Icon size={15} aria-hidden="true"/>{label}</button>)}
           </div></div>
         {mode==='conversation'?<div className="voice-field"><label className="voice-field-label" htmlFor="voice-model-select">실시간 모델</label>
-          <div className="voice-model"><select id="voice-model-select" aria-label="실시간 음성 모델" value={model} disabled={busy||saving} onChange={e=>{if(pendingSave.current||owner.current||starting.current)return;setModel(e.target.value);setConsent(false);}}>
+          <div className="voice-model"><select id="voice-model-select" className={available.length?undefined:'voice-model-empty'} aria-label="실시간 음성 모델" value={model} disabled={busy||saving} onChange={e=>{if(pendingSave.current||owner.current||starting.current)return;setModel(e.target.value);setConsent(false);}}>
             {!available.length&&<option value="">사용 가능한 모델 없음</option>}{available.map(m=><option key={m.id} value={m.id}>{m.id}</option>)}</select>
             {busy&&<Lock className="voice-model-lock" size={14} aria-hidden="true"/>}</div>
           {busy&&<small>세션 중에는 바꿀 수 없습니다</small>}</div>
@@ -139,7 +139,7 @@ export function VoicePanel({models,threadId,canApply,onApply,onSaved,onUsageChan
     </aside>
     <div className="voice-main">
       <div className="panel-header voice-header"><div className="panel-heading"><span className="panel-section">음성</span>
-        <h2>{threadTitle||'음성'}</h2>{threadId&&threadTitle&&<span className="voice-header-note">에 연결된 음성 세션</span>}</div>{headerSearch}</div>
+        <h2>{threadTitle||'음성'}{threadId&&threadTitle&&<span className="voice-header-note">에 연결된 음성 세션</span>}</h2></div>{headerSearch}</div>
       {!threadId?<div className="voice-empty"><AudioLines size={28} aria-hidden="true"/><h3>대화를 먼저 선택하세요</h3>
         <p>음성은 선택한 대화에 연결됩니다. 대화를 고른 뒤 이 화면으로 돌아와 주세요.</p></div>
       :<div className="voice-stage">
@@ -171,7 +171,7 @@ export function VoicePanel({models,threadId,canApply,onApply,onSaved,onUsageChan
     <div className="voice-content">
       <div className="voice-options"><label>용도<select aria-label="음성 용도" value={mode} disabled={busy||saving} onChange={e=>{if(pendingSave.current||owner.current||starting.current)return;setMode(e.target.value as typeof mode);setConsent(false);setFinal('');finalRef.current='';setProvisional('');}}>
         <option value="conversation">음성 대화</option><option value="dictation">받아쓰기 · Soniox</option></select></label>
-        {mode==='conversation'?<label>실시간 모델<select aria-label="실시간 음성 모델" value={model} disabled={busy||saving} onChange={e=>{if(pendingSave.current||owner.current||starting.current)return;setModel(e.target.value);setConsent(false);}}>
+        {mode==='conversation'?<label>실시간 모델<select className={available.length?undefined:'voice-model-empty'} aria-label="실시간 음성 모델" value={model} disabled={busy||saving} onChange={e=>{if(pendingSave.current||owner.current||starting.current)return;setModel(e.target.value);setConsent(false);}}>
           {!available.length&&<option value="">사용 가능한 모델 없음</option>}{available.map(m=><option key={m.id} value={m.id}>{m.id}</option>)}</select></label>:<p>Soniox stt-rt-v5 · 계정 권한은 시작 시 Gateway에서 확인합니다.</p>}</div>
       <p className="voice-notice">{NOTICE_BILLING}</p>
       <p className="voice-notice">{NOTICE_PRIVACY}</p>

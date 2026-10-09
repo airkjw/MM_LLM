@@ -34,6 +34,18 @@ test("validatedSettingsUpdate keeps explicit fields only and type-checks the new
   assert.equal(validatedSettingsUpdate({ theme: "dark", fontSize: "large" }).defaultInstruction, "");
 });
 
+test("validatedSettingsUpdate treats an explicit undefined optional field as absent but still rejects wrong types", () => {
+  const cleared = validatedSettingsUpdate({ ...base, density: undefined, reduceMotion: undefined, shortcutHints: undefined });
+  assert.deepEqual(cleared, base);
+  assert.deepEqual(Object.keys(cleared).sort(), ["defaultInstruction", "fontSize", "theme"], "no undefined key is returned");
+  assert.deepEqual(validatedSettingsUpdate({ ...base, density: undefined, reduceMotion: false }), { ...base, reduceMotion: false });
+  for (const patch of [{ density: null }, { reduceMotion: null }, { shortcutHints: null }, { density: 0 }, { reduceMotion: "false" }]) {
+    assert.throws(() => validatedSettingsUpdate({ ...base, density: undefined, ...patch }), /^Error: 화면 설정이 올바르지 않습니다\.$/);
+  }
+  assert.throws(() => validatedSettingsUpdate({ ...base, density: undefined, injected: undefined }), /^Error: 지원하지 않는 앱 설정입니다\.$/,
+    "an unknown key is rejected even when its value is undefined");
+});
+
 test("validatedSettingsUpdate rejects unknown keys, non-objects and wrong types with the existing wording", () => {
   for (const raw of [null, "settings", [], 3]) assert.throws(() => validatedSettingsUpdate(raw), /^Error: 설정이 올바르지 않습니다\.$/);
   assert.throws(() => validatedSettingsUpdate({ ...base, injected: true }), /^Error: 지원하지 않는 앱 설정입니다\.$/);

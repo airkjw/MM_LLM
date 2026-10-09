@@ -206,6 +206,30 @@ test("the footer version and status come from the update state, never a hard-cod
   assert.equal(document.querySelector(".settings-footer")?.textContent?.replace(/\s+/g, " ").trim(), "MM_LLM v0.7.3 · 업데이트 준비됨");
 });
 
+test("every update status shows its footer label and a 업데이트 row on 일반, with the version taken from the update state", async () => {
+  const cases: Array<[UpdateState, string, string]> = [
+    [{ status: "disabled", currentVersion: "9.8.7" }, "자동 업데이트 꺼짐", "이 실행 환경에서는 자동 업데이트를 사용하지 않습니다."],
+    [{ status: "idle", currentVersion: "9.8.7" }, "업데이트 확인 전", "아직 업데이트를 확인하지 않았습니다."],
+    [{ status: "checking", currentVersion: "9.8.7" }, "확인 중", "새 버전을 확인하는 중입니다."],
+    [{ status: "downloading", currentVersion: "9.8.7", availableVersion: "9.9.0", progress: 40 }, "다운로드 40%", "9.9.0 버전을 내려받는 중입니다."],
+    [{ status: "ready", currentVersion: "9.8.7", availableVersion: "9.9.0" }, "업데이트 준비됨", "9.9.0 버전을 설치할 수 있습니다."],
+    [{ status: "latest", currentVersion: "9.8.7" }, "최신", "현재 최신 버전입니다."],
+    [{ status: "error", currentVersion: "9.8.7", message: "합성 오류" }, "확인 실패", "업데이트 확인에 실패했습니다. 다시 시도해 주세요."]
+  ];
+  for (const [update, label, description] of cases) {
+    await renderApp({ update });
+    await openSettings();
+    assert.equal(document.querySelector(".settings-footer")?.textContent?.replace(/\s+/g, " ").trim(), `MM_LLM v9.8.7 · ${label}`, update.status);
+    const row = [...document.querySelectorAll(".settings-row")].find((item) => item.querySelector("strong")?.textContent === "업데이트");
+    assert.ok(row, `${update.status}: the update row is visible`);
+    assert.equal(row!.querySelector("small")?.textContent, description, update.status);
+    const busyStatus = update.status === "checking" || update.status === "downloading" || update.status === "disabled";
+    assert.equal(row!.querySelector("button")!.disabled, busyStatus, `${update.status}: the action is ${busyStatus ? "off" : "available"}`);
+    assert.equal(document.querySelectorAll('[data-testid="update-status-live"]').length, 1, "still one live region in the app");
+    await act(async () => root!.unmount()); root = null; host?.remove(); host = null; document.body.replaceChildren();
+  }
+});
+
 test("display mode is a radiogroup with a single tab stop; arrow keys move and save immediately", async () => {
   const calls = await renderApp();
   await openSettings("화면");
@@ -309,6 +333,89 @@ test("the response default instruction saves when the field is left, without a s
   assert.equal(calls.settings[0].defaultInstruction, "합성 새 지침");
   await blur(field);
   assert.equal(calls.settings.length, 1, "leaving an unchanged field does not save again");
+});
+
+test("a default-instruction blur refused during another save waits, shows it is pending, and saves after the in-flight save", async () => {
+  const releases: Array<() => void> = [];
+  const calls = await renderApp({ updateSettings: (value) => new Promise((resolve) => { releases.push(() => resolve(value)); }) });
+  await openSettings("화면");
+  await click(radios("밀도")[1]);
+  assert.equal(calls.settings.length, 1, "the density save is in flight");
+  await click(category("응답 기본값"));
+  const field = document.querySelector<HTMLTextAreaElement>(".settings-screen .settings-field textarea")!;
+  field.focus();
+  await typeInto(field, "대기 중에 입력한 합성 지침");
+  await blur(field);
+  assert.equal(calls.settings.length, 1, "refused while the first save runs");
+  assert.equal(field.value, "대기 중에 입력한 합성 지침", "the typed text is kept");
+  const pending = document.querySelector<HTMLElement>(".settings-field-pending")!;
+  assert.match(pending.textContent ?? "", /저장 대기 중/, "an inline pending state is shown");
+  assert.equal(pending.getAttribute("role"), "status");
+  assert.equal(pending.closest("label"), null, "the status is outside the field label, so the textarea name does not grow");
+  assert.doesNotMatch(document.querySelector(".settings-screen .settings-field")!.textContent ?? "", /저장 대기 중/);
+  await act(async () => releases[0]());
+  await settle();
+  assert.equal(calls.settings.length, 2, "the instruction is saved right after the in-flight save");
+  assert.equal(calls.settings[1].defaultInstruction, "대기 중에 입력한 합성 지침");
+  assert.equal(calls.settings[1].density, "compact", "the finished save is kept");
+  await act(async () => releases[1]());
+  await settle();
+  assert.equal(document.querySelector(".settings-field-pending")?.textContent, "", "the pending text clears once saved; the status element stays");
+  assert.equal(document.querySelector<HTMLTextAreaElement>(".settings-screen .settings-field textarea")!.value, "대기 중에 입력한 합성 지침");
+});
+
+test("the pending-save status is a live region that already exists before it has text (announced once)", async () => {
+  await renderApp();
+  await openSettings("응답 기본값");
+  const regions = document.querySelectorAll(".settings-screen .settings-field-pending");
+  assert.equal(regions.length, 1);
+  assert.equal(regions[0].getAttribute("role"), "status");
+  assert.equal(regions[0].textContent, "", "empty until a save is pending");
+});
+
+test("a default-instruction value waiting behind a save survives leaving the settings screen and is saved afterwards", async () => {
+  const releases: Array<() => void> = [];
+  const calls = await renderApp({ updateSettings: (value) => new Promise((resolve) => { releases.push(() => resolve(value)); }) });
+  await openSettings("화면");
+  await click(radios("밀도")[1]);
+  assert.equal(calls.settings.length, 1, "the density save is in flight");
+  await click(category("응답 기본값"));
+  const field = document.querySelector<HTMLTextAreaElement>(".settings-screen .settings-field textarea")!;
+  field.focus();
+  await typeInto(field, "화면을 떠나도 남는 합성 지침");
+  await blur(field);
+  assert.equal(calls.settings.length, 1, "refused while the first save runs");
+  await click(railItem("대화"));
+  assert.equal(document.querySelector(".settings-screen"), null, "the settings screen is gone");
+  await act(async () => releases[0]());
+  await settle();
+  assert.equal(calls.settings.length, 2, "App applies the held instruction after the in-flight save");
+  assert.equal(calls.settings[1].defaultInstruction, "화면을 떠나도 남는 합성 지침");
+  assert.equal(calls.settings[1].density, "compact", "the finished save is kept");
+  await act(async () => releases[1]());
+  await settle();
+  await openSettings("응답 기본값");
+  assert.equal(document.querySelector<HTMLTextAreaElement>(".settings-screen .settings-field textarea")!.value, "화면을 떠나도 남는 합성 지침");
+  assert.equal(calls.settings.length, 2, "nothing is saved twice");
+});
+
+test("returning to the settings screen while an instruction waits shows the waiting value and the pending status", async () => {
+  const releases: Array<() => void> = [];
+  const calls = await renderApp({ updateSettings: (value) => new Promise((resolve) => { releases.push(() => resolve(value)); }) });
+  await openSettings("화면");
+  await click(radios("밀도")[1]);
+  await click(category("응답 기본값"));
+  const field = document.querySelector<HTMLTextAreaElement>(".settings-screen .settings-field textarea")!;
+  field.focus();
+  await typeInto(field, "돌아와서 확인할 합성 지침");
+  await blur(field);
+  await click(railItem("대화"));
+  await openSettings("응답 기본값");
+  assert.equal(document.querySelector<HTMLTextAreaElement>(".settings-screen .settings-field textarea")!.value, "돌아와서 확인할 합성 지침");
+  assert.match(document.querySelector(".settings-field-pending")?.textContent ?? "", /저장 대기 중/);
+  await act(async () => releases[0]());
+  await settle();
+  assert.equal(calls.settings.at(-1)?.defaultInstruction, "돌아와서 확인할 합성 지침");
 });
 
 test("general: app info, update check/install and model refresh live on the settings screen", async () => {

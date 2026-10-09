@@ -1,5 +1,5 @@
 import { Check, Clock, FileText, Lock, MessageSquare, Paperclip, Plus, SquarePen, Trash2, Upload, X } from "lucide-react";
-import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { GatewayModel, ProjectDocument, ProjectSummary, ThreadSummary } from "../../shared/contracts";
 import type { RetrievalStatus } from "../../shared/document-retrieval";
 import { ProjectRetrievalSettings } from "./ProjectRetrievalSettings";
@@ -8,6 +8,8 @@ import { ProjectRetrievalSettings } from "./ProjectRetrievalSettings";
 export type ProjectMediaItem = { id: string; kind: "image" | "video" | "stt"; label: string; status: string };
 type Result = void | Promise<void>;
 export type ProjectsScreenProps = {
+  /** Header search entry (the shell's Cmd/Ctrl+K button) shown in the standard 52px body header. */
+  headerSearch?: ReactNode;
   projects: ProjectSummary[];
   /** `null` shows the new-project form. */
   selectedProjectId: string | null;
@@ -94,9 +96,10 @@ export function ProjectsScreen(props: ProjectsScreenProps) {
   </section>;
 }
 
-function NewProject({ busy, onSaveProject }: ProjectsScreenProps) {
+function NewProject({ busy, onSaveProject, headerSearch }: ProjectsScreenProps) {
   const [name, setName] = useState(""); const [instruction, setInstruction] = useState("");
-  return <div className="project-main"><div className="project-head"><div className="project-title-row"><h2>새 프로젝트</h2></div></div>
+  return <div className="project-main">
+    <div className="panel-header"><div className="panel-heading"><h2>새 프로젝트</h2></div>{headerSearch}<div className="panel-actions" /></div>
     <form className="project-new" onSubmit={(event) => { event.preventDefault(); if (name.trim() && !busy) void onSaveProject({ name, instruction }, null); }}>
       <p className="project-notice">의료경영 연구별 지침과 문서를 암호화해 이 기기에 보관합니다. 문서는 선택한 프로젝트 대화에만 사용됩니다.</p>
       <label className="settings-field">이름
@@ -152,12 +155,15 @@ function ProjectDetail(props: ProjectsScreenProps & { project: ProjectSummary })
     media: props.mediaItems ? String(props.mediaItems.length) : "" };
   const labels: Record<Tab, string> = { documents: "문서", threads: "대화", media: "미디어" };
   return <div className="project-main">
+    <div className="panel-header">
+      <div className="panel-heading"><h2 title={project.name}>{project.name}</h2></div>
+      {props.headerSearch}
+      <div className="panel-actions project-head-actions">
+        <button type="button" className="secondary-button" disabled={busy} onClick={openEditor}><SquarePen size={15} aria-hidden="true" />지침 편집</button>
+        <button type="button" className="primary-button" disabled={busy} onClick={() => void props.onNewThread(project.id)}>이 프로젝트에서 새 대화</button>
+      </div>
+    </div>
     <div className="project-head">
-      <div className="project-title-row"><h2>{project.name}</h2>
-        <div className="project-head-actions">
-          <button type="button" className="secondary-button" disabled={busy} onClick={openEditor}><SquarePen size={15} aria-hidden="true" />지침 편집</button>
-          <button type="button" className="primary-button" disabled={busy} onClick={() => void props.onNewThread(project.id)}>이 프로젝트에서 새 대화</button>
-        </div></div>
       <div className="project-tabs" role="tablist" aria-label="프로젝트 내용">
         {TABS.map((value) => <button type="button" role="tab" key={value} id={`project-tab-${value}`} aria-controls="project-tab-panel"
           aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={(event) => moveTab(event, value)}>

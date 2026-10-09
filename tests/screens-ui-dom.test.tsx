@@ -533,12 +533,13 @@ test("conversation keep-alive: an in-flight answer is not stopped by other scree
   assert.equal(streams, 1);
 });
 
-test("conversation keep-alive: start-card digits and Cmd/Ctrl+ArrowUp do nothing while the conversation is hidden", async () => {
+test("conversation keep-alive: start-card digits do nothing while the conversation is hidden", async () => {
   let settings = 0; let creates = 0;
   await renderApp({ updateThreadSettings: async () => { settings++; return mainThread; },
     createThread: async () => { creates++; return mainThread; } });
   assert.ok(document.querySelector(".template-card"), "the empty conversation shows the start cards");
   await click(railItem("앱 설정"));
+  assert.equal(document.querySelector<HTMLElement>(".chat-slot")!.hidden, true, "the conversation is kept alive but hidden");
   document.body.focus();
   await key("1");
   await key("2");
@@ -549,16 +550,50 @@ test("conversation keep-alive: start-card digits and Cmd/Ctrl+ArrowUp do nothing
   assert.equal(settings + creates, 1, "the same digit works once the conversation is visible");
 });
 
-test("conversation keep-alive: focus never stays inside the hidden conversation", async () => {
+test("conversation keep-alive: Cmd/Ctrl+ArrowUp does nothing while the conversation is hidden and works once it is visible", async () => {
+  const withQuestion = { ...mainThread, messageCount: 1,
+    messages: [{ id: "u1", role: "user" as const, text: "합성 이전 질문", createdAt: now, status: "complete" as const }] };
+  await renderApp({ listThreads: async () => [withQuestion], loadThread: async () => withQuestion });
+  const slot = document.querySelector<HTMLElement>(".chat-slot")!;
+  assert.equal(composer().value, "");
+  await click(railItem("앱 설정"));
+  assert.equal(slot.hidden, true);
+  assert.equal(slot.hasAttribute("inert"), true);
+  for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
+    document.body.focus();
+    await key("ArrowUp", modifier);
+  }
+  assert.equal(composer().value, "", "the hidden conversation did not restore the last question");
+  await click(railItem("대화"));
+  assert.equal(composer().value, "", "nothing was queued while hidden");
+  composer().focus();
+  const event = await key("ArrowUp", { ctrlKey: true });
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(composer().value, "합성 이전 질문", "the same key restores the question on the visible conversation");
+});
+
+test("conversation keep-alive: focus never stays inside the hidden conversation and lands on the active rail item", async () => {
   await renderApp();
   composer().focus();
   await key("k", { ctrlKey: true });
   // Pick the settings screen through the rail while the palette is closed again: Escape returns focus to the composer.
   await key("Escape");
   assertFocused(composer());
+  // The click helper does not move focus, so only the App's hidden-layer rule can take it out of the conversation.
   await click(railItem("앱 설정"));
+  const slot = document.querySelector<HTMLElement>(".chat-slot");
+  assert.ok(slot, "the conversation slot exists (kept alive)");
+  assert.equal(slot!.hidden, true);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
   const active = document.activeElement as HTMLElement | null;
   assert.equal(active?.closest(".chat-slot"), null, "focus left the hidden conversation");
+  assert.ok(active?.matches('nav.rail .rail-item[aria-current="page"]'), "focus lands on the active rail item");
+  assert.equal(nameOf(active!), "앱 설정");
+  // Back on the conversation the same rule leaves a focused composer alone.
+  await click(railItem("대화"));
+  composer().focus();
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
+  assertFocused(composer());
 });
 
 // W4b screens wired by App (D4.5-D4.7)
@@ -581,7 +616,13 @@ test("projects is a screen: its list replaces the chat list and a project conver
   assert.ok(document.querySelector('.project-screen[aria-label="프로젝트"]'));
   assert.equal(document.querySelector(".sidebar"), null);
   assert.equal(document.querySelector('[role="dialog"]'), null, "projects is no longer a dialog");
-  assert.match(document.querySelector(".project-title-row h2")?.textContent ?? "", /합성 프로젝트/, "the first project is selected");
+  assert.match(document.querySelector(".project-main > .panel-header h2")?.textContent ?? "", /합성 프로젝트/, "the first project is selected");
+  const header = document.querySelector<HTMLElement>(".project-main > .panel-header")!;
+  const search = header.querySelector<HTMLElement>(".header-search")!;
+  assert.ok(search, "the projects body header carries the shell's header search entry");
+  assert.equal(search.getAttribute("aria-keyshortcuts"), "Meta+K Control+K");
+  assert.ok(header.querySelector(".panel-actions"), "the standard header layout (title, search, actions)");
+  assert.equal(document.querySelector(".project-title-row"), null);
   assertFocused(rail);
   await click(button("이 프로젝트에서 새 대화"));
   await settle();
@@ -619,6 +660,36 @@ test("projects: each dropped document passes the de-identification confirm befor
   await settle();
   assert.deepEqual(added, [["p1", "drop-0", true]]);
   assert.deepEqual(discarded, ["drop-1"]);
+});
+
+test("projects: logging out mid-drop discards every file that was not added yet", async () => {
+  const added: string[] = []; const discarded: string[] = [];
+  let releaseAdd!: () => void;
+  await renderApp(projectApi({
+    logout: async () => {},
+    addDroppedAttachments: async (files: Array<{ name: string }>) => files.map((file, index) => ({ id: `drop-${index}`, name: file.name, kind: "document", size: 1 })),
+    addProjectDocument: (_projectId: string, id: string) => { added.push(id); return new Promise((resolve) => { releaseAdd = () => resolve(syntheticProject); }); },
+    discardAttachments: async (ids: string[]) => { discarded.push(...ids); }
+  }));
+  await click(railItem("프로젝트"));
+  const files = ["합성1.pdf", "합성2.pdf", "합성3.pdf"].map((name) => new browser.File(["x"], name, { type: "application/pdf" }));
+  await act(async () => {
+    const event = new browser.Event("drop", { bubbles: true, cancelable: true });
+    Object.assign(event, { dataTransfer: { files, types: ["Files"] } });
+    document.querySelector(".project-dropzone")!.dispatchEvent(event);
+  });
+  await settle();
+  await click(button("제거했습니다", document.querySelector<HTMLElement>('[role="dialog"]')!));
+  await settle();
+  assert.deepEqual(added, ["drop-0"], "the first file is being added");
+  await click(railItem("앱 설정"));
+  await click([...document.querySelectorAll<HTMLElement>(".settings-categories button")].find((item) => item.textContent?.trim() === "계정 · API 키")!);
+  await click(button("로그아웃"));
+  assert.ok(document.querySelector(".login-page"));
+  await act(async () => releaseAdd());
+  await settle();
+  assert.deepEqual(added, ["drop-0"], "no further file is added after the session ended");
+  assert.deepEqual([...discarded].sort(), ["drop-1", "drop-2"], "the files still waiting for confirmation are discarded in main");
 });
 
 test("media: the kind segment lives in the media column and the project chip shows the conversation's project", async () => {

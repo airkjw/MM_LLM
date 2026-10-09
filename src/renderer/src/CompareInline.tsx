@@ -1,6 +1,7 @@
 import { Columns3, Paperclip, Sparkles, Square } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { serializeCompareAnalysis } from "../../shared/compare-export";
+import { compareSynthesisCandidates } from "../../shared/compare-synthesis";
 import type { CompareRun } from "../../shared/contracts";
 import { webSearchStatusLabel } from "../../shared/search-evidence";
 import { modelLabel } from "./model-names";
@@ -73,7 +74,7 @@ export function CompareInline({ run, busy, synthesis, continueDisabled, onContin
       {synthesis?.ready && <div className="compare-synthesis-bar">
         <Sparkles size={16} aria-hidden="true" />
         <small>{synthesis.modelAvailable
-          ? "GPT-5.6 Sol이 답변 A·B·C의 차이와 근거를 검토합니다. 실행 시 추가 크레딧이 사용됩니다."
+          ? `GPT-5.6 Sol이 답변 ${compareSynthesisCandidates(run).map((candidate) => candidate.label).join("·")}의 차이와 근거를 검토합니다. 실행 시 추가 크레딧이 사용됩니다.`
           : "현재 API 키에서 GPT-5.6 Sol을 사용할 수 없어 종합분석을 실행할 수 없습니다."}</small>
         <button type="button" className={synthesis.busy ? "secondary-button" : "primary-button"}
           disabled={!synthesis.modelAvailable}

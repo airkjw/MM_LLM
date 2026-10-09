@@ -29,16 +29,16 @@ export function assertAllowedKeys(value: Record<string, unknown>, allowed: reado
 
 /**
  * `settings:update` boundary (contract D4.2): unknown keys are rejected, every display value is type-checked and
- * only explicit fields are returned. Model preferences are accepted on input but have their own mutation path.
+ * only explicit fields are returned. An explicit `undefined` (structured clone keeps the key) means absent. Model preferences are accepted on input but have their own mutation path.
  */
 export function validatedSettingsUpdate(raw: unknown): AppSettings {
   if (!isRecord(raw)) throw new Error("설정이 올바르지 않습니다.");
   assertAllowedKeys(raw, IPC_ALLOWED_KEYS.settingsUpdate, "앱");
   const { theme, fontSize, density, reduceMotion, shortcutHints } = raw;
   if (!["system", "light", "dark"].includes(String(theme)) || !["small", "medium", "large"].includes(String(fontSize)) ||
-    "density" in raw && density !== "default" && density !== "compact" ||
-    "reduceMotion" in raw && typeof reduceMotion !== "boolean" ||
-    "shortcutHints" in raw && typeof shortcutHints !== "boolean") throw new Error("화면 설정이 올바르지 않습니다.");
+    density !== undefined && density !== "default" && density !== "compact" ||
+    reduceMotion !== undefined && typeof reduceMotion !== "boolean" ||
+    shortcutHints !== undefined && typeof shortcutHints !== "boolean") throw new Error("화면 설정이 올바르지 않습니다.");
   const defaultInstruction = typeof raw.defaultInstruction === "string" ? raw.defaultInstruction.trim().slice(0, 12_000) : "";
   return {
     defaultInstruction, theme: theme as AppSettings["theme"], fontSize: fontSize as AppSettings["fontSize"],

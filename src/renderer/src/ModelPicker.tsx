@@ -51,6 +51,10 @@ export function ModelPicker({
     return acc;
   }, {});
   const options = Object.values(groups).flat();
+  // Grid row of each group heading; its options and stars follow on the next rows.
+  const rowOf = new Map<string, number>();
+  let nextRow = 1;
+  for (const [provider, items] of Object.entries(groups)) { rowOf.set(provider, nextRow); nextRow += items.length + 1; }
   const activeIndex = Math.min(active, Math.max(0, options.length - 1));
   const listId = `${popoverId}-options`;
   const hintId = `${popoverId}-hint`;
@@ -112,18 +116,19 @@ export function ModelPicker({
             placeholder="모델 이름 또는 ID 검색" autoFocus />
         </div>
         <div className="model-count"><span>현재 API 키로 사용 가능한 모델</span><span className="mono">{chatModels.length}개</span></div>
-        <div className="model-options" id={listId} role="listbox" aria-label="사용 가능한 모델">
-          {Object.entries(groups).map(([provider, items]) => (
-            <div key={provider} role="group" aria-label={provider}>
-              <div className="model-group" aria-hidden="true">{provider}</div>
-              {items.map((model) => {
-                const index = options.indexOf(model);
-                const reason = unavailable?.(model);
-                const favorite = preferences.favorites.includes(model.id);
-                const chosen = model.id === selected || compare?.ids.includes(model.id);
-                return <div className="model-row" role="none" key={model.id}>
-                  <div id={`${listId}-${index}`} role="option" aria-selected={model.id === selected}
-                    aria-disabled={reason ? true : undefined} title={reason}
+        <div className="model-options">
+          {/* The listbox owns only groups and options. Favorite stars are siblings in the same grid rows. */}
+          <div className="model-listbox" id={listId} role="listbox" aria-label="사용 가능한 모델">
+            {Object.entries(groups).map(([provider, items]) => {
+              const headingRow = rowOf.get(provider)!;
+              return <div key={provider} className="model-group-block" role="group" aria-label={provider}>
+                <div className="model-group" aria-hidden="true" style={{ gridRow: headingRow }}>{provider}</div>
+                {items.map((model) => {
+                  const index = options.indexOf(model);
+                  const reason = unavailable?.(model);
+                  const chosen = model.id === selected || compare?.ids.includes(model.id);
+                  return <div id={`${listId}-${index}`} role="option" aria-selected={model.id === selected} key={model.id}
+                    aria-disabled={reason ? true : undefined} title={reason} style={{ gridRow: headingRow + 1 + items.indexOf(model) }}
                     className={`model-option${model.id === selected ? " selected" : ""}${index === activeIndex ? " keyboard-active" : ""}`}
                     onMouseDown={(event) => event.preventDefault()} onClick={() => { setActive(index); choose(model); }}>
                     <span className="model-option-name"><strong>{modelLabel(model.id)}</strong>
@@ -145,15 +150,18 @@ export function ModelPicker({
                       {reason && <span className="unavailable-badge">공통 근거 전용 비교 미지원</span>}
                     </span>
                     {chosen && <Check className="model-option-check" size={15} aria-hidden="true" />}
-                  </div>
-                  <button type="button" className="model-favorite-action" aria-pressed={favorite}
-                    onClick={() => toggleFavorite(model.id)}>
-                    <Star size={14} aria-hidden="true" fill={favorite ? "currentColor" : "none"} />
-                    <span className="sr-only">{modelLabel(model.id)} 즐겨찾기 {favorite ? "해제" : "추가"}</span></button>
-                </div>;
-              })}
-            </div>
-          ))}
+                  </div>;
+                })}
+              </div>;
+            })}
+          </div>
+          {Object.entries(groups).flatMap(([provider, items]) => items.map((model, itemIndex) => {
+            const favorite = preferences.favorites.includes(model.id);
+            return <button type="button" className="model-favorite-action" aria-pressed={favorite} key={model.id}
+              style={{ gridRow: rowOf.get(provider)! + 1 + itemIndex }} onClick={() => toggleFavorite(model.id)}>
+              <Star size={14} aria-hidden="true" fill={favorite ? "currentColor" : "none"} />
+              <span className="sr-only">{modelLabel(model.id)} 즐겨찾기 {favorite ? "해제" : "추가"}</span></button>;
+          }))}
         </div>
         {!filtered.length && <div className="empty-models" role="status">검색 결과가 없습니다.</div>}
         <div className="model-picker-status" role="status" aria-live="polite">{status}</div>
