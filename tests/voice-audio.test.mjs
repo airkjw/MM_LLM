@@ -11,7 +11,7 @@ test('actual resampler signed16LE clipping, arbitrary context rates and cross-fr
  const r=new PcmResampler(24000,24000),out=pcm(r.push(new Float32Array([-2,-1,0,1,2,0])));assert.deepEqual(out,[-32768,-32768,0,32767,32767]);assert.throws(()=>new PcmResampler(200000,24000));r.clear();
 });
 test('static packaged worklet emits finite mono frames and stops on unacknowledged backlog',()=>{
- let Processor;const sent=[];class Base{port={onmessage:null,postMessage:e=>sent.push(e)}};vm.runInNewContext(readFileSync('src/renderer/public/voice-capture.js','utf8'),{AudioWorkletProcessor:Base,sampleRate:48000,Float32Array,registerProcessor:(_n,p)=>Processor=p});const processor=new Processor();const block=[new Float32Array(128).fill(1),new Float32Array(128).fill(-1)];for(let n=0;n<38;n++)assert.equal(processor.process([block]),true);assert.equal(sent.length,1);assert.equal(sent[0].samples.length,4800);assert.equal(sent[0].samples.every(v=>v===0),true);let alive=true;for(let n=0;n<38&&alive;n++)alive=processor.process([block]);assert.equal(alive,false);assert.equal(sent.at(-1).type,'overflow');
+ let Processor;const sent=[];class Base{port={onmessage:null,postMessage:e=>sent.push(e)}};vm.runInNewContext(readFileSync('src/renderer/public/voice-capture.js','utf8'),{AudioWorkletProcessor:Base,sampleRate:48000,Float32Array,registerProcessor:(_n,p)=>Processor=p});const processor=new Processor();const block=[new Float32Array(128).fill(1),new Float32Array(128).fill(-1)];for(let n=0;n<38;n++)assert.equal(processor.process([block]),true);assert.equal(sent.length,1);assert.equal(sent[0].samples.length,4800);assert.equal(sent[0].samples.every(v=>v===0),true);let alive=true;for(let n=0;n<38*9&&alive;n++)alive=processor.process([block]);assert.equal(alive,false);assert.equal(sent.at(-1).type,'overflow');
 });
 class Track extends EventTarget{enabled=true;stops=0;stop(){this.stops++}}
 class Node {connections=0;disconnects=0;connect(){this.connections++}disconnect(){this.disconnects++}}
@@ -30,3 +30,29 @@ test('actual ephemeral playback clears queued buffers and reports actual partial
 });
 test('actual device track ended closes stream/worklet/context immediately and calls restart explanation hook',async()=>{install();let ended=0;const a=new VoiceAudio(ID,16000,{frame:async()=>{},played:()=>{},failed:()=>{},ended:()=>ended++});await a.prepare();track.dispatchEvent(new Event('ended'));assert.equal(ended,1);assert.equal(track.stops,1);assert.equal(Context.all[0].closed,1);assert.equal(Worklet.all[0].port.onmessage,null);track.dispatchEvent(new Event('ended'));assert.equal(ended,1)});
 test.after(()=>hooks.deregister());
+function worklet(){let Processor;const sent=[];class Base{port={onmessage:null,postMessage:e=>sent.push(e)}};vm.runInNewContext(readFileSync('src/renderer/public/voice-capture.js','utf8'),{AudioWorkletProcessor:Base,sampleRate:48000,Float32Array,registerProcessor:(_n,p)=>Processor=p});const p=new Processor();
+ // 480-sample blocks: ten blocks make one 100ms frame at 48 kHz.
+ const frames=n=>{let alive=true;for(let b=0;b<n*10&&alive;b++)alive=p.process([[new Float32Array(480).fill(.25)]]);return alive;};return{p,sent,frames};}
+test('M5 worklet tolerates up to seven unacknowledged frames',()=>{
+ const w=worklet();assert.equal(w.frames(7),true);assert.equal(w.sent.length,7);assert.equal(w.sent.some(e=>e.type==='overflow'),false);
+});
+test('M5 worklet overflows once on the ninth unacknowledged frame and acknowledgements release slots',()=>{
+ const w=worklet();assert.equal(w.frames(8),true);assert.equal(w.sent.filter(e=>e.samples).length,8);
+ assert.equal(w.frames(1),false);assert.equal(w.sent.filter(e=>e.type==='overflow').length,1);
+ const v=worklet();assert.equal(v.frames(8),true);for(let n=0;n<3;n++)v.p.port.onmessage({data:{ack:true}});assert.equal(v.frames(3),true);assert.equal(v.sent.filter(e=>e.type==='overflow').length,0);assert.equal(v.frames(1),false);
+});
+test('M5 VoiceAudio keeps capturing while 300ms-late frame acknowledgements are in flight, in sequence order, bounded at eight',async()=>{
+ install();const frames=[];const pending=[];let failed=0;
+ const a=new VoiceAudio(ID,24000,{frame:f=>{frames.push(f.sequence);return new Promise(r=>pending.push(setTimeout(r,300)))},played:()=>{},failed:()=>failed++,ended:()=>{}});await a.prepare();const w=Worklet.all[0];a.setActive(true);
+ for(let n=0;n<5;n++)w.port.onmessage({data:{samples:new Float32Array(4800)}});
+ assert.equal(failed,0);assert.deepEqual(frames,[1,2,3,4,5]);
+ for(let n=0;n<3;n++)w.port.onmessage({data:{samples:new Float32Array(4800)}});assert.equal(failed,0);assert.equal(frames.length,8);
+ w.port.onmessage({data:{samples:new Float32Array(4800)}});assert.equal(failed,1);assert.equal(frames.length,8);
+ pending.forEach(clearTimeout);a.close();
+});
+test('M5 VoiceAudio releases in-flight slots after acknowledgements resolve',async()=>{
+ install();const frames=[];const resolvers=[];let failed=0;
+ const a=new VoiceAudio(ID,24000,{frame:f=>{frames.push(f.sequence);return new Promise(r=>resolvers.push(r))},played:()=>{},failed:()=>failed++,ended:()=>{}});await a.prepare();const w=Worklet.all[0];a.setActive(true);
+ for(let n=0;n<8;n++)w.port.onmessage({data:{samples:new Float32Array(4800)}});resolvers.splice(0).forEach(r=>r());await new Promise(r=>setImmediate(r));
+ for(let n=0;n<8;n++)w.port.onmessage({data:{samples:new Float32Array(4800)}});assert.equal(failed,0);assert.deepEqual(frames,Array.from({length:16},(_,i)=>i+1));a.close();
+});

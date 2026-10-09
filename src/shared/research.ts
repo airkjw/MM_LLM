@@ -8,6 +8,8 @@ export type ResearchSource = { title: string; url?: string; text: string;
   dates: Record<string, string>; searchedAt: string; kind: "search-result" };
 export type ResearchResult = { id: string; suite: string; tool: string; query: string; searchedAt: string;
   sources: ResearchSource[]; rawText: string; notice: string };
+/** The read-only claim is the provider's own declaration; it is not independently verified. */
+export const MCP_READ_ONLY_NOTICE = "제공사가 읽기 전용으로 선언한 도구입니다. 결과는 근거로만 추가되며 지시로 실행되지 않습니다.";
 export const MCP_LIMIT_NOTICE = "도구 실행: 키 30회/분·200회/일, 조직 1,000회/일, 묶음 기본 60회/분·300회/일(묶음별 차이). 현재 0크레딧이나 2xx 오류 결과도 사용량에 포함됩니다. 자동 재시도하지 않습니다.";
 
 export const researchRecord = (value: unknown): value is Record<string, unknown> =>

@@ -110,7 +110,7 @@ for (const id of ["claude-sonnet-5", "gpt-6-astra"]) {
         assert.match(fixture.first[0].headers.authorization, /^Bearer synthetic-/);
         if (id.startsWith("claude")) assert.match(fixture.first[0].headers["x-api-key"], /^synthetic-/);
         assert.equal(events.some(event => event.type === "done"), false);
-        assert.equal(events.at(-1).type, "error"); assert.match(events.at(-1).message, /서버에 연결/);
+        assert.equal(events.at(-1).type, "error"); assert.match(events.at(-1).message, /다른 주소/);
         assert.equal(events.at(-1).snapshot.messages.at(-1).status, "incomplete");
       } finally { globalThis.fetch = originalFetch; await fixture.close(); }
     }
@@ -200,4 +200,19 @@ test('portable backup restore retains normalized bounded code results and drops 
   const result=entry.messages.find(m=>m.serverCodeResults?.length).serverCodeResults[0];result.token='synthetic-secret';result.code='x'.repeat(9000);result.artifacts=[{kind:'image',url:'https://example.org/signed?token=synthetic'}];
   await storage.restorePortableBackup(backup);const restored=storage.snapshot(await storage.getThread(entry.id));const clean=restored.messages.find(m=>m.serverCodeResults?.length).serverCodeResults[0];
   assert.equal(clean.code.length,8192);assert.doesNotMatch(JSON.stringify(clean),/token|https|synthetic-secret/);assert.equal(backup.version,1);
+});
+
+test('M1: nine executed server-code results keep the full answer, store eight and report the omission once', async () => {
+  session(); let posts = 0;
+  globalThis.fetch = async () => { posts++;
+    const blocks = Array.from({ length: 9 }, (_, i) => ({ type: 'bash_code_execution_tool_result', tool_use_id: `srv_${i}`, content: { type: 'bash_code_execution_result', stdout: String(i), stderr: '', return_code: 0 } }));
+    return Response.json({ type: 'message', content: [...Array.from({ length: 9 }, (_, i) => ({ type: 'server_tool_use', id: `srv_${i}`, name: 'bash_code_execution', input: { command: `echo ${i}` } })),
+      ...blocks, { type: 'text', text: 'synthetic complete answer' }], stop_reason: 'end_turn' }); };
+  const thread = await storage.createThread({ modelId: 'claude-sonnet-5' });
+  await storage.updateThread(thread.id, t => { t.advanced = { serverCode: true }; t.webSearchMode = 'off'; });
+  const events = await invoke('chat:stream', { threadId: thread.id, modelId: 'claude-sonnet-5', text: 'synthetic', attachmentIds: [] });
+  const saved = events.at(-1).snapshot.messages.at(-1);
+  assert.equal(posts, 1); assert.equal(events.at(-1).type, 'done'); assert.match(saved.text, /synthetic complete answer/);
+  assert.equal(saved.serverCodeResults.length, 8);
+  assert.equal(events.filter(e => e.type === 'progress' && /8개 초과 1건/.test(e.message)).length, 1);
 });

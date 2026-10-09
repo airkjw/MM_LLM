@@ -3,6 +3,12 @@ import { assertAllowedKeys, validatedImageOptions, validatedMusicOptions, valida
 import { imageRequestPayload, musicRequestPayload, videoRequestPayload } from "./media-capabilities.ts";
 export const QUOTE_LABELS: Record<QuoteBound, string> = { exact: "확정", minimum: "최소", maximum: "최대", approximate: "대략" };
 export const QUOTE_NOTICE = "견적 호출은 무료이며 크레딧을 예약하지 않습니다. 견적은 입력 유효성·생성 성공 보장이 아닙니다. 실제 생성 차감과 content_filter 별도 차감을 구분해 잔액에서 확인하세요.";
+/** Reference images are never sent to the estimate API, so a quote with them can only be a lower bound. */
+export function quoteBoundWithContext(quote: Pick<MediaQuote, "bound">, context: { referenceImages: number }): { bound: QuoteBound; label: string } {
+  if (context.referenceImages <= 0) return { bound: quote.bound, label: QUOTE_LABELS[quote.bound] };
+  const bound: QuoteBound = quote.bound === "exact" ? "minimum" : quote.bound;
+  return { bound, label: `참고 이미지 제외 · ${QUOTE_LABELS[bound]}` };
+}
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 export function normalizeEstimateRequest(value: unknown): MediaEstimateRequest {
   if (!record(value) || !["image", "video", "music"].includes(String(value.kind)) || typeof value.modelId !== "string" ||

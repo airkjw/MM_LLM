@@ -361,6 +361,9 @@ export class ProviderEventNormalizer {
     if (provider === "claude" || provider === "responses") this.code = new ServerCodeNormalizer(provider);
   }
 
+  /** Server-code results dropped beyond the stored limit of 8. */
+  get omittedServerCode(): number { return this.code?.omittedCount ?? 0; }
+
   accept(event: Record<string, unknown>): NormalizedRunEvent[] {
     if (this.provider === "gemini") return normalizeGeminiEvent(event);
     const code: NormalizedRunEvent[] = this.code?.accept(event).map((result) => ({ type: "server_code", result })) ?? [];

@@ -126,7 +126,7 @@ test('actual main estimate/image/video/music reject native redirects before a se
     const fixture=await redirectFixture(status);const urls=[];
     try {
       globalThis.fetch=(url,init)=>{urls.push(String(url));assert.equal(String(url),gateway.GATEWAY+route);return originalFetch(fixture.origin+'/initial',init)};
-      await assert.rejects(()=>channel==='media:estimate'?quote(request):handlers.get(channel)(trusted,request),/서버에 연결/);
+      await assert.rejects(()=>channel==='media:estimate'?quote(request):handlers.get(channel)(trusted,request),/다른 주소/);
       assert.equal(urls.length,1);assert.equal(fixture.first.length,1);assert.equal(fixture.first[0].method,'POST');
       assert.equal(fixture.first[0].headers.authorization,'Bearer synthetic-estimate-key');assert.deepEqual(fixture.target,[]);
       assert.equal(JSON.parse(fixture.first[0].body).model,request.modelId);

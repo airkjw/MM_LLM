@@ -58,10 +58,13 @@ export class ServerCodeNormalizer {
   private readonly containers = new Map<string, string>();
   private readonly inputs = new Map<number, { id: string; json: string; name: unknown }>();
   private readonly provider: "claude" | "responses";
+  private readonly omitted = new Set<string>();
   constructor(provider: "claude" | "responses") { this.provider = provider; }
+  /** Results, inputs and containers beyond the stored limit of 8 are dropped, never thrown, so the paid answer survives. */
+  get omittedCount(): number { return this.omitted.size; }
   private update(key: string | undefined, patch: Partial<ServerCodeResult>): ServerCodeResult[] {
     if (!key) return [];
-    if (!this.results.has(key) && this.results.size >= 8) throw new Error("서버 코드 실행 결과는 한 턴에 최대 8개입니다.");
+    if (!this.results.has(key) && this.results.size >= 8) { if (this.omitted.size < 1000) this.omitted.add(key); return []; }
     const current = this.results.get(key) ?? { id: key, provider: this.provider, status: "executing", code: "", summary: "제공사 실행 중", artifacts: [] };
     const next = sanitizeServerCode([{ ...current, ...patch }])?.[0];
     if (!next) return []; this.results.set(key, next); return [next];
@@ -69,7 +72,7 @@ export class ServerCodeNormalizer {
   private claudeBlock(block: Record<string, unknown>, index = 0): ServerCodeResult[] {
     if (block.type === "server_tool_use" && ["bash_code_execution", "text_editor_code_execution", "code_execution"].includes(String(block.name))) {
       const key = id(block.id); if (!key) return [];
-      if (this.inputs.size >= 8 && !this.inputs.has(index)) throw new Error("서버 도구 입력 블록이 안전 한도를 넘었습니다.");
+      if (this.inputs.size >= 8 && !this.inputs.has(index)) { if (this.omitted.size < 1000) this.omitted.add(key); return []; }
       this.inputs.set(index, { id: key, json: "", name: block.name });
       const input = record(block.input) ? block.input : undefined;
       return this.update(key, { code: input ? codeInput(block.name, input) : "" });

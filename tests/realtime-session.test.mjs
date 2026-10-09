@@ -21,7 +21,7 @@ test('actual OpenAI manager single POST, exact init, waits for session.updated, 
  f.manager.stop(ID);assert.equal(f.manager.size,0);assert.equal(f.socket().eventNames().length,0);assert.equal(f.manager.claimText(ID).text,'AI: synthetic answer\n');assert.throws(()=>f.manager.claimText(ID));
 });
 test('token response rejects expiry, reuse, model echo, arbitrary host/path/query credentials and fragments without remint',async()=>{
- const f=fixture();for(const change of [{expires_at:new Date(Date.now()-1).toISOString()},{model:'gpt-wrong'},{url:'wss://evil.test/'},{url:'//evil.test/'},{url:f.response.url+'&token=extra'},{url:f.response.url+'#x'},{url:'/v1/gateway/realtime?model=other'},{object:'session'},{token:3}])assert.throws(()=>sessionSocketUrl({...f.response,...change},f.response.model,Date.now()),()=>true);
+ const f=fixture();for(const change of [{expires_at:new Date(Date.now()-31000).toISOString()},{expires_at:new Date(Date.now()+301000).toISOString()},{model:'gpt-wrong'},{url:'wss://evil.test/'},{url:'//evil.test/'},{url:f.response.url+'&token=extra'},{url:f.response.url+'#x'},{url:'/v1/gateway/realtime?model=other'},{object:'session'},{token:3}])assert.throws(()=>sessionSocketUrl({...f.response,...change},f.response.model,Date.now()),()=>true);
  f.manager.begin({id:ID,modelId:f.response.model,consent:true});await f.manager.connect(ID,'synthetic');f.manager.stop(ID);f.manager.begin({id:ID2,modelId:f.response.model,consent:true});await f.manager.connect(ID2,'synthetic');assert.equal(f.count(),2);assert.equal(f.manager.size,0);assert.equal(f.events.at(-1).state,'error');
 });
 test('pending token cancellation and epoch switch ignore late responses with zero sockets',async()=>{
@@ -35,7 +35,7 @@ test('bounded options and invalid input/backpressure/oversize/output backlog/inb
  assert.deepEqual(BOUNDED_WS_OPTIONS,{maxPayload:262144,handshakeTimeout:10000,followRedirects:false,perMessageDeflate:false});
  for(const mode of ['format','odd','flood','buffer','oversize','output','receive']){const f=fixture();f.manager.begin({id:ID,modelId:f.response.model,consent:true});await f.manager.connect(ID,'synthetic');f.socket().open();f.socket().message({type:'session.updated'});
  if(mode==='format')f.manager.frame({...frame(),sampleRate:16000});if(mode==='odd')f.manager.frame({...frame(),bytes:new Uint8Array(3)});if(mode==='buffer'){f.socket().bufferedAmount=131072;f.manager.frame(frame())}
- if(mode==='flood')for(let n=1;n<=16;n++)f.manager.frame(frame(ID,n));if(mode==='oversize')f.socket().emit('message',Buffer.alloc(262145),false);
+ if(mode==='flood')for(let n=1;n<=16&&f.manager.size;n++)f.manager.frame(frame(ID,n));if(mode==='oversize')f.socket().emit('message',Buffer.alloc(262145),false);
  if(mode==='output')for(let n=0;n<11;n++)f.socket().message({type:'response.output_audio.delta',item_id:'item',delta:Buffer.alloc(24000).toString('base64')});
  if(mode==='receive')for(let n=0;n<201;n++)f.socket().message({type:'unknown'});
  assert.equal(f.manager.size,0);assert.equal(f.events.at(-1).state,'error');assert.equal(JSON.stringify(f.events).includes('token='),false);}
@@ -112,4 +112,102 @@ test('registered Gemini confirmed streams stay bounded and interim or interrupte
   g.socket().message({serverContent:{interimInputTranscription:{text:'y'.repeat(10)}}});assert.equal(g.manager.size,0);assert.equal(g.events.at(-1).state,'error');
   const claim=g.manager.claimText(ID);assert.equal(claim.text.length,11999);assert.doesNotMatch(claim.text,/y/);
  }
+});
+async function activeOpenAI(f){f.manager.begin({id:ID,modelId:f.response.model,consent:true});await f.manager.connect(ID,'synthetic');f.socket().open();f.socket().message({type:'session.updated'});}
+const truncates=f=>f.socket().sent.filter(m=>typeof m.data==='string'&&JSON.parse(m.data).type==='conversation.item.truncate').map(m=>JSON.parse(m.data));
+// Mirrors VoicePanel: only an interrupt that names an item asks the renderer for its played duration.
+function rendererInterrupt(f,playedMs){const e=f.events.filter(e=>e.type==='interrupt').at(-1);if(e.itemId)f.manager.control({id:ID,type:'interrupted',interruption:e.interruption,playedMs:playedMs()});return e;}
+test('M4 second interruption after fully played item sends no truncate',async()=>{
+ const f=fixture();await activeOpenAI(f);
+ f.socket().message({type:'response.output_audio.delta',item_id:'item1',delta:Buffer.alloc(48000).toString('base64')});
+ const audio=f.events.filter(e=>e.type==='audio');assert.equal(audio.length,2);for(const a of audio)f.manager.control({id:ID,type:'played',sequence:a.sequence,playedSamples:12000});
+ // Renderer reports the whole second for its first interrupt, then 0 after it clears its played map.
+ let rendererMs=[1000,0];
+ f.socket().message({type:'input_audio_buffer.speech_started'});const first=rendererInterrupt(f,()=>rendererMs.shift());assert.equal(first.itemId,undefined);
+ f.socket().message({type:'input_audio_buffer.speech_started'});const second=rendererInterrupt(f,()=>rendererMs.shift());assert.equal(second.itemId,undefined);
+ assert.equal(truncates(f).length,0);assert.equal(f.manager.size,1);
+ // Unplayed audio remains: exactly one truncate at the renderer's played duration, and none on a following interrupt.
+ const g=fixture();await activeOpenAI(g);
+ g.socket().message({type:'response.output_audio.delta',item_id:'item2',delta:Buffer.alloc(48000).toString('base64')});
+ const first2=g.events.filter(e=>e.type==='audio')[0];g.manager.control({id:ID,type:'played',sequence:first2.sequence,playedSamples:12000});
+ g.socket().message({type:'input_audio_buffer.speech_started'});const e=rendererInterrupt(g,()=>500);assert.equal(e.itemId,'item2');
+ g.socket().message({type:'input_audio_buffer.speech_started'});rendererInterrupt(g,()=>0);
+ assert.deepEqual(truncates(g),[{type:'conversation.item.truncate',item_id:'item2',content_index:0,audio_end_ms:500}]);assert.equal(g.manager.size,1);
+ g.manager.abort();f.manager.abort();
+});
+test('M4 repeated speech_started before the renderer reply keeps one pending truncate and the session alive',async()=>{
+ const f=fixture();await activeOpenAI(f);
+ f.socket().message({type:'response.output_audio.delta',item_id:'item1',delta:Buffer.alloc(48000).toString('base64')});
+ f.socket().message({type:'input_audio_buffer.speech_started'});const first=f.events.filter(e=>e.type==='interrupt').at(-1);assert.equal(first.itemId,'item1');
+ f.socket().message({type:'input_audio_buffer.speech_started'});
+ f.manager.control({id:ID,type:'interrupted',interruption:first.interruption,playedMs:250});
+ assert.deepEqual(truncates(f).map(t=>t.audio_end_ms),[250]);assert.equal(f.manager.size,1);f.manager.abort();
+});
+test('M6 token expiry tolerates client clock skew and keeps one-use digests for two minutes',()=>{
+ const f=fixture();const now=Date.now();const at=ms=>({...f.response,expires_at:new Date(now+ms).toISOString()});
+ assert.equal(sessionSocketUrl(at(62000),f.response.model,now).expires,now+62000);
+ assert.equal(sessionSocketUrl(at(-20000),f.response.model,now).expires,now-20000);
+ assert.equal(sessionSocketUrl(at(300000),f.response.model,now).expires,now+300000);
+ for(const ms of [301000,-31000,-30000])assert.throws(()=>sessionSocketUrl(at(ms),f.response.model,now),/만료/);
+});
+test('M6 fast client clock still connects once and same token digest is rejected on reuse',async()=>{
+ const f=fixture();f.response.expires_at=new Date(Date.now()-20000).toISOString();
+ await activeOpenAI(f);await new Promise(r=>setImmediate(r));assert.equal(f.manager.size,1);assert.equal(f.manager.current.state,'active');
+ const first=f.socket();f.manager.stop(ID);f.tick(60000);
+ f.manager.begin({id:ID2,modelId:f.response.model,consent:true});await f.manager.connect(ID2,'synthetic');
+ assert.equal(f.socket(),first);assert.equal(f.manager.size,0);assert.equal(f.events.at(-1).state,'error');assert.equal(f.count(),2);
+});
+test('L8 OpenAI transcripts render in conversation item order, not arrival order',async()=>{
+ for(const created of ['conversation.item.created','conversation.item.added','input_audio_buffer.committed']){
+  const f=fixture();await activeOpenAI(f);
+  if(created==='input_audio_buffer.committed')f.socket().message({type:created,item_id:'userA'});
+  else f.socket().message({type:created,item:{id:'userA',type:'message',role:'user'}});
+  f.socket().message({type:'conversation.item.added',item:{id:'aiB',type:'message',role:'assistant'}});
+  f.socket().message({type:'response.output_audio_transcript.done',item_id:'aiB',transcript:'응답'});
+  f.socket().message({type:'conversation.item.input_audio_transcription.completed',item_id:'userA',transcript:'질문'});
+  assert.equal(f.events.filter(e=>e.type==='text').at(-1).final,'나: 질문\nAI: 응답\n');
+  f.socket().message({type:'conversation.item.input_audio_transcription.completed',item_id:'unknown',transcript:'뒤'});
+  f.manager.stop(ID);assert.equal(f.manager.claimText(ID).text,'나: 질문\nAI: 응답\n나: 뒤\n');
+ }
+});
+test('L8 interruption clears the AI transcript preview with one text event',async()=>{
+ const f=fixture();await activeOpenAI(f);
+ f.socket().message({type:'response.output_audio.delta',item_id:'aiB',delta:Buffer.alloc(4800).toString('base64')});
+ f.socket().message({type:'response.output_audio_transcript.delta',item_id:'aiB',delta:'미리'});assert.equal(f.events.filter(e=>e.type==='text').at(-1).provisional,'미리');
+ const before=f.events.length;f.socket().message({type:'input_audio_buffer.speech_started'});
+ const texts=f.events.slice(before).filter(e=>e.type==='text');assert.equal(texts.length,1);assert.equal(texts[0].provisional,'');assert.equal(texts[0].final,'');
+ f.socket().message({type:'response.output_audio_transcript.delta',item_id:'aiB',delta:'잔존'});assert.equal(f.events.filter(e=>e.type==='text').length,2);f.manager.abort();
+});
+test('L8 turn list stays bounded and unfilled placeholders never block later text',async()=>{
+ const f=fixture();await activeOpenAI(f);
+ for(let n=0;n<300;n++){if(n%100===0)f.tick(1000);f.socket().message({type:'conversation.item.added',item:{id:`synthetic-${n}`,type:'message',role:'assistant'}});}
+ assert.equal(f.manager.current.turns.length,256);
+ f.socket().message({type:'conversation.item.input_audio_transcription.completed',item_id:'synthetic-299',transcript:'late'});
+ assert.equal(f.events.filter(e=>e.type==='text').at(-1).final,'나: late\n');f.manager.abort();
+});
+test('F1 eight queued frames arriving at once after an 800ms stall keep the session alive at any window phase',async()=>{
+ for(const phase of [0,100,300,500,900]){
+  const f=fixture();await activeOpenAI(f);let seq=0;const send=()=>f.manager.frame(frame(ID,++seq));
+  for(let t=0;t<phase;t+=100){send();f.tick(100);}
+  f.tick(800);for(let n=0;n<8;n++)send();
+  for(let n=0;n<30;n++){f.tick(100);send();}
+  // Two stalls back to back recover too: the backlog budget refills faster than real time.
+  f.tick(800);for(let n=0;n<8;n++)send();for(let n=0;n<20;n++){f.tick(100);send();}
+  assert.equal(f.manager.size,1,`phase ${phase}`);assert.equal(f.manager.current.inputSequence,seq);f.manager.abort();
+ }
+});
+test('F1 sustained over-real-time input is still rejected',async()=>{
+ // About twice real time (a 100ms frame every 50ms) for two seconds.
+ const f=fixture();await activeOpenAI(f);let seq=0;
+ for(let n=0;n<40&&f.manager.size;n++){f.tick(50);f.manager.frame(frame(ID,++seq));}
+ assert.equal(f.manager.size,0);assert.match(f.events.at(-1).message,/빈도/);
+ // A single burst beyond the renderer's 8-frame backlog plus margin is rejected immediately.
+ const g=fixture();await activeOpenAI(g);for(let n=1;n<=16&&g.manager.size;n++)g.manager.frame(frame(ID,n));assert.equal(g.manager.size,0);
+});
+test('F3 initial setup timer does not shrink with local token remaining time',async(t)=>{
+ t.mock.timers.enable({apis:['setTimeout']});const f=fixture();f.response.expires_at=new Date(Date.now()+1000).toISOString();
+ f.manager.begin({id:ID,modelId:f.response.model,consent:true});await f.manager.connect(ID,'synthetic');f.socket().open();
+ t.mock.timers.tick(5000);assert.equal(f.manager.size,1);f.socket().message({type:'session.updated'});assert.equal(f.manager.current.state,'active');
+ const g=fixture();g.manager.begin({id:ID,modelId:g.response.model,consent:true});await g.manager.connect(ID,'synthetic');g.socket().open();
+ t.mock.timers.tick(10000);assert.equal(g.manager.size,0);assert.equal(g.events.at(-1).state,'error');
 });

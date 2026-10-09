@@ -605,3 +605,161 @@ test("native search missing, empty, failed and Gemini blocked states are truthfu
   assert.equal(blocked.accept({ promptFeedback: { blockReason: "SAFETY" } })[0].type, "error");
   assert.equal(blocked.accept({ candidates: [{ finishReason: "MAX_TOKENS" }] })[0].status, "incomplete");
 });
+
+// --- Review-fix wave A: the real streamChat adapter against synthetic HTTP (no account, no paid API). ---
+import { registerHooks } from "node:module";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { claudeAllFailedEvents, claudeExecutedThenStallEvents, claudeJsonMessage, claudePartialFailureEvents,
+  responsesJsonResponse, sonarJsonResponse, source as syntheticSource } from "./fixtures/native-search.mjs";
+const searchRoot = await mkdtemp(join(tmpdir(), "mmllm-search-fixes-"));
+globalThis.__searchFixElectron = {
+  app: { isPackaged: true, getVersion: () => "0.5.1", getPath: () => searchRoot },
+  safeStorage: { isAsyncEncryptionAvailable: async () => true, encryptStringAsync: async (v) => Buffer.from(`mock-vault\0${v}`),
+    decryptStringAsync: async (v) => ({ result: v.toString().slice(11), shouldReEncrypt: false }) }
+};
+const searchHooks = registerHooks({
+  resolve(specifier, context, next) {
+    if (specifier === "electron") return { url: "mmllm-search-fix:electron", shortCircuit: true };
+    if (specifier.startsWith(".") && context.parentURL?.includes("/src/")) {
+      const url = new URL(specifier, context.parentURL);
+      if (url.protocol === "file:" && !existsSync(fileURLToPath(url)) && existsSync(fileURLToPath(url) + ".ts")) return next(url.href + ".ts", context);
+    }
+    return next(specifier, context);
+  },
+  load(url, context, next) {
+    if (url === "mmllm-search-fix:electron") return { format: "module", source: "export const { app, safeStorage } = globalThis.__searchFixElectron;", shortCircuit: true };
+    return next(url, context);
+  }
+});
+const searchGateway = await import("../src/main/gateway.ts");
+const searchOriginalFetch = globalThis.fetch;
+test.after(async () => { globalThis.fetch = searchOriginalFetch; searchHooks.deregister(); delete globalThis.__searchFixElectron; await rm(searchRoot, { recursive: true, force: true }); });
+let searchAccount = 0;
+const searchModels = ["claude-sonnet-5", "gpt-6-astra", "sonar-pro"].map((id) => ({ id, type: "llm" }));
+const searchSession = () => searchGateway.commitGatewaySession(`synthetic-search-account-${++searchAccount}`, searchModels.map((m) => ({ ...m })));
+const searchMessages = [{ role: "system", content: "synthetic policy" }, { role: "user", content: "synthetic query" }];
+const searchGeneration = { reasoningMode: "auto", advanced: {} };
+const sseResponse = (events) => new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
+/** Runs streamChat to completion or failure; never throws, so a test can inspect partial output. */
+async function runChat(id, mode, handler, { controller = new AbortController(), generation = searchGeneration, searchPrice = 0 } = {}) {
+  const posts = []; const items = []; let error;
+  globalThis.fetch = async (url, init) => {
+    if (init.method !== "POST") return Response.json({ id, pricing: { web_search_per_1k: searchPrice } });
+    posts.push(JSON.parse(init.body)); return handler(posts.length, JSON.parse(init.body));
+  };
+  try { for await (const item of searchGateway.streamChat(id, searchMessages, "synthetic query", controller, { mode }, generation)) items.push(item); }
+  catch (caught) { error = caught; } finally { globalThis.fetch = searchOriginalFetch; }
+  const searches = items.filter((item) => item.type === "web_search").map((item) => item.search);
+  return { posts, items, error, search: searches.at(-1), text: items.filter((item) => item.type === "delta").map((item) => item.text).join("") };
+}
+
+test("H1: native search partial failure keeps the completed answer and executed status", async () => {
+  searchSession();
+  const run = await runChat("claude-sonnet-5", "always", () => sseResponse(claudePartialFailureEvents));
+  assert.equal(run.error, undefined, "a normally finished answer is never turned into an error");
+  assert.equal(run.text, "Complete answer.");
+  assert.equal(run.search.status, "executed"); assert.equal(run.search.citations.length, 1); assert.equal(run.search.failedCount, 1);
+  assert.equal(run.posts.length, 1);
+});
+
+test("H1: all native search calls failed stores failed without throwing", async () => {
+  searchSession();
+  const run = await runChat("claude-sonnet-5", "always", () => sseResponse(claudeAllFailedEvents));
+  assert.equal(run.error, undefined);
+  assert.equal(run.text, "Complete answer."); assert.equal(run.search.status, "failed"); assert.equal(run.search.failedCount, 1);
+  assert.equal(run.posts.length, 1);
+});
+
+test("H2: a Sonar bridge with 70 citations completes, truncated, with exactly one answer POST", async () => {
+  searchSession();
+  const run = await runChat("gpt-6-astra", "always", (n) => n === 1 ? Response.json(sonarJsonResponse(70))
+    : sseResponse([{ choices: [{ delta: { content: "synthetic answer" }, finish_reason: "stop" }] }]), { searchPrice: null });
+  assert.equal(run.error?.message, undefined); assert.equal(run.posts.length, 2);
+  assert.deepEqual(run.posts.map((body) => body.model), ["sonar-pro", "gpt-6-astra"]);
+  const bridge = run.items.filter((item) => item.type === "web_search").map((item) => item.search).find((s) => s.route === "sonar" && s.status !== "pending");
+  assert.equal(bridge.citations.length, 64); assert.equal(bridge.truncated, true); assert.equal(run.text, "synthetic answer");
+});
+
+test("M2: cancelling after an executed search keeps executed; a stream break without search events stays unconfirmed", async () => {
+  searchSession();
+  const controller = new AbortController(); const encoder = new TextEncoder();
+  const run = await runChat("claude-sonnet-5", "always", () => {
+    let step = 0;
+    return new Response(new ReadableStream({ pull(stream) {
+      if (step++ === 0) { stream.enqueue(encoder.encode(claudeExecutedThenStallEvents.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(""))); return; }
+      controller.abort(new Error("synthetic user cancellation"));
+      stream.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: "late" } })}\n\n`));
+    } }, { highWaterMark: 0 }));
+  }, { controller });
+  assert.match(run.error.message, /synthetic user cancellation/);
+  assert.equal(run.search.status, "executed"); assert.equal(run.search.citations.length, 1); assert.equal(run.posts.length, 1);
+  searchSession();
+  const broken = await runChat("claude-sonnet-5", "always", () => {
+    let step = 0;
+    return new Response(new ReadableStream({ pull(stream) {
+      if (step++ === 0) stream.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "message_start", message: { usage: { input_tokens: 1 } } })}\n\n`));
+      else stream.error(new Error("synthetic network drop"));
+    } }, { highWaterMark: 0 }));
+  });
+  assert.match(broken.error.message, /synthetic network drop/);
+  assert.equal(broken.search.status, "missing"); assert.equal(broken.posts.length, 1);
+});
+
+test("M8: serverCode JSON responses still carry native search evidence", async () => {
+  const advanced = { serverCode: true };
+  searchSession();
+  const claudeRun = await runChat("claude-sonnet-5", "always", () => Response.json(claudeJsonMessage), { generation: { ...searchGeneration, advanced } });
+  assert.equal(claudeRun.error, undefined);
+  assert.equal(claudeRun.search.status, "executed"); assert.equal(claudeRun.search.citations.length, 1);
+  assert.equal(claudeRun.search.citations[0].url, syntheticSource.url); assert.deepEqual(claudeRun.search.queries, ["synthetic public statistic"]);
+  assert.equal(claudeRun.search.requestCount, 1); assert.equal(claudeRun.text, "합성 통계 답변");
+  searchSession();
+  const responsesRun = await runChat("gpt-6-astra", "always", () => Response.json(responsesJsonResponse), { generation: { ...searchGeneration, advanced } });
+  assert.equal(responsesRun.error, undefined);
+  assert.equal(responsesRun.search.status, "executed"); assert.equal(responsesRun.search.citations.length, 1);
+  assert.deepEqual(responsesRun.search.queries, ["synthetic public statistic"]); assert.equal(responsesRun.text, "합성 통계 답변");
+});
+
+test("H2: deep research merging more than 64 sources truncates after the paid searches instead of failing", async () => {
+  searchSession(); let search; let posts = 0;
+  globalThis.fetch = async (_url, init) => {
+    if (init.method !== "POST") throw new Error("unexpected GET");
+    const body = JSON.parse(init.body); posts++;
+    if (posts === 1) return Response.json({ choices: [{ message: { content: JSON.stringify({ queries: ["first topic", "second topic", "third topic"] }) } }] });
+    const tag = body.messages[0].content.match(/first|second|third/)?.[0] ?? posts;
+    return Response.json({ choices: [{ message: { content: `synthetic ${tag} summary` } }],
+      citations: Array.from({ length: 30 }, (_, i) => `https://example.test/${tag}/${i}`) });
+  };
+  try {
+    const evidence = await searchGateway.prepareSharedWebEvidence("synthetic current query", "deep", new AbortController(), (value) => { search = value; }, ["claude-sonnet-5"]);
+    assert.ok(evidence); assert.equal(posts, 4);
+    assert.equal(search.citations.length, 64); assert.equal(search.truncated, true); assert.equal(search.status, "executed");
+  } finally { globalThis.fetch = searchOriginalFetch; }
+});
+
+test("M2: cancelling while the paid POST is in flight records an unconfirmed search, with one POST and no retry", async () => {
+  searchSession(); const controller = new AbortController();
+  const run = await runChat("claude-sonnet-5", "always", () => {
+    controller.abort(new Error("synthetic user cancellation")); throw controller.signal.reason;
+  }, { controller });
+  assert.match(run.error.message, /synthetic user cancellation/);
+  assert.equal(run.search.status, "missing"); assert.equal(run.posts.length, 1);
+  // A failure that is not a cancellation, before any response, is still a plain failure.
+  searchSession();
+  const refused = await runChat("claude-sonnet-5", "always", () => new Response("{}", { status: 503 }));
+  assert.ok(refused.error); assert.equal(refused.search.status, "failed"); assert.equal(refused.posts.length, 1);
+});
+
+test("H1: every native search failed with no answer text at all is an error (no retry); with text it is kept", async () => {
+  searchSession();
+  const noText = claudeAllFailedEvents.filter((event) => !(event.type === "content_block_delta" && event.delta?.type === "text_delta"));
+  const run = await runChat("claude-sonnet-5", "always", () => sseResponse(noText));
+  assert.match(run.error.message, /모델 자체 검색 도구가 실패/); assert.equal(run.search.status, "failed"); assert.equal(run.posts.length, 1);
+  searchSession();
+  const withText = await runChat("claude-sonnet-5", "always", () => sseResponse(claudeAllFailedEvents));
+  assert.equal(withText.error, undefined); assert.equal(withText.text, "Complete answer.");
+});

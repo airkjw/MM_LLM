@@ -23,7 +23,7 @@ for (const status of [301, 302, 303, 307, 308]) for (const sameOrigin of [true, 
         const body = JSON.stringify({ model: "synthetic-model", prompt: "synthetic-body" });
         await assert.rejects(gatewayRequest(fixture.origin + "/initial", {
           method: "POST", body, headers: { "x-api-key": "synthetic-only", Authorization: "Bearer synthetic-only" }, redirect
-        }, { fetch: (url, init) => { calls++; assert.equal(init.redirect, "error"); return originalFetch(url, init); } }), /서버에 연결/);
+        }, { fetch: (url, init) => { calls++; assert.equal(init.redirect, "error"); return originalFetch(url, init); } }), /다른 주소/);
         assert.equal(calls, 1); assert.equal(fixture.first.length, 1); assert.equal(fixture.first[0].method, "POST");
         assert.equal(fixture.first[0].body, body); assert.equal(fixture.first[0].headers["x-api-key"], "synthetic-only");
         assert.deepEqual(fixture.target, [], "target must receive zero calls, bodies and headers");
@@ -184,7 +184,7 @@ test("actual native Claude/Responses/Gemini search POSTs reject redirects and ma
       };
       await assert.rejects(async () => {
         for await (const event of gateway.streamChat(id, messages, "synthetic query", new AbortController(), { mode: "always" }, generation)) events.push(event);
-      }, /서버에 연결/);
+      }, /다른 주소/);
       assert.equal(gets, 1); assert.equal(posts, 1); assert.equal(fixture.first.length, 1); assert.equal(fixture.first[0].method, "POST");
       const body = JSON.parse(fixture.first[0].body);
       assert.deepEqual(body.tools, id.startsWith("claude") ? [{ type: "web_search_20250305", name: "web_search", max_uses: 2 }]
@@ -287,7 +287,7 @@ test("raw PDF on Chat or Responses routes blocks before the billed Sonar bridge"
 });
 
 test("native failures never retry or switch to a bridge after a billed call", async () => {
-  for (const scenario of ["http", "tool", "stream"]) {
+  for (const scenario of ["http", "tool", "tool-with-text", "stream"]) {
     session([model("claude-sonnet-5"), sonar]); let paid = 0; const items = [];
     globalThis.fetch = async (_url, init) => {
       if (init.method !== "POST") return Response.json({ id: "claude-sonnet-5", pricing: { web_search_per_1k: 1 } });
@@ -295,9 +295,14 @@ test("native failures never retry or switch to a bridge after a billed call", as
       if (scenario === "http") return new Response("{}", { status: 503 });
       if (scenario === "stream") return sse([{ type: "error", error: { type: "overloaded_error", message: "synthetic failure" } }]);
       return sse([{ type: "content_block_start", content_block: { type: "web_search_tool_result", tool_use_id: "srv_1",
-        content: { type: "web_search_tool_result_error", error_code: "unavailable" } } }, { type: "message_stop" }]);
+        content: { type: "web_search_tool_result_error", error_code: "unavailable" } } },
+      ...(scenario === "tool-with-text" ? [{ type: "content_block_delta", delta: { type: "text_delta", text: "synthetic answer" } }] : []),
+      { type: "message_stop" }]);
     };
-    await assert.rejects(async () => { for await (const item of gateway.streamChat("claude-sonnet-5", messages, "synthetic query", new AbortController(), { mode: "always" }, generation)) items.push(item); });
+    // A finished answer with text is kept even when every search call failed (H1); with no text at all, as on http and stream errors, it rejects.
+    const run = async () => { for await (const item of gateway.streamChat("claude-sonnet-5", messages, "synthetic query", new AbortController(), { mode: "always" }, generation)) items.push(item); };
+    if (scenario === "tool-with-text") { await run(); assert.equal(items.filter((i) => i.type === "delta").map((i) => i.text).join(""), "synthetic answer"); }
+    else await assert.rejects(run);
     assert.equal(paid, 1); assert.equal(lastSearch(items).status, "failed");
   }
 });
@@ -385,4 +390,16 @@ test("Sonar auto preserves ordinary questions with explicit native execution met
     return sse([{ citations: [source.url], choices: [{ delta: { content: "synthetic ordinary answer" }, finish_reason: "stop" }] }]);
   };
   const items = await collect("sonar-pro", "auto"); assert.equal(paid, 1); assert.equal(lastSearch(items).status, "executed");
+});
+
+test("L4: a paid POST redirect rejection is not reported as a network failure and is never retried", async () => {
+  const fixture = await redirectFixture(307);
+  try {
+    await assert.rejects(gatewayRequest(fixture.origin + "/initial", { method: "POST", body: "{}" }, { fetch: originalFetch }), (error) => {
+      assert.match(error.message, /다른 주소/); assert.match(error.message, /잔액을 확인/);
+      assert.doesNotMatch(error.message, /네트워크를 확인/); assert.equal(error instanceof GatewayError, false); assert.equal(error.status, undefined);
+      return true;
+    });
+    assert.equal(fixture.first.length, 1); assert.deepEqual(fixture.target, []);
+  } finally { await fixture.close(); }
 });

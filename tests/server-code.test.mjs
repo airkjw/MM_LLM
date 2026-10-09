@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildProviderRequest, ProviderEventNormalizer } from '../src/shared/provider-adapters.ts';
 import { validatedAdvancedSettings } from '../src/shared/request-validation.ts';
-import { CODE_BILLING_NOTICE, serverCodeProvider, sanitizeServerCode, settleServerCode } from '../src/shared/server-code.ts';
+import { ServerCodeNormalizer, CODE_BILLING_NOTICE, serverCodeProvider, sanitizeServerCode, settleServerCode } from '../src/shared/server-code.ts';
 import { serializeThreadMarkdown } from '../src/shared/thread-export.ts';
 const model = id => ({ id, type: 'llm' });
 const build = (id, advanced = {}) => buildProviderRequest({ model:model(id), messages:[{role:'user',content:'synthetic calculation'}], advanced, reasoningMode:'auto' });
@@ -70,4 +70,32 @@ test('Responses documented container file citations become safe metadata without
     {type:'message',content:[{type:'output_text',text:'synthetic file',annotations:[{type:'container_file_citation',container_id:'cntr_synthetic',file_id:'file_synthetic',filename:'synthetic.csv',url:'https://example.org/secret'}]}]}]});
   const r=events.filter(e=>e.type==='server_code').at(-1).result;
   assert.deepEqual(r.artifacts,[{kind:'file',id:'file_synthetic',name:'synthetic.csv'}]);assert.doesNotMatch(JSON.stringify(r),/cntr_|url|https/);
+});
+
+test('M1: ninth and later results are omitted and counted instead of throwing; earlier ones keep updating',()=>{
+  const n=new ServerCodeNormalizer('claude');
+  for(let i=0;i<12;i++){
+    const out=n.accept({type:'content_block_start',index:i,content_block:{type:'server_tool_use',id:`srv_${i}`,name:'bash_code_execution',input:{command:`echo ${i}`}}});
+    assert.equal(out.length,i<8?1:0);
+  }
+  assert.equal(n.omittedCount,4);
+  assert.deepEqual(n.accept({type:'content_block_start',index:20,content_block:{type:'bash_code_execution_tool_result',tool_use_id:'srv_9',content:{type:'bash_code_execution_result',stdout:'x',stderr:'',return_code:0}}}),[]);
+  const again=n.accept({type:'content_block_start',index:21,content_block:{type:'bash_code_execution_tool_result',tool_use_id:'srv_0',content:{type:'bash_code_execution_result',stdout:'ok',stderr:'',return_code:0}}});
+  assert.equal(again[0].stdout,'ok');assert.equal(n.omittedCount,4);
+  const r=new ServerCodeNormalizer('responses');let last=[];
+  for(let i=0;i<12;i++) last=r.accept({type:'response.output_item.done',item:{type:'code_interpreter_call',id:`ci_${i}`,status:'completed',code:'x',outputs:null}});
+  assert.deepEqual(last,[]);assert.equal(r.omittedCount,4);
+});
+test('L6: code, stdout, stderr and logs are exported inside fences longer than any backtick run',()=>{
+  const hostile='### 제목\n> 인용\n```';
+  const text=serializeThreadMarkdown({title:'synthetic',modelId:'claude-sonnet-5',createdAt:'now',updatedAt:'now',messages:[{role:'assistant',text:'',createdAt:'now',
+    serverCodeResults:[{id:'srv_x',provider:'claude',status:'completed',code:'print(1)',stdout:hostile,stderr:'## err',outputLogs:'# log',summary:'ok',artifacts:[]}]}]});
+  const lines=text.split('\n');let fence='';const outside=[];
+  for(const line of lines){
+    if(fence){ if(line===fence) fence=''; continue; }
+    const m=/^(`{3,})$/.exec(line); if(m){fence=m[1];continue;} outside.push(line);
+  }
+  assert.ok(text.includes('````\n### 제목\n> 인용\n```\n````'));
+  assert.equal(outside.some(l=>/^(###|##|#|>) ?(제목|인용|err|log)/.test(l)),false);
+  assert.equal(fence,'');
 });

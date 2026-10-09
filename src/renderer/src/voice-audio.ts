@@ -20,10 +20,13 @@ export class PcmResampler {
   }
   clear():void {this.samples=[];this.position=0;}
 }
+// Frames awaiting main-process acknowledgement (8 x 100ms = 800ms); no automatic drop or resend.
+// Main's input credit (realtime-session.ts INPUT_CREDIT_MS) admits this whole backlog arriving at once.
+const MAX_IN_FLIGHT=8;
 export type VoiceAudioHooks = { frame: (frame:VoiceFrame)=>Promise<void>; played:(sequence:number,samples:number)=>void; failed:()=>void; ended:()=>void };
 export class VoiceAudio {
   private stream?: MediaStream; private context?: AudioContext; private source?: MediaStreamAudioSourceNode; private worklet?: AudioWorkletNode; private silence?: GainNode;
-  private closed=false; private active=false;private muted=false;private sending=false;private sequence=0;
+  private closed=false; private active=false;private muted=false;private inFlight=0;private sequence=0;
   private remainder=new Uint8Array();private resampler?:PcmResampler;
   private outputs=new Map<number,{source:AudioBufferSourceNode;start:number;samples:number;itemId?:string}>();private nextAt=0;
   private itemPlayed=new Map<string,number>();
@@ -57,9 +60,9 @@ export class VoiceAudio {
       const bytes=this.resampler!.push(samples);const combined=new Uint8Array(this.remainder.length+bytes.length);combined.set(this.remainder);combined.set(bytes,this.remainder.length);
       const size=this.rate/10*2;let at=0;
       while(combined.length-at>=size){
-        if(this.sending)throw new Error('음성 전송 지연');this.sending=true;
+        if(this.inFlight>=MAX_IN_FLIGHT)throw new Error('음성 전송 지연');this.inFlight++;
         void this.hooks.frame({id:this.id,sequence:++this.sequence,format:'pcm_s16le',sampleRate:this.rate,channels:1,bytes:combined.slice(at,at+size)})
-          .catch(()=>{if(!this.closed)this.hooks.failed();}).finally(()=>{this.sending=false;});at+=size;
+          .catch(()=>{if(!this.closed)this.hooks.failed();}).finally(()=>{this.inFlight--;});at+=size;
       }
       this.remainder=combined.slice(at);
     }catch {this.hooks.failed();}
@@ -83,7 +86,7 @@ export class VoiceAudio {
   interrupt(itemId?:string):number {
     let samples=itemId?this.itemPlayed.get(itemId)??0:0;const now=this.context?.currentTime??0;
     for(const [sequence,entry] of this.outputs){const played=Math.max(0,Math.min(entry.samples,Math.floor((now-entry.start)*24000)));
-      if(entry.itemId===itemId)samples+=played;entry.source.onended=null;entry.source.stop();entry.source.disconnect();this.outputs.delete(sequence);}
+      if(itemId&&entry.itemId===itemId)samples+=played;entry.source.onended=null;entry.source.stop();entry.source.disconnect();this.outputs.delete(sequence);}
     this.nextAt=now;this.itemPlayed.clear();return Math.floor(samples/24);
   }
   stopInput():void {
