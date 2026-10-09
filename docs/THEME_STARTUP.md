@@ -22,3 +22,9 @@ After startup, `data-theme` changes only through the main → renderer channel `
 ## Persistence
 
 When settings load, the renderer writes `data-theme-preference` and syncs the saved preference to the main process once; later syncs happen only when the preference changes, and a failed sync is retried for the same value. The main process writes `appearance.json` only when the preference differs from the persisted value, including the first run where no value exists, so repeated system-theme notifications never rewrite the file. Writes use a same-directory temporary file, owner-only permissions where supported, and atomic rename. Failed persistence is logged without exposing user data; the renderer reports a safe diagnostic, the live theme still applies, and the previous complete record remains usable.
+
+## Settings screen and rendered verification
+
+Since the settings redesign the theme is chosen in **앱 설정 › 화면** as a `role="radiogroup"` (시스템 · 라이트 · 다크, 시스템 marked 권장). A change saves at once through `updateSettings`, the renderer syncs the preference with `appearance:set-theme`, and `data-theme` changes only when the pushed `appearance:resolved` value differs. The command palette's 화면 모드 commands take the same path. The font size (`data-font-size`), density, reduce-motion and shortcut-hint settings are separate root attributes and do not touch the theme channel.
+
+`scripts/ui-smoke.mjs` (development only, mock mode) exercises this end to end in the built app under Xvfb: it clicks the radiogroup, waits for `document.documentElement.dataset.theme`, and records `--color-bg` on every screen. The observed values are `#F6F7F8` for light and `#0D0E10` for dark, equal to the `BrowserWindow` background colors above, at all three window sizes and all three font sizes. This verifies the Linux renderer only; macOS appearance changes (for example the automatic day/night switch) and Windows were not exercised.
