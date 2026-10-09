@@ -17,6 +17,18 @@ const models=[{id:'gpt-6-astra',type:'llm' as const},{id:'gpt-realtime-2.1-mini'
 before(async()=>{({createRoot}=await import('react-dom/client'));({VoicePanel}=await import('../src/renderer/src/VoicePanel'));({default:App}=await import('../src/renderer/src/App'));({ConfirmProvider}=await import('../src/renderer/src/components/ConfirmDialog'));});
 async function render(ui:React.ReactNode){if(!host){host=document.createElement('div');document.body.append(host);root=createRoot(host)}await act(async()=>root!.render(ui));await flush()}
 async function flush(){await act(async()=>{await new Promise(r=>setTimeout(r,10))})}
+// A fixed flush() is not a synchronisation point once the test crosses a real process boundary (the forked main
+// child): under CPU contention the IPC round trip and the encrypted write outlast it. Cross-process steps wait on
+// the observable state instead, with a generous ceiling so a real failure still reports what never happened.
+async function waitFor(check:()=>boolean|Promise<boolean>,what:string,timeout=8000){
+ const end=Date.now()+timeout;
+ for(;;){let ok=false;try{ok=await check()}catch{ok=false}if(ok)return;if(Date.now()>end)throw new Error('timed out waiting for '+what);await flush()}
+}
+const voiceStatus=()=>document.querySelector('.voice-actions [role="status"]')?.textContent??'';
+const waitActive=()=>waitFor(()=>/^마이크 사용 중/.test(voiceStatus()),'active voice state');
+const waitClosed=()=>waitFor(()=>voiceStatus()==='종료','closed voice state');
+const waitSaved=()=>waitFor(()=>[...document.querySelectorAll<HTMLButtonElement>('.voice-panel button')].some(b=>b.textContent==='텍스트 저장됨'),'saved state');
+const waitDiscardNotice=()=>waitFor(()=>/폐기/.test(document.body.textContent??''),'discard notice');
 async function click(e:Element){await act(async()=>{(e as HTMLElement).focus();(e as HTMLElement).click()});await flush()}
 async function select(e:HTMLSelectElement,value:string){await act(async()=>{e.value=value;e.dispatchEvent(new browser.Event('change',{bubbles:true}))});await flush()}
 const button=(s:string)=>[...document.querySelectorAll<HTMLButtonElement>('.voice-panel button')].find(b=>b.textContent===s)!;
@@ -28,6 +40,7 @@ function fixture(options:{pending?:boolean;denied?:boolean}={}){Context.all=[];W
  return {track,counts,resolve:()=>resolve(),emit,api,onApply:(text:string)=>{counts.apply++;applied=text},applied:()=>applied};}
 async function panel(f:ReturnType<typeof fixture>){await render(<VoicePanel models={models} threadId={thread.id} canApply onApply={f.onApply} onSaved={()=>{}} onUsageChanged={()=>{}}/>);await act(async()=>{document.querySelector('details')!.open=true});await flush()}
 async function start(){await click(document.querySelector('[aria-label="음성 외부 전송과 과금 동의"]')!);await click(button('시작'))}
+const rail=(label:string)=>document.querySelector<HTMLButtonElement>(`nav.rail button[title="${label}"]`)!;
 afterEach(async()=>{if(root)await act(async()=>root!.unmount());root=null;host?.remove();host=null;});
 test('actual VoicePanel dedicated catalog/consent and mode changes make no network; double Start uses one request and mic with accessible status',async()=>{
  const f=fixture();await panel(f);assert.equal(button('시작').disabled,true);const picker=document.querySelector<HTMLSelectElement>('[aria-label="실시간 음성 모델"]')!;assert.deepEqual([...picker.options].map(o=>o.value),['gpt-realtime-2.1-mini','gemini-3.8-live']);await select(picker,'gemini-3.8-live');assert.equal(f.counts.prepare,0);await click(document.querySelector('[aria-label="음성 외부 전송과 과금 동의"]')!);await act(async()=>{button('시작').click();button('시작').click()});await flush();assert.equal(f.counts.prepare,1);assert.equal(f.counts.connect,1);assert.equal(f.counts.mic,1);assert.match(document.querySelector('.voice-actions [role="status"]')!.textContent!,/마이크 사용 중.*마이크 켜짐/);assert.match(document.body.textContent!,/1분.*예약.*실제 사용량.*음소거는 과금 종료가 아닙니다/);await click(button('음소거'));assert.equal(f.track.enabled,false);assert.equal(button('마이크 다시 켜기').getAttribute('aria-pressed'),'true');await click(button('종료'));assert.equal(f.track.stops,1);assert.equal(Context.all[0].closed,1);assert.equal(Worklet.all[0].port.onmessage,null);assert.equal(f.counts.sub,0);
@@ -46,9 +59,11 @@ test('actual dictation finite preview needs closed final and explicit apply; con
  await render(<></>);const g=fixture();await panel(g);await start();await act(async()=>g.emit({type:'text',final:'voice text',provisional:''}));await click(button('종료'));assert.equal(button('텍스트 저장').disabled,true);assert.equal(g.counts.save,0);await click(document.querySelector('[aria-label="음성 텍스트 암호화 저장 동의"]')!);await click(button('텍스트 저장'));assert.equal(g.counts.save,1);
 });
 test('actual App applies dictation final after existing composer draft without autosend and logout unmounts all audio',async()=>{
- const f=fixture();await render(<ConfirmProvider><App/></ConfirmProvider>);await act(async()=>{document.querySelector<HTMLDetailsElement>('.voice-panel')!.open=true});await flush();const input=document.querySelector<HTMLTextAreaElement>('.composer-input')!;
- await act(async()=>{Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype,'value')!.set!.call(input,'existing draft');input.dispatchEvent(new browser.Event('input',{bubbles:true}))});await select(document.querySelector('[aria-label="음성 용도"]')!,'dictation');await start();await act(async()=>f.emit({type:'text',final:'accepted dictation',provisional:'not final'}));await click(button('종료'));await click(button('확정문을 초안에 추가'));assert.equal(document.querySelector<HTMLTextAreaElement>('.composer-input')!.value,'existing draft\n\naccepted dictation');assert.equal(f.counts.streams,0);
- await click(button('시작'));assert.equal(f.counts.connect,2);await click(document.querySelector('.account-trigger')!);await click(document.querySelector('.logout-action')!);assert.equal(f.counts.logout,1);assert.equal(f.counts.sub,0);assert.equal(f.track.stops,2);assert.equal(Context.all.every(c=>c.closed===1),true);assert.equal(document.querySelector('.voice-panel'),null);
+ // Stage 4 (D4.6): voice is the rail screen, so the session opens there (not in the conversation's <details>) and the
+ // draft is read on the conversation screen; the second session ends when the screen is left for the account settings.
+ const f=fixture();await render(<ConfirmProvider><App/></ConfirmProvider>);await click(rail('음성'));await flush();const input=document.querySelector<HTMLTextAreaElement>('.composer-input')!;
+ await act(async()=>{Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype,'value')!.set!.call(input,'existing draft');input.dispatchEvent(new browser.Event('input',{bubbles:true}))});await click(sbutton('받아쓰기'));await sstart();await act(async()=>f.emit({type:'text',final:'accepted dictation',provisional:'not final'}));await click(sbutton('종료'));await click(sbutton('확정문을 초안에 추가'));await click(rail('대화'));await flush();assert.equal(document.querySelector<HTMLTextAreaElement>('.composer-input')!.value,'existing draft\n\naccepted dictation');assert.equal(f.counts.streams,0);
+ await click(rail('음성'));await flush();await sstart();assert.equal(f.counts.connect,2);await click(document.querySelector('.account-trigger')!);await click(document.querySelector('.logout-action')!);assert.equal(f.counts.logout,1);assert.equal(f.counts.sub,0);assert.equal(f.track.stops,2);assert.equal(Context.all.every(c=>c.closed===1),true);assert.equal(document.querySelector('.voice-panel'),null);assert.equal(document.querySelector('.voice-screen'),null);
 });
 test('actual panel keyboard focus, narrow portrait and both themes retain native controls and session cleanup on unmount',async()=>{
  for(const theme of ['light','dark']){const f=fixture();document.documentElement.dataset.theme=theme;browser.innerWidth=680;browser.innerHeight=820;await panel(f);const summary=document.querySelector('summary')!;(summary as HTMLElement).focus();assertFocused(summary);await start();button('음소거').focus();assertFocused(button('음소거'));assert.equal(document.querySelectorAll('.voice-panel select').length,2);assert.equal(document.querySelector('[aria-label="음성 외부 전송과 과금 동의"]')!.tagName,'INPUT');await render(<></>);assert.equal(f.track.stops,1);assert.equal(Context.all[0].closed,1);assert.equal(f.counts.sub,0);}
@@ -116,10 +131,22 @@ test('actual target replacement or unmount rejects stale save callbacks and save
 });
 test('actual App logout during deferred voice save unmounts the owner before its response returns',async()=>{
  browser.innerWidth=1024;browser.innerHeight=900;
- const f=fixture();await render(<ConfirmProvider><App/></ConfirmProvider>);await act(async()=>{document.querySelector<HTMLDetailsElement>('.voice-panel')!.open=true});await flush();await readyToSave(f);
- const pending=deferredSave();f.api.saveVoiceText=async()=>{f.counts.save++;return pending.promise};await click(button('텍스트 저장'));
- await click(document.querySelector('.account-trigger')!);await click(document.querySelector('.logout-action')!);assert.equal(f.counts.logout,1);assert.equal(document.querySelector('.voice-panel'),null);
+ // Stage 4 (D4.6): the session runs on the voice screen; the steps match the screen markup, the assertions are unchanged.
+ const f=fixture();await render(<ConfirmProvider><App/></ConfirmProvider>);await click(rail('음성'));await flush();await sstart();await act(async()=>f.emit({type:'text',final:'synthetic save text',provisional:''}));await click(sbutton('종료'));await click(document.querySelector('[aria-label="음성 텍스트 암호화 저장 동의"]')!);
+ const pending=deferredSave();f.api.saveVoiceText=async()=>{f.counts.save++;return pending.promise};await click(sbutton('텍스트 저장'));
+ await click(document.querySelector('.account-trigger')!);await click(document.querySelector('.logout-action')!);assert.equal(f.counts.logout,1);assert.equal(document.querySelector('.voice-panel'),null);assert.equal(document.querySelector('.voice-screen'),null);
  await act(async()=>pending.resolve({...thread}));await flush();assert.equal(document.querySelector('.voice-panel'),null);assert.doesNotMatch(document.body.textContent!,/텍스트 저장됨/);
+});
+test('actual App: leaving the voice screen mid-session ends it (no hidden live microphone, no reconnect, no save)',async()=>{
+ // Coordinator requirement (Stage 4): the voice screen is never kept alive; leaving it runs the existing cleanup.
+ const f=fixture();await render(<ConfirmProvider><App/></ConfirmProvider>);await click(rail('음성'));await flush();await sstart();
+ assert.equal(f.counts.connect,1);assert.equal(f.counts.mic,1);assert.match(pill(),/^마이크 사용 중/);
+ await click(rail('대화'));await flush();
+ assert.equal(document.querySelector('.voice-screen'),null);assert.equal(f.track.stops,1);assert.equal(Context.all.every(c=>c.closed===1),true);
+ assert.equal(f.counts.sub,0);assert.equal(f.counts.stop,1,'the session is stopped once');assert.equal(f.counts.save,0);
+ await click(rail('음성'));await flush();
+ assert.equal(f.counts.connect,1,'returning does not reconnect');assert.equal(f.counts.mic,1);assert.equal(f.counts.prepare,1);
+ assert.equal(sbutton('시작').disabled,true,'a new session needs consent again');
 });
 
 function delayed(){let reject!:(error:Error)=>void,resolve!:(value:any)=>void;const promise=new Promise<any>((yes,no)=>{reject=no;resolve=yes});return{promise,reject,resolve};}
@@ -163,9 +190,10 @@ test('registered collapsed completed conversation must not offer Save after actu
   f.api.controlVoice=async(r:any)=>invoke('voice:control',r);f.api.sendVoiceFrame=async(r:any)=>invoke('voice:frame',r);
   f.api.stopVoice=async(id:string,immediate:boolean)=>{f.counts.stop++;return invoke('voice:stop',id,immediate)};
   f.api.saveVoiceText=async(id:string,threadId:string,consent:boolean)=>{f.counts.save++;return invoke('voice:save-text',id,threadId,consent)};
-  await render(<VoicePanel models={models} threadId={target.id} canApply onApply={f.onApply} onSaved={()=>{}} onUsageChanged={()=>{}}/>);await act(async()=>{document.querySelector('details')!.open=true});await flush();await start();
-  await act(async()=>invoke('fixture:transcript'));await flush();await click(button('종료'));await click(document.querySelector('[aria-label="음성 텍스트 암호화 저장 동의"]')!);assert.equal(button('텍스트 저장').disabled,false);assert.equal((await invoke('inspect')).hasCompleted,true);
-  await act(async()=>{document.querySelector('details')!.open=false});await flush();await act(async()=>{document.querySelector('details')!.open=true});await flush();const discarded=await invoke('inspect');assert.equal(discarded.hasCompleted,false);const enabled=!button('텍스트 저장').disabled;
+  await render(<VoicePanel models={models} threadId={target.id} canApply onApply={f.onApply} onSaved={()=>{}} onUsageChanged={()=>{}}/>);await act(async()=>{document.querySelector('details')!.open=true});await flush();await start();await waitActive();
+  await act(async()=>invoke('fixture:transcript'));await waitFor(()=>document.querySelector('[aria-label="음성 텍스트 미리보기"]')?.textContent?.includes('SYNTHETIC_CLOSED_PREVIEW')===true,'transcript preview');
+  await click(button('종료'));await waitClosed();await click(document.querySelector('[aria-label="음성 텍스트 암호화 저장 동의"]')!);assert.equal(button('텍스트 저장').disabled,false);assert.equal((await invoke('inspect')).hasCompleted,true);
+  await act(async()=>{document.querySelector('details')!.open=false});await flush();await act(async()=>{document.querySelector('details')!.open=true});await flush();await waitFor(async()=>(await invoke('inspect')).hasCompleted===false,'main to discard the collapsed claim');const discarded=await invoke('inspect');assert.equal(discarded.hasCompleted,false);const enabled=!button('텍스트 저장').disabled;
   if(enabled)await click(button('텍스트 저장'));const observed=await invoke('inspect');console.log('COLLAPSED_COMPLETED_SAVE_ACTUAL_MAIN',JSON.stringify({enabledAfterDiscard:enabled,hasCompleted:observed.hasCompleted,saveCalls:f.counts.save,storedMessages:observed.thread.messages.length,error:document.body.textContent?.includes('저장하지 못했습니다')}));
   assert.equal(enabled,false,'reopened conversation offers Save for a claim already discarded by actual main');
  }finally{await render(<></>);const exited=once(child,'exit');child.send({kind:'quit',seq:++seq});await exited;}
@@ -237,21 +265,22 @@ async function withMainPanel(run:(f:ReturnType<typeof fixture>,invoke:(name:stri
  }finally{await render(<></>);const exited=once(child,'exit');child.send({kind:'quit',seq:++seq});await exited}
 }
 async function mainReadyToSave(invoke:(name:string,...args:any[])=>Promise<any>){
- const consent=document.querySelector<HTMLInputElement>('[aria-label="음성 외부 전송과 과금 동의"]')!;if(!consent.checked)await click(consent);await click(button('시작'));
- await act(async()=>invoke('fixture:transcript'));await flush();await click(button('종료'));await click(document.querySelector('[aria-label="음성 텍스트 암호화 저장 동의"]')!);
+ const consent=document.querySelector<HTMLInputElement>('[aria-label="음성 외부 전송과 과금 동의"]')!;if(!consent.checked)await click(consent);await click(button('시작'));await waitActive();
+ await act(async()=>invoke('fixture:transcript'));await waitFor(()=>document.querySelector('[aria-label="음성 텍스트 미리보기"]')?.textContent?.includes('SYNTHETIC_CLOSED_PREVIEW')===true,'transcript preview');
+ await click(button('종료'));await waitClosed();await click(document.querySelector('[aria-label="음성 텍스트 암호화 저장 동의"]')!);
 }
 test('registered actual main/component completed claims are discarded on cancelled backups or failed refresh with no invalid save action',{timeout:20000},async()=>{
  for(const operation of ['backup:export','backup:restore','session:get'])await withMainPanel(async(f,invoke)=>{
   await mainReadyToSave(invoke);assert.equal(button('텍스트 저장').disabled,false);assert.equal(f.counts.sub,1);
-  await act(async()=>invoke('fixture:transition',operation));await flush();assert.equal((await invoke('inspect')).hasCompleted,false);
+  await act(async()=>invoke('fixture:transition',operation));await waitDiscardNotice();assert.equal((await invoke('inspect')).hasCompleted,false);
   assert.equal(button('텍스트 저장').disabled,true);assert.equal(document.querySelector('[aria-label="음성 텍스트 미리보기"]'),null);
   assert.match(document.body.textContent!,/확정문.*폐기/);assert.equal(f.counts.sub,0);assert.equal(f.counts.save,0);
-  await mainReadyToSave(invoke);await click(button('텍스트 저장'));assert.equal((await invoke('inspect')).thread.messages.length,1);assert.equal(button('텍스트 저장됨').disabled,true);
+  await mainReadyToSave(invoke);await click(button('텍스트 저장'));await waitSaved();assert.equal((await invoke('inspect')).thread.messages.length,1);assert.equal(button('텍스트 저장됨').disabled,true);
  });
 });
 test('registered actual main/component active transition releases microphone, playback, timers and listener before explicit restart',{timeout:20000},async()=>{
  for(const operation of ['backup:export','backup:restore','session:get'])await withMainPanel(async(f,invoke)=>{
-  await start();await click(button('음소거'));await act(async()=>invoke('fixture:transition',operation));await flush();
+  await start();await waitActive();await click(button('음소거'));await act(async()=>invoke('fixture:transition',operation));await waitClosed();
   assert.equal((await invoke('inspect')).size,0);assert.equal(Context.all[0].closed,1);assert.equal(f.track.stops,1);assert.equal(f.counts.sub,0);
   assert.match(document.querySelector('.voice-actions [role="status"]')!.textContent!,/종료/);assert.match(document.body.textContent!,/폐기/);
   const status=document.querySelector('.voice-actions [role="status"]')!.textContent;await flush();assert.equal(document.querySelector('.voice-actions [role="status"]')!.textContent,status);assert.equal(f.counts.connect,1);
@@ -260,20 +289,20 @@ test('registered actual main/component active transition releases microphone, pl
 });
 test('registered actual main/component failed save retries, collapse invalidates pending result, and a new pending claim survives it',{timeout:20000},async()=>{
  await withMainPanel(async(f,invoke)=>{
-  await mainReadyToSave(invoke);await invoke('fixture:fail-save');await click(button('텍스트 저장'));assert.equal(button('텍스트 저장').disabled,false);assert.equal((await invoke('inspect')).thread.messages.length,0);
+  await mainReadyToSave(invoke);await invoke('fixture:fail-save');await click(button('텍스트 저장'));await waitFor(()=>/암호화 저장하지 못했습니다/.test(document.body.textContent??''),'failed save notice');assert.equal(button('텍스트 저장').disabled,false);assert.equal((await invoke('inspect')).thread.messages.length,0);
   await invoke('fixture:repair-save');await invoke('fixture:hold-save');await click(button('텍스트 저장'));await invoke('fixture:wait-save');
   await act(async()=>{document.querySelector('details')!.open=false});await flush();await act(async()=>{document.querySelector('details')!.open=true});await flush();
-  assert.equal(button('텍스트 저장').disabled,true);assert.match(document.body.textContent!,/폐기/);assert.equal((await invoke('inspect')).hasCompleted,false);
+  await waitDiscardNotice();assert.equal(button('텍스트 저장').disabled,true);assert.match(document.body.textContent!,/폐기/);await waitFor(async()=>(await invoke('inspect')).hasCompleted===false,'main to discard the collapsed claim');assert.equal((await invoke('inspect')).hasCompleted,false);
   await mainReadyToSave(invoke);await click(button('텍스트 저장'));assert.equal(f.counts.save,3);assert.equal(button('시작').disabled,true);
-  await act(async()=>invoke('fixture:release-save'));await flush();assert.equal((await invoke('inspect')).thread.messages.length,1);assert.equal(button('텍스트 저장됨').disabled,true);assert.equal(f.counts.sub,0);
+  await act(async()=>invoke('fixture:release-save'));await waitSaved();assert.equal((await invoke('inspect')).thread.messages.length,1);assert.equal(button('텍스트 저장됨').disabled,true);assert.equal(f.counts.sub,0);
  });
 });
 test('registered actual main/component pending encrypted save invalidated by transition cannot silently re-enable discarded text',{timeout:20000},async()=>{
  await withMainPanel(async(f,invoke)=>{
   await mainReadyToSave(invoke);await invoke('fixture:hold-save');await click(button('텍스트 저장'));await invoke('fixture:wait-save');
-  await act(async()=>invoke('fixture:transition','backup:export'));await act(async()=>invoke('fixture:release-save'));await flush();
+  await act(async()=>invoke('fixture:transition','backup:export'));await act(async()=>invoke('fixture:release-save'));await waitDiscardNotice();
   assert.equal((await invoke('inspect')).thread.messages.length,0);assert.equal(button('텍스트 저장').disabled,true);assert.match(document.body.textContent!,/폐기/);assert.doesNotMatch(document.body.textContent!,/저장하지 못했습니다/);
-  await mainReadyToSave(invoke);await click(button('텍스트 저장'));assert.equal((await invoke('inspect')).thread.messages.length,1);assert.equal(f.counts.save,2);
+  await mainReadyToSave(invoke);await click(button('텍스트 저장'));await waitSaved();assert.equal((await invoke('inspect')).thread.messages.length,1);assert.equal(f.counts.save,2);
  });
 });
 
@@ -287,4 +316,67 @@ test('registered Stop retires pending controls during Soniox final drain while t
  await act(async()=>stopPending.reject(new Error('synthetic owned stop failure')));await flush();
  assert.match(document.querySelector('[role="alert"]')!.textContent!,/종료.*확인/);assert.equal(f.counts.sub,0);assert.equal(button('확정문을 초안에 추가').disabled,false);
  await click(button('확정문을 초안에 추가'));assert.equal(f.applied(),'SYNTHETIC_DRAIN_FINAL');assert.equal(f.counts.save,0);assert.equal(f.counts.streams,0);
+});
+
+// ---- Stage 4 (D4.6): the voice screen variant ---------------------------------------------------------------
+// The same state machine, copy and IPC calls as the inline panel; only the layout differs (screen = rail screen).
+const VOICE_NOTICE_1='마이크 음성이 외부 AI 제공사로 전송됩니다. 시작 시 1분 비용을 예약하고 사용 중 추가 예약하며 종료 후 실제 사용량을 정산합니다. 음소거는 과금 종료가 아닙니다. 원본 음성은 저장하지 않습니다.';
+const VOICE_NOTICE_2='OpenAI·Gemini의 개인정보 필터는 조직 설정에 따라 적용됩니다. Soniox에는 필터가 없습니다. 환자 식별정보·민감정보를 말하지 마세요.';
+const sbutton=(s:string)=>[...document.querySelectorAll<HTMLButtonElement>('.voice-screen button')].find(b=>b.textContent===s)!;
+const pill=()=>document.querySelector('.voice-pill [role="status"]')!.textContent!;
+async function screenPanel(f:ReturnType<typeof fixture>,props:Record<string,unknown>={}){await render(<VoicePanel variant="screen" models={models} threadId={thread.id} threadTitle="외래 대기시간 개선안" canApply onApply={f.onApply} onSaved={()=>{}} onUsageChanged={()=>{}} {...props as any}/>);}
+async function sstart(){await click(document.querySelector('[aria-label="음성 외부 전송과 과금 동의"]')!);await click(sbutton('시작'))}
+test('D4.6 voice screen keeps the billing/privacy wording, both consent boxes and a disabled Start until consent',async()=>{
+ const f=fixture();await screenPanel(f);
+ assert.deepEqual([...document.querySelectorAll('.voice-notice')].map(n=>n.textContent),[VOICE_NOTICE_1,VOICE_NOTICE_2]);
+ const consents=[...document.querySelectorAll<HTMLLabelElement>('.voice-consent')];
+ assert.deepEqual(consents.map(l=>l.textContent),['음성 외부 전송·예약 및 실제 과금 안내를 확인하고 동의합니다.','종료 후 확정 텍스트를 이 대화에 암호화 저장하고 백업에 포함합니다.']);
+ assert.deepEqual(consents.map(l=>l.querySelector('input')!.getAttribute('aria-label')),['음성 외부 전송과 과금 동의','음성 텍스트 암호화 저장 동의']);
+ assert.equal(consents.every(l=>l.querySelector('input')!.checked),false);
+ assert.equal(sbutton('시작').disabled,true);assert.equal(f.counts.mic+f.counts.prepare+f.counts.connect,0);
+ await click(consents[0].querySelector('input')!);assert.equal(sbutton('시작').disabled,false);assert.equal(f.counts.prepare,0);
+ assert.equal(pill(),'시작 전');
+});
+test('D4.6 voice screen locks the realtime model select with a lock icon during a session and releases it after',async()=>{
+ const f=fixture();await screenPanel(f);const modelSelect=()=>document.querySelector<HTMLSelectElement>('[aria-label="실시간 음성 모델"]')!;
+ assert.equal(modelSelect().disabled,false);assert.equal(document.querySelector('.voice-model-lock'),null);
+ await sstart();assert.match(pill(),/^마이크 사용 중/);
+ assert.equal(modelSelect().disabled,true);assert.ok(document.querySelector('.voice-model-lock'));assert.match(document.body.textContent!,/세션 중에는 바꿀 수 없습니다/);
+ assert.equal([...document.querySelectorAll<HTMLButtonElement>('.voice-mode button')].every(b=>b.disabled),true);
+ assert.equal(document.querySelector<HTMLInputElement>('[aria-label="음성 외부 전송과 과금 동의"]')!.disabled,true);
+ await click(sbutton('종료'));assert.equal(pill(),'종료');
+ assert.equal(modelSelect().disabled,false);assert.equal(document.querySelector('.voice-model-lock'),null);
+});
+test('D4.6 voice screen draws no fake level meter or per-minute cost, and mute/stop use the same controlVoice/stopVoice calls',async()=>{
+ const f=fixture();const controls:any[]=[];f.api.controlVoice=async(r:any)=>{controls.push(r)};await screenPanel(f);await sstart();
+ assert.equal(document.querySelector('.voice-meter,[role="meter"],.voice-level'),null);assert.doesNotMatch(document.body.textContent!,/cr\s*\/\s*min|≈\s*\d/);
+ await click(sbutton('음소거'));assert.deepEqual(controls.map(c=>[c.type,c.muted]),[['mute',true]]);assert.equal(sbutton('마이크 다시 켜기').getAttribute('aria-pressed'),'true');
+ assert.match(pill(),/마이크 음소거/);
+ await click(sbutton('종료'));assert.equal(f.counts.stop,1);assert.equal(f.counts.sub,0);assert.equal(f.track.stops,1);
+});
+test('D4.6 voice screen without a conversation shows the empty state and offers no consent, Start or microphone',async()=>{
+ const f=fixture();await screenPanel(f,{threadId:null,threadTitle:undefined});
+ assert.match(document.querySelector('.voice-empty')!.textContent!,/대화를 먼저 선택하세요/);
+ assert.equal(document.querySelector('.voice-consent,.voice-notice'),null);assert.equal(document.querySelectorAll('.voice-screen button').length,0);
+ assert.equal(f.counts.mic+f.counts.prepare+f.counts.sub,0);
+});
+test('D4.6 voice screen header names the connected conversation and hosts the header search',async()=>{
+ const f=fixture();await screenPanel(f,{headerSearch:<button type="button" className="header-search">검색</button>});
+ assert.match(document.querySelector('.voice-header h2')!.textContent!,/외래 대기시간 개선안/);assert.ok(document.querySelector('.voice-header .header-search'));
+});
+test('D4.6 voice screen purpose toggle switches to Soniox dictation, resets consent and exposes pressed state',async()=>{
+ const f=fixture();await screenPanel(f);const modes=()=>[...document.querySelectorAll<HTMLButtonElement>('.voice-mode button')];
+ assert.deepEqual(modes().map(b=>b.textContent),['음성 대화','받아쓰기']);assert.deepEqual(modes().map(b=>b.getAttribute('aria-pressed')),['true','false']);
+ await click(document.querySelector('[aria-label="음성 외부 전송과 과금 동의"]')!);
+ await click(modes()[1]);assert.deepEqual(modes().map(b=>b.getAttribute('aria-pressed')),['false','true']);
+ assert.equal(document.querySelector('[aria-label="실시간 음성 모델"]'),null);assert.match(document.body.textContent!,/Soniox stt-rt-v5/);
+ assert.equal(document.querySelector<HTMLInputElement>('[aria-label="음성 외부 전송과 과금 동의"]')!.checked,false);assert.equal(sbutton('시작').disabled,true);
+});
+test('D4.6 voice screen saves the closed text once with consent and shows the live preview with provisional text',async()=>{
+ const f=fixture();await screenPanel(f);await sstart();
+ await act(async()=>f.emit({type:'text',final:'SYNTHETIC_FINAL ',provisional:'partial'}));
+ assert.match(document.querySelector('.voice-transcript')!.textContent!,/SYNTHETIC_FINAL partial/);assert.equal(document.querySelector('.voice-provisional')!.textContent,'partial');
+ await click(sbutton('종료'));assert.equal(sbutton('텍스트 저장').disabled,true);
+ await click(document.querySelector('[aria-label="음성 텍스트 암호화 저장 동의"]')!);assert.equal(sbutton('텍스트 저장').disabled,false);
+ await act(async()=>{sbutton('텍스트 저장').click();sbutton('텍스트 저장').click()});await flush();assert.equal(f.counts.save,1);assert.equal(sbutton('텍스트 저장됨').disabled,true);
 });

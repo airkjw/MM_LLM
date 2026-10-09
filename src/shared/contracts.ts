@@ -92,6 +92,10 @@ export type AppSettings = {
   fontSize: FontSizeMode;
   favoriteModels?: string[];
   recentModels?: string[];
+  /** Display settings (contract D4.2); absent means the default (default density, OS motion, hints shown). */
+  density?: "default" | "compact";
+  reduceMotion?: boolean;
+  shortcutHints?: boolean;
 };
 
 export type GatewayModel = {

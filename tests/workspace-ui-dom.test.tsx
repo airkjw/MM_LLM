@@ -584,7 +584,9 @@ test("real native citations explain blocked HTTP links and handle external-open 
   assert.equal(attempts, 1); assert.match(document.querySelector('[role="alert"]')!.textContent!, /출처를 열지 못했습니다/);
 });
 
-test("real App research results use the existing modal focus layer in narrow windows and both themes", async () => {
+test("real App research screen stays usable in narrow windows and both themes without a modal layer", async () => {
+  // Stage 4 (D4.3): research left the tools dialog for its own screen. The intent is unchanged: opening it sends
+  // nothing, the limit notice is shown, it fits a narrow window in both themes and every control is keyboard reachable.
   const style = document.createElement("style"); style.textContent = readFileSync(new URL("../src/renderer/src/styles.css", import.meta.url), "utf8"); document.head.append(style);
   const originalWidth = browser.innerWidth;
   let discoveries = 0;
@@ -594,17 +596,17 @@ test("real App research results use the existing modal focus layer in narrow win
     await act(async () => { browser.innerWidth = 480; browser.dispatchEvent(new browser.Event("resize")); });
     const railResearch = [...document.querySelectorAll<HTMLButtonElement>(".rail .rail-item")].find((button) => button.textContent === "논문·법령 리서치")!;
     await click(railResearch); assert.equal(discoveries, 0);
-    const dialog = document.querySelector<HTMLElement>('.workspace-tools-dialog[role="dialog"]')!;
-    assert.ok(dialog.querySelector('.research-panel[aria-label="논문·법령 검색"]'));
+    assert.equal(document.querySelector('[role="dialog"]'), null, "research is a screen, not a modal");
+    const screen = document.querySelector<HTMLElement>('.research-screen')!;
+    assert.ok(screen.querySelector('.research-column[aria-label="검색 설정"]'));
     for (const theme of ["light", "dark"]) {
       document.documentElement.dataset.theme = theme;
-      assert.equal(Number.parseFloat(browser.getComputedStyle(dialog.querySelector('.research-panel')!).minWidth), 0);
-      assert.match(dialog.textContent!, /키 30회\/분.*200회\/일/);
+      assert.equal(Number.parseFloat(browser.getComputedStyle(screen).minWidth || "0"), 0);
+      assert.match(screen.textContent!, /키 30회\/분.*200회\/일/);
     }
-    const controls = [...dialog.querySelectorAll<HTMLButtonElement>('button:not([disabled])')];
-    await act(async () => controls.at(-1)!.focus()); await key("Tab");
-    assertFocused(controls[0]);
-    await key("Escape"); assert.equal(document.querySelector('.workspace-tools-dialog'), null);
+    const controls = [...screen.querySelectorAll<HTMLButtonElement>('button:not([disabled])')];
+    assert.ok(controls.length > 0);
+    for (const control of controls) assert.equal(control.closest("[hidden], [inert]"), null, "no visible control sits in a hidden layer");
     assert.equal(discoveries, 0);
   } finally { browser.innerWidth = originalWidth; style.remove(); }
 });

@@ -5,8 +5,10 @@ import { LOCAL_RETRIEVAL, MAX_SEMANTIC_INDEX_BYTES, REVIEWED_RERANK_MODELS, TEXT
 import { useConfirm } from "./components/ConfirmDialog";
 import { errorText } from "./ui-shared";
 
-export function ProjectRetrievalSettings({ project, models, onEvidence }: {
+export function ProjectRetrievalSettings({ project, models, onEvidence, onStatus }: {
   project: ProjectSummary; models: GatewayModel[]; onEvidence: (text: string, ownsSource?: () => boolean) => void;
+  /** Called with every authoritative status this card receives, so a host can show per-document index state. */
+  onStatus?: (status: RetrievalStatus) => void;
 }) {
   const [settings, setSettings] = useState<RetrievalSettings>(project.retrieval ?? { ...LOCAL_RETRIEVAL });
   const [status, setStatus] = useState<RetrievalStatus | null>(null);
@@ -15,12 +17,13 @@ export function ProjectRetrievalSettings({ project, models, onEvidence }: {
   const request = useRef<string | null>(null); const alive = useRef(true); const confirm = useConfirm();
   const starting = useRef(false);
   const dirty = useRef(false);
+  const onStatusRef = useRef(onStatus); onStatusRef.current = onStatus;
   const editSettings = (edit: (settings: RetrievalSettings) => RetrievalSettings) => { dirty.current = true; setSettings(edit); };
   const embeddings = models.filter((model) => model.type === "embedding" && Object.hasOwn(TEXT_EMBEDDING_DIMENSIONS, model.id));
   const reranks = models.filter((model) => model.type === "rerank" && REVIEWED_RERANK_MODELS.includes(model.id));
   async function refresh(syncDraft = false) {
     try { const next = await window.mmllm.getProjectRetrieval(project.id); if (alive.current) {
-      setStatus(next); if (syncDraft && !dirty.current) setSettings(next.settings);
+      setStatus(next); onStatusRef.current?.(next); if (syncDraft && !dirty.current) setSettings(next.settings);
     } }
     catch (error) { if (alive.current) setError(errorText(error)); }
   }
@@ -49,7 +52,7 @@ export function ProjectRetrievalSettings({ project, models, onEvidence }: {
     if (!consent || !alive.current) return;
     await run(async (id) => {
       const next = await window.mmllm.startProjectIndex(id, project.id, true, resume);
-      if (alive.current && request.current === id) { setStatus(next); setMessage("색인이 완료되었습니다. 새 문서는 다시 시작하기 전까지 대기합니다."); }
+      if (alive.current && request.current === id) { setStatus(next); onStatusRef.current?.(next); setMessage("색인이 완료되었습니다. 새 문서는 다시 시작하기 전까지 대기합니다."); }
     });
     } finally { starting.current = false; }
   }

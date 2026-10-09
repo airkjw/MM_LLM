@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpen, CircleHelp, Columns3, Eye, EyeOff, FileText, LoaderCircle, PanelsTopLeft, ShieldCheck } from "lucide-react";
+import { ArrowRight, ArrowUpRight, CircleHelp, Eye, EyeOff, HardDrive, LoaderCircle, Lock } from "lucide-react";
 import { useState } from "react";
 import type { SessionState } from "../../shared/contracts";
 import { DiagnosticButton } from "./components/DiagnosticButton";
@@ -20,22 +20,24 @@ export function Login({ onLogin }: { onLogin: (state: SessionState) => Promise<v
     } catch (error) { setError(errorText(error)); }
     finally { setBusy(false); }
   }
+  // Contract D4.8: two columns from 900px, one below (CSS). No auto-login option: login(key) has none.
   return <main className="login-page">
     <div className="login-layout">
       <section className="login-intro" aria-labelledby="login-title">
-        <div className="login-brand"><span className="brand-mark"><PanelsTopLeft size={22} /></span>
+        <div className="login-brand"><span className="brand-mark" aria-hidden="true">M</span>
           <span>MM<span className="brand-underscore">_</span>LLM</span></div>
-        <span className="eyebrow">KYUNG HEE UNIVERSITY · MEDICAL MBA</span>
-        <h1 id="login-title">의료의 미래를 읽고,<br /><em>경영의 답을 설계하다</em></h1>
-        <p>경희대학교 의료경영학과 대학원을 위한<br />AI 연구 · 업무 공간</p>
-        <ul className="login-capabilities">
-          <li><BookOpen size={17} /><span>논문과 자료를 읽고, 핵심을 정리하세요.</span></li>
-          <li><Columns3 size={17} /><span>여러 모델의 관점을 비교하고 검토하세요.</span></li>
-          <li><FileText size={17} /><span>프로젝트별로 연구의 맥락을 이어가세요.</span></li>
+        <div className="login-intro-main">
+          <span className="eyebrow">KYUNG HEE UNIVERSITY · MEDICAL MBA</span>
+          <h1 id="login-title">의료의 미래를 읽고,<br /><em>경영의 답을 설계하다</em></h1>
+          <p>경희대학교 의료경영학과 대학원을 위한<br />AI 연구 · 업무 공간</p>
+        </div>
+        <ul className="login-security" aria-label="보안 안내">
+          <li><Lock size={14} aria-hidden="true" /><span>키는 이 기기의 운영체제 보안 저장소로 보호됩니다.</span></li>
+          <li><HardDrive size={14} aria-hidden="true" /><span>대화 기록은 이 기기 안에서 암호화해 보관합니다.</span></li>
         </ul>
       </section>
       <section className="login-card" aria-labelledby="login-form-title">
-        <div className="login-card-heading"><h2 id="login-form-title">워크스페이스 시작하기</h2>
+        <div className="login-card-heading"><h2 id="login-form-title">API 키로 시작하기</h2>
           <p>ChatKHU에서 발급받은 API 키로 연결하세요.</p></div>
         <form onSubmit={submit}>
           <label htmlFor="api-key">API 키</label>
@@ -57,11 +59,17 @@ export function Login({ onLogin }: { onLogin: (state: SessionState) => Promise<v
         </form>
         {error && <><div className="inline-error" role="alert" aria-live="assertive"><CircleHelp size={16} />{error}</div>
           <DiagnosticButton stage="login" /></>}
-        <button className="docs-link" type="button" onClick={() => void window.mmllm.openKeyGuide()}>
-          API 키가 처음이신가요? 발급 안내 <ArrowRight size={13} /></button>
-        <div className="login-note"><ShieldCheck size={16} /><span>키는 이 기기의 운영체제 보안 저장소로 보호됩니다.</span></div>
+        <section className="login-guide" aria-labelledby="login-guide-title">
+          <div className="login-guide-heading"><h3 id="login-guide-title">API 키 발급 방법</h3>
+            <button className="docs-link" type="button" onClick={() => void window.mmllm.openKeyGuide()}>
+              발급 안내 열기 <ArrowUpRight size={13} aria-hidden="true" /></button></div>
+          <ol>
+            <li className="login-guide-step"><b>01</b><span>Info21 계정으로 ChatKHU 로그인</span></li>
+            <li className="login-guide-step"><b>02</b><span>왼쪽 아래 API Gateway → API 키 생성</span></li>
+            <li className="login-guide-step"><b>03</b><span>이름 입력 후 생성, 키 복사 (한 번만 표시)</span></li>
+          </ol>
+        </section>
       </section>
     </div>
-    <div className="login-footer"><span>MM_LLM · MEDICAL MBA</span><span>학습에서 연구, 의사결정까지</span></div>
   </main>;
 }

@@ -6,6 +6,11 @@ import { ChatListColumn, type ListFilter } from "./ChatListColumn";
 import { Rail } from "./Rail";
 
 export type SidebarScreen = "chat" | "compare" | "research" | "media" | "voice" | "projects" | "chatbot" | "settings";
+/**
+ * Screens that show the conversation list column. Every other screen puts its own column in that slot (README
+ * "rail 56 · 목록/설정 열 · 본문"); there the list, its compact sheet and Cmd/Ctrl+B do not apply.
+ */
+export const LIST_SCREENS: ReadonlySet<SidebarScreen> = new Set<SidebarScreen>(["chat", "compare"]);
 export type MediaKind = "image" | "audio" | "video";
 export type FocusReturnTarget = () => HTMLElement | null;
 export type SidebarThreadGroup = { label: string; items: ThreadSummary[] };
@@ -14,6 +19,8 @@ export type SidebarWorkspaceActions = {
   onToggle: () => void; onNewThread: () => void;
   /** Rail destinations. The returned focus target is the rail trigger, which stays visible at every width. */
   onNavigate: (destination: SidebarScreen, returnFocus: FocusReturnTarget) => void;
+  /** The rail avatar: the settings screen on its account category. */
+  onOpenAccount: (returnFocus: FocusReturnTarget) => void;
 };
 export type SidebarHistoryModel = {
   threadCount: number; threadGroups: SidebarThreadGroup[]; selectedThreadId?: string;
@@ -30,15 +37,10 @@ export type SidebarHistoryActions = {
   onOpenMediaJob?: (job: PendingMediaJob) => void;
 };
 export type SidebarAccountModel = { credits?: CreditBalance; updateState: UpdateState | null };
-export type SidebarAccountActions = {
-  onRefreshCredits: () => void; onOpenKeyReplace: (returnFocus: FocusReturnTarget) => void;
-  onRefreshModels: () => void; onOpenSettings: (returnFocus: FocusReturnTarget) => void;
-  onUpdateAction: () => void; onLogout: () => void;
-};
 export type SidebarProps = {
   workspace: SidebarWorkspaceModel; workspaceActions: SidebarWorkspaceActions;
   history: SidebarHistoryModel; historyActions: SidebarHistoryActions;
-  account: SidebarAccountModel; accountActions: SidebarAccountActions;
+  account: SidebarAccountModel;
 };
 
 function useCompactSidebar() {
@@ -56,10 +58,11 @@ function useCompactSidebar() {
  * App shell navigation: the always-visible rail plus the list column. The list column keeps the
  * `.sidebar` contract — a modal overlay sheet at the compact width, collapsible on desktop.
  */
-export function Sidebar({ workspace, workspaceActions, history, historyActions, account, accountActions }: SidebarProps) {
+export function Sidebar({ workspace, workspaceActions, history, historyActions, account }: SidebarProps) {
   const { open, screen } = workspace;
-  const { onToggle, onNewThread, onNavigate } = workspaceActions;
+  const { onToggle, onNewThread, onNavigate, onOpenAccount } = workspaceActions;
   const compact = useCompactSidebar();
+  const listVisible = LIST_SCREENS.has(screen);
   const [filter, setFilter] = useState<ListFilter>("all");
   const compactRef = useRef(compact);
   const openRef = useRef(open);
@@ -72,7 +75,7 @@ export function Sidebar({ workspace, workspaceActions, history, historyActions, 
   const pendingFocusRef = useRef<"opener" | "toggle" | null>(null);
   const threadListRef = useRef<HTMLDivElement>(null);
   const { ref: sidebarRef, requestClose: closeSidebarLayer } = useFocusLayer<HTMLElement>({
-    active: compact && open, mode: "modal", onClose: onToggle, closeOnOutside: true, restoreTo: mobileOpenRef
+    active: compact && open && listVisible, mode: "modal", onClose: onToggle, closeOnOutside: true, restoreTo: mobileOpenRef
   });
   useEffect(() => {
     const trackFocus = (event: FocusEvent) => {
@@ -107,6 +110,19 @@ export function Sidebar({ workspace, workspaceActions, history, historyActions, 
     }
   }, [compact, open]);
   const currentRailItem = () => document.querySelector<HTMLElement>('nav.rail .rail-item[aria-current="page"]');
+  // A screen without the list removes the list's controls: focus that was in them moves to the current rail item.
+  const listVisibleRef = useRef(listVisible);
+  useEffect(() => {
+    if (listVisibleRef.current === listVisible) return;
+    listVisibleRef.current = listVisible;
+    if (listVisible || !lastFocusWasInSidebarRef.current) return;
+    lastFocusWasInSidebarRef.current = false;
+    const frame = window.requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body || !active.isConnected) currentRailItem()?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [listVisible]);
   // Focus fallbacks read live refs: a dialog launched on desktop may close after the window became compact.
   const visibleListControl: FocusReturnTarget = () => (compactRef.current || !openRef.current
     ? mobileOpenRef.current : sidebarRef.current?.querySelector<HTMLElement>(".sidebar-toggle") ?? null) ?? currentRailItem();
@@ -134,23 +150,15 @@ export function Sidebar({ workspace, workspaceActions, history, historyActions, 
       (target) => historyActions.onOpenCompareRun?.(run, target), returnFocus),
     onOpenMediaJob: (job) => runNavigation(() => historyActions.onOpenMediaJob?.(job))
   };
-  const navigableAccountActions: SidebarAccountActions = {
-    onRefreshCredits: accountActions.onRefreshCredits,
-    onOpenKeyReplace: (returnFocus) => runDialogNavigation(accountActions.onOpenKeyReplace, returnFocus),
-    onRefreshModels: () => runNavigation(accountActions.onRefreshModels, true),
-    onOpenSettings: (returnFocus) => runDialogNavigation(accountActions.onOpenSettings, returnFocus),
-    onUpdateAction: () => runNavigation(accountActions.onUpdateAction, true),
-    onLogout: () => runNavigation(accountActions.onLogout, false)
-  };
   return <>
-    {compact && open && <div className="sidebar-overlay-backdrop" data-testid="sidebar-backdrop" aria-hidden="true"
+    {listVisible && compact && open && <div className="sidebar-overlay-backdrop" data-testid="sidebar-backdrop" aria-hidden="true"
       onPointerDown={(event) => { event.stopPropagation(); closeSidebarLayer("outside", true); }} />}
-    <Rail screen={screen} compact={compact} listOpen={open} openerRef={mobileOpenRef}
+    <Rail screen={screen} compact={compact} listOpen={open} listAvailable={listVisible} openerRef={mobileOpenRef}
       onOpenList={() => { if (!compact) pendingFocusRef.current = "toggle"; onToggle(); }}
       onNavigate={(destination, returnFocus) => { closeSheetFirst(false); onNavigate(destination, returnFocus); }}
-      account={account} accountActions={navigableAccountActions}
-      onBeforeAccountOpen={() => closeSheetFirst(false)} accountRestoreFallback={visibleListControl} />
-    <aside className={open ? "sidebar" : "sidebar collapsed"} ref={sidebarRef}
+      onOpenAccount={(returnFocus) => runDialogNavigation(onOpenAccount, returnFocus)}
+      account={account} />
+    {listVisible && <aside className={open ? "sidebar" : "sidebar collapsed"} ref={sidebarRef}
       data-compact={compact ? "true" : "false"} aria-label="대화 목록 열"
       role={compact && open ? "dialog" : undefined} aria-modal={compact && open ? true : undefined}
       tabIndex={compact && open ? -1 : undefined}>
@@ -162,6 +170,6 @@ export function Sidebar({ workspace, workspaceActions, history, historyActions, 
           else { pendingFocusRef.current = "opener"; onToggle(); }
         }}
         threadListRef={threadListRef} restoreAfterListCommand={restoreAfterListCommand} />}
-    </aside>
+    </aside>}
   </>;
 }
