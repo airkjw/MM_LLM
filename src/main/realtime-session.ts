@@ -15,7 +15,8 @@ export function sessionSocketUrl(raw: unknown, model: string, now: number): { ur
       !/^[A-Za-z0-9_-]{16,512}$/.test(raw.token) || typeof raw.expires_at !== 'string' ||
       !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(raw.expires_at)) throw new Error('음성 세션 응답을 확인할 수 없습니다.');
   const expires = Date.parse(raw.expires_at);
-  if (!Number.isFinite(expires) || expires <= now || expires > now + 61000) throw new Error('음성 세션 토큰이 만료됐거나 유효 시간을 확인할 수 없습니다. 새로 시작해 주세요.');
+  // Gateway is the real expiry authority; this local bound is only a sanity check that tolerates client clock skew.
+  if (!Number.isFinite(expires) || expires <= now - 30000 || expires > now + 300000) throw new Error('음성 세션 토큰이 만료됐거나 유효 시간을 확인할 수 없습니다. 새로 시작해 주세요.');
   const provider = voiceProvider(model);
   const path = provider === 'openai' ? `/v1/gateway/realtime?model=${model}` : provider === 'gemini' ? GEMINI_PATH : '/v1/gateway/soniox/transcribe-websocket';
   // Byte-exact relative route; rejects credentials, host, fragments, duplicate/secret query and alternate versions.
@@ -31,7 +32,10 @@ type Session = VoiceIdentity & { id: string; modelId: string; provider: VoicePro
   socket?: VoiceSocket; keepalive?: ReturnType<typeof setInterval>; sonioxFinals: Set<string>; sonioxFinished: boolean; timer?: ReturnType<typeof setTimeout>; deliveries: Set<number>; delivery: number; inputSequence: number; muted: boolean; windowAt: number; windowBytes: number;
   receiveAt: number; receiveBytes: number; receiveCount: number; outputSequence: number; outputs: Map<number,{samples:number;itemId?:string}>;
   final: string; provisional: string; itemId?: string; itemSamples: number; playedSamples: number; interruption: number; awaitingInterrupt: boolean;
-  discardedThrough: number; geminiInterim: string; geminiOutput: string; interaction: 'IN_PROGRESS' | 'IDLE'; blockedItems: Set<string>; connectStarted: boolean };
+  discardedThrough: number; geminiInterim: string; geminiOutput: string; interaction: 'IN_PROGRESS' | 'IDLE'; blockedItems: Set<string>; connectStarted: boolean;
+  turns: Turn[]; turnBase: string };
+type Turn = { itemId?: string; role: 'user' | 'ai'; text?: string };
+const TURN_LIMIT = 256;
 type EventBody = VoiceEvent extends infer E ? E extends VoiceEvent ? Omit<E, 'id'> : never : never;
 type Dependencies = { identity: () => VoiceIdentity; emit: (event: VoiceEvent) => void; models: () => GatewayModel[];
   socket?: (url: string) => VoiceSocket; fetch?: typeof fetch; now?: () => number };
@@ -51,8 +55,10 @@ export class RealtimeSessionManager {
   private event(s: Session, e: EventBody): void {
     if(!this.owned(s))return;
     if(s.deliveries.size>=32 && e.type!=='state' && e.type!=='discard'){this.finish(s,'error','음성 화면 수신이 지연돼 세션을 종료했습니다.');return;}
-    const delivery=++s.delivery;s.deliveries.add(delivery);this.deps.emit({id:s.id,delivery,...e} as VoiceEvent);
+    const delivery=++s.delivery;s.deliveries.add(delivery);this.emit({id:s.id,delivery,...e} as VoiceEvent);
   }
+  // A destroyed or crashed renderer may throw on send; teardown must still run.
+  private emit(event: VoiceEvent): void { try { this.deps.emit(event); } catch { /* renderer gone */ } }
   private state(s: Session, state: VoiceState, message?: string) { s.state = state; this.event(s,{type:'state',state,...(message ? {message} : {})}); }
   begin(raw: unknown): void {
     keys(raw,['id','modelId','consent']); voiceId(raw.id);
@@ -64,7 +70,7 @@ export class RealtimeSessionManager {
     const s: Session = { ...this.deps.identity(), id:request.id, modelId:request.modelId, provider, state:'requesting_permission', controller:new AbortController(),
       sonioxFinals:new Set(),sonioxFinished:false,deliveries:new Set(),delivery:0,inputSequence:0, muted:false, windowAt:this.now(),windowBytes:0,receiveAt:this.now(),receiveBytes:0,receiveCount:0,
       outputSequence:0, outputs:new Map(),final:'',provisional:'',itemSamples:0,playedSamples:0,interruption:0,awaitingInterrupt:false,
-      discardedThrough:0,geminiInterim:'',geminiOutput:'',interaction:'IDLE',blockedItems:new Set(),connectStarted:false };
+      discardedThrough:0,geminiInterim:'',geminiOutput:'',interaction:'IDLE',blockedItems:new Set(),connectStarted:false,turns:[],turnBase:'' };
     this.current = s; this.state(s,'requesting_permission');
     s.timer = setTimeout(()=>this.finish(s,'error','마이크 준비 시간이 초과됐습니다. 새로 시작해 주세요.'),60000);
   }
@@ -85,10 +91,13 @@ export class RealtimeSessionManager {
       const issued = sessionSocketUrl(raw,s.modelId,this.now());
       for (const [hash,expiry] of this.usedTokens) if (expiry <= this.now()) this.usedTokens.delete(hash);
       if (this.usedTokens.has(issued.digest)) throw new Error('이미 사용한 음성 세션 토큰입니다. 새로 시작해 주세요.');
-      this.usedTokens.set(issued.digest,issued.expires);
+      // Skew may put a valid token's local expiry in the past; keep its digest for at least two minutes.
+      this.usedTokens.set(issued.digest,Math.max(issued.expires,this.now()+120000));
       // No retry, refresh, alternate route, key in WS headers or token exposure to IPC.
       const socket = (this.deps.socket ?? createVoiceSocket)(issued.url); s.socket = socket;
-      s.timer = setTimeout(()=>this.finish(s,'error','음성 초기 설정 응답 시간이 초과됐습니다. 새로 시작해 주세요.'),Math.min(10000,issued.expires-this.now()));
+      // A locally past expiry can only be skew on a just-minted token; the server judges it during the handshake.
+      const remaining=issued.expires-this.now();
+      s.timer = setTimeout(()=>this.finish(s,'error','음성 초기 설정 응답 시간이 초과됐습니다. 새로 시작해 주세요.'),remaining>0?Math.min(10000,remaining):10000);
       socket.on('error',()=>this.finish(s,'error','음성 연결에 실패했습니다. 자동 재연결하지 않습니다.'));
       socket.on('close',(code:number)=>this.finish(s,code===1000?'closed':'error',s.provider==='soniox' && !s.sonioxFinished && code===1000 ? '연결이 종료됐으며 마지막 확정 응답은 확인하지 못했습니다. 수신된 확정문만 남깁니다.' : voiceCloseMessage(code)));
       socket.on('open',()=>{ if (!this.owned(s)) return this.abort(); try { this.initialize(s); } catch { this.finish(s,'error','음성 초기 설정을 전송하지 못했습니다.'); } });
@@ -150,7 +159,7 @@ export class RealtimeSessionManager {
         keys(raw,['id','type','interruption','playedMs']);
         if(!s.awaitingInterrupt||raw.interruption!==s.interruption||!Number.isSafeInteger(raw.playedMs)||raw.playedMs<0||raw.playedMs>Math.floor(s.itemSamples/24)) throw new Error();
         if(s.itemId) this.json(s,{type:'conversation.item.truncate',item_id:s.itemId,content_index:0,audio_end_ms:raw.playedMs});
-        s.awaitingInterrupt=false; s.discardedThrough=s.outputSequence;s.outputs.clear();
+        s.awaitingInterrupt=false; s.discardedThrough=s.outputSequence;s.outputs.clear();this.forgetItem(s);
       } else throw new Error();
     } catch { this.finish(s,'error','음성 제어 형식 또는 큐 한도를 확인해 주세요.'); }
   }
@@ -170,7 +179,7 @@ export class RealtimeSessionManager {
     const c=this.completed;this.completed=undefined;
     const i=this.deps.identity();
     if(c && c.identity.epoch===i.epoch && c.identity.profileId===i.profileId && c.identity.owner===i.owner)
-      this.deps.emit({id:c.id,type:'discard',message});
+      this.emit({id:c.id,type:'discard',message});
   }
   abort(message='음성 세션을 중단하고 저장하지 않은 확정문을 폐기했습니다.'):void {
     const s=this.current;this.discardCompleted(message);
@@ -218,13 +227,33 @@ export class RealtimeSessionManager {
       s.outputs.set(seq,{samples:chunk.length/2,itemId});s.itemSamples+=chunk.length/2;
       this.event(s,{type:'audio',sequence:seq,bytes:new Uint8Array(chunk),sampleRate:24000,...(itemId?{itemId}:{})} as EventBody);}
   }
+  private forgetItem(s:Session) {s.itemId=undefined;s.itemSamples=0;s.playedSamples=0;}
   private interrupt(s:Session) {
-    s.interruption++;s.awaitingInterrupt=s.provider==='openai' && !!s.itemId;
-    if(s.itemId){if(s.blockedItems.size>=128)throw new Error();s.blockedItems.add(s.itemId);}
-    // server_vad interrupt_response cancels server generation; no duplicate cancel on an already canceled response.
-    this.event(s,{type:'interrupt',interruption:s.interruption,...(s.provider==='openai'&&s.itemId?{itemId:s.itemId}:{})} as EventBody);
-    if(!s.awaitingInterrupt){s.discardedThrough=s.outputSequence;s.outputs.clear();}
+    // An earlier truncate reply is still pending: playback already stopped and new audio is dropped until it arrives.
+    if(!s.awaitingInterrupt){
+      s.interruption++;
+      // Truncate only audio the listener has not heard yet; an item played to the end needs no truncate.
+      const item=s.itemId;s.awaitingInterrupt=s.provider==='openai' && !!item && [...s.outputs.values()].some(o=>o.itemId===item);
+      if(item){if(s.blockedItems.size>=128)throw new Error();s.blockedItems.add(item);}
+      // server_vad interrupt_response cancels server generation; no duplicate cancel on an already canceled response.
+      this.event(s,{type:'interrupt',interruption:s.interruption,...(s.awaitingInterrupt?{itemId:item}:{})} as EventBody);
+      if(!s.awaitingInterrupt){s.discardedThrough=s.outputSequence;s.outputs.clear();this.forgetItem(s);}
+    }
+    if(s.provider==='openai'&&s.provisional)this.text(s,s.final);
     this.event(s,{type:'activity',activity:'listening'} as EventBody);
+  }
+  // OpenAI transcripts arrive out of order; turns keep conversation item order and transcripts fill their own item.
+  private turn(s:Session,itemId:unknown,role:Turn['role']):Turn {
+    if(itemId!==undefined&&(typeof itemId!=='string'||itemId.length>256))throw new Error();
+    let t=itemId===undefined?undefined:s.turns.find(t=>t.itemId===itemId);
+    if(!t){t={itemId,role};s.turns.push(t);
+      while(s.turns.length>TURN_LIMIT){const old=s.turns.shift()!;if(old.text!==undefined)s.turnBase+=this.line(old);}}
+    return t;
+  }
+  private line(t:Turn):string {return t.text===undefined?'':(t.role==='user'?'나: ':'AI: ')+t.text+'\n';}
+  private transcript(s:Session,itemId:unknown,role:Turn['role'],text:string) {
+    const t=this.turn(s,itemId,role);t.role=role;t.text=text;
+    this.text(s,s.turnBase+s.turns.map(t=>this.line(t)).join(''));
   }
   private receive(s:Session,data:WebSocket.RawData,isBinary:boolean) {
     const bytes=Array.isArray(data)?Buffer.concat(data):Buffer.from(data as ArrayBuffer);
@@ -240,9 +269,12 @@ export class RealtimeSessionManager {
       if(s.state!=='active')return;
       if(e.type==='input_audio_buffer.speech_started')this.interrupt(s);
       if(e.type==='response.output_audio.delta') {if(typeof e.item_id!=='string'||e.item_id.length>256)throw new Error();this.audio(s,e.delta,e.item_id);this.event(s,{type:'activity',activity:'responding'} as EventBody);}
-      if(e.type==='conversation.item.input_audio_transcription.completed') {if(typeof e.transcript!=='string')throw new Error();this.text(s,s.final+'나: '+e.transcript+'\n');}
+      if(e.type==='input_audio_buffer.committed'&&e.item_id!==undefined)this.turn(s,e.item_id,'user');
+      if((e.type==='conversation.item.created'||e.type==='conversation.item.added')&&record(e.item)&&e.item.id!==undefined&&e.item.type==='message'&&(e.item.role==='user'||e.item.role==='assistant'))
+        this.turn(s,e.item.id,e.item.role==='user'?'user':'ai');
+      if(e.type==='conversation.item.input_audio_transcription.completed') {if(typeof e.transcript!=='string')throw new Error();this.transcript(s,e.item_id,'user',e.transcript);}
       if(e.type==='response.output_audio_transcript.delta'&&!s.blockedItems.has(e.item_id)){if(typeof e.delta!=='string')throw new Error();this.text(s,s.final,s.provisional+e.delta);}
-      if(e.type==='response.output_audio_transcript.done'&&!s.blockedItems.has(e.item_id)){if(typeof e.transcript!=='string')throw new Error();this.text(s,s.final+'AI: '+e.transcript+'\n');}
+      if(e.type==='response.output_audio_transcript.done'&&!s.blockedItems.has(e.item_id)){if(typeof e.transcript!=='string')throw new Error();this.transcript(s,e.item_id,'ai',e.transcript);}
       if(e.type==='response.done') {if(e.response?.status==='failed')return this.finish(s,'error','음성 응답이 실패했습니다.');this.event(s,{type:'activity',activity:'listening'} as EventBody);}
       if(typeof e.type==='string'&&e.type.startsWith('response.function_call')||e.item?.type==='function_call'||Array.isArray(e.response?.output)&&e.response.output.some((item:unknown)=>record(item)&&item.type==='function_call'))this.finish(s,'error','이 음성 화면은 도구 실행을 지원하지 않습니다.');
     } else if(s.provider==='gemini') {
