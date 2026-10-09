@@ -136,42 +136,39 @@ export type SettingsScreenProps = {
   credits?: CreditBalance; onRefreshCredits: () => void;
   onOpenKeyReplace: (returnFocus: FocusReturnTarget) => void; onLogout: () => void;
   modelId: string;
+  /**
+   * A default instruction the host is holding because another save was running when the field was left. The host
+   * applies it after that save, also when this screen is no longer mounted; the screen shows it and its pending state.
+   */
+  pendingInstruction?: string | null;
 };
 
 /** Settings screen (contract D4.1): a 240 category column and one category body; every change applies and saves at once. */
 export function SettingsScreen({ category, onCategoryChange, settings, saving, error, onChange, updateState, onUpdateAction,
-  onRefreshModels, credits, onRefreshCredits, onOpenKeyReplace, onLogout, modelId }: SettingsScreenProps) {
+  onRefreshModels, credits, onRefreshCredits, onOpenKeyReplace, onLogout, modelId, pendingInstruction = null }: SettingsScreenProps) {
   const entry = CATEGORIES.find((item) => item.id === category) ?? CATEGORIES[0];
   const titleId = useId();
-  const [instruction, setInstruction] = useState(settings.defaultInstruction);
+  const [instruction, setInstruction] = useState(pendingInstruction ?? settings.defaultInstruction);
   const savedInstruction = settings.defaultInstruction;
   const savedInstructionRef = useRef(savedInstruction);
   savedInstructionRef.current = savedInstruction;
-  useEffect(() => { setInstruction(savedInstruction); }, [savedInstruction]);
+  const pendingInstructionRef = useRef(pendingInstruction);
+  pendingInstructionRef.current = pendingInstruction;
+  // The field follows the saved value, except while the host still holds a newer typed value for it.
+  useEffect(() => { setInstruction(pendingInstructionRef.current ?? savedInstruction); }, [savedInstruction]);
   const status = updateStatusLabel(updateState);
   const version = updateState?.currentVersion;
   const updateButton = updateState?.status === "ready" ? `업데이트 설치 ${updateState.availableVersion ?? ""}`.trim()
     : updateState?.status === "downloading" ? `업데이트 다운로드 ${updateState.progress ?? 0}%`
       : updateState?.status === "checking" ? "업데이트 확인 중" : "업데이트 확인";
-  // A blur save refused because another save was running is kept and retried when that save ends (never dropped).
-  const [instructionPending, setPending] = useState(false);
-  const pendingRef = useRef(false);
-  const markPending = (value: boolean) => { pendingRef.current = value; setPending(value); };
+  // A blur save that meets another running save is handed to the host, which keeps it (even if this screen unmounts)
+  // and applies it once that save ends; the screen only shows the waiting state.
+  const instructionPending = pendingInstruction !== null;
   const saveInstruction = async () => {
-    if (instruction === savedInstruction) { markPending(false); return; }
-    if (saving) { markPending(true); return; }
+    if (instruction === savedInstruction && !instructionPending) return;
     // Only a failed save restores the saved text; a refused overlapping save keeps what the student typed.
-    const saved = await onChange({ defaultInstruction: instruction });
-    if (saved === false) setInstruction(savedInstructionRef.current);
-    markPending(saved === null);
+    if (await onChange({ defaultInstruction: instruction }) === false) setInstruction(savedInstructionRef.current);
   };
-  const retryInstruction = useRef(saveInstruction);
-  retryInstruction.current = saveInstruction;
-  useEffect(() => {
-    if (saving || !pendingRef.current) return;
-    markPending(false);
-    void retryInstruction.current();
-  }, [saving]);
   let body: ReactNode;
   if (entry.id === "general") {
     body = <div className="settings-list">
@@ -213,12 +210,15 @@ export function SettingsScreen({ category, onCategoryChange, settings, saving, e
       </div>
     </>;
   } else if (entry.id === "response") {
-    body = <label className="settings-field">전역 기본 지침
-      <textarea value={instruction} maxLength={12000} aria-disabled={saving || undefined}
-        onChange={(event) => setInstruction(event.target.value)} onBlur={() => void saveInstruction()} />
-      <small>모든 대화에 적용됩니다. 대화별 지침은 더 구체적인 경우 우선합니다. 입력란을 벗어나면 저장됩니다.</small>
-      {instructionPending && <small className="settings-field-pending" role="status">저장 대기 중 — 진행 중인 저장이 끝나면 자동으로 저장합니다.</small>}
-    </label>;
+    body = <>
+      <label className="settings-field">전역 기본 지침
+        <textarea value={instruction} maxLength={12000} aria-disabled={saving || undefined}
+          onChange={(event) => setInstruction(event.target.value)} onBlur={() => void saveInstruction()} />
+        <small>모든 대화에 적용됩니다. 대화별 지침은 더 구체적인 경우 우선합니다. 입력란을 벗어나면 저장됩니다.</small>
+      </label>
+      {/* Always mounted so a text change is announced once; outside the label so the field's name does not grow. */}
+      <p className="settings-field-pending" role="status">{instructionPending ? "저장 대기 중 — 진행 중인 저장이 끝나면 자동으로 저장합니다." : ""}</p>
+    </>;
   } else if (entry.id === "account") {
     body = <div className="settings-list">
       <div className="settings-row"><div className="settings-row-text"><strong>API 키 교체</strong>

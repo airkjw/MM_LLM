@@ -73,6 +73,8 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = useState<AppSettings | null>(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const settingsSavingRef = useRef(false);
+  /** A default instruction left behind a running save; App (not the settings screen) owns it so leaving the screen cannot lose it. */
+  const [pendingInstruction, setPendingInstruction] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState("");
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("general");
   // Once visited, the media screen stays mounted (hidden) so a paid generation survives navigating away.
@@ -366,7 +368,7 @@ export default function App() {
     setCompareSynthesisBusy(false); setCompareRun(null); setCompareOriginId(null); setViewedCompareRun(null); setCompareShortcut(0);
     setBookmarks([]); setThread(null); setModelId(""); setScreen("chat"); setMediaKind("image"); setOpenedMediaJob(null);
     setMediaVisited(false); setChatbotSelectedId(null); setChatbotStatus({}); setChatbotUsage(null);
-    setAppSettings(null); setSettingsDraft(null); setSettingsSaving(false); settingsSavingRef.current = false;
+    setAppSettings(null); setSettingsDraft(null); setSettingsSaving(false); settingsSavingRef.current = false; setPendingInstruction(null);
     setSettingsError(""); setSettingsCategory("general"); pendingComposerFocusRef.current = null;
     setPaletteOpen(false); setRenameDialog(null);
     setKeyReplaceOpen(false); setReplacementKey(""); setKeyReplacing(false);
@@ -918,6 +920,20 @@ export default function App() {
     }
   }
 
+  /** Settings screen entry: a default instruction refused because a save is running is held and applied after it. */
+  async function changeSettings(patch: Partial<AppSettings>): Promise<boolean | null> {
+    const result = await applySettings(patch);
+    if (result === null && typeof patch.defaultInstruction === "string") setPendingInstruction(patch.defaultInstruction);
+    return result;
+  }
+  useEffect(() => {
+    if (pendingInstruction === null || settingsSaving || !appSettings) return;
+    const value = pendingInstruction;
+    setPendingInstruction(null);
+    if (value === appSettings.defaultInstruction) return;
+    void applySettings({ defaultInstruction: value }).then((result) => { if (result === null) setPendingInstruction(value); });
+  }, [pendingInstruction, settingsSaving, appSettings]);
+
   function openRenameConversation(item: ThreadSummary, returnFocus?: FocusReturnTarget) {
     rememberDialogReturn(returnFocus);
     setPaletteOpen(false); setKeyReplaceOpen(false); setReplacementKey("");
@@ -1156,7 +1172,7 @@ export default function App() {
         onApply={(text) => { if (thread) setEvidenceAppends((current) => [...current, { id: crypto.randomUUID(), threadId: thread.id, text }]); }}
         onSaved={applyThreadUpdate} onUsageChanged={handleUsageChanged} headerSearch={headerCenter} />}
       {screen === "settings" && settingsDraft && <SettingsScreen category={settingsCategory} onCategoryChange={setSettingsCategory}
-        settings={settingsDraft} saving={settingsSaving} error={settingsError} onChange={(patch) => applySettings(patch)}
+        settings={settingsDraft} saving={settingsSaving} error={settingsError} onChange={changeSettings} pendingInstruction={pendingInstruction}
         updateState={updateState} credits={credits} modelId={modelId}
         onUpdateAction={() => void (updateState?.status === "ready"
           ? window.mmllm.installUpdate()

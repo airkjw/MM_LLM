@@ -530,6 +530,24 @@ test("Stage 5 state sheet: buttons are flat and every kind has hover, pressed an
     "focus keeps the outline and adds the README ring");
 });
 
+test("Stage 5 L1: the field hover border never overrides the invalid (danger) border", () => {
+  const hover = css.match(/(input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\):hover[^{]*)\{[^}]*\}/)[1];
+  assert.match(hover, /textarea:hover/);
+  assert.match(hover, /select:hover/);
+  assert.equal((hover.match(/:not\(\[aria-invalid="true"\]\)/g) ?? []).length, 3, "input, textarea and select hover rules all exclude aria-invalid");
+});
+
+test("Stage 5 L2: the new hover text pairs are audited in both themes", () => {
+  const result = auditUiCssFile();
+  for (const pair of ["accent-text/bg-hover", "text/bg-hover"]) {
+    for (const theme of ["light", "dark"]) assert.ok(result.contrasts[theme][pair] >= 4.5, `${theme} ${pair} must be audited and pass`);
+  }
+});
+for (const [pair, token, replacement] of [["accent-text/bg-hover", /(--color-accent-text:\s*)#8A5A00/, "$1#C99A3B"],
+  ["text/bg-hover", /(--color-text:\s*)#15171A/, "$1#8A919B"]]) {
+  expectMutationError(`${pair} contrast failures on the hover surface`, (source) => source.replace(token, replacement), new RegExp(pair.replace("/", "\\/")));
+}
+
 test("Stage 5 header: padding never grows the body header past the 52px contract at any width or font size", () => {
   assert.match(css, /\.panel-header \{[^}]*min-height: 52px/);
   const headerRules = [...css.matchAll(/\.panel-header \{([^}]*)\}/g)].map((match) => match[1]).join(" ");

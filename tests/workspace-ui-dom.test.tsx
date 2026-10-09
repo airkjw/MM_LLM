@@ -272,6 +272,24 @@ test("inline comparison synthesis notice lists only the answer letters that exis
   assert.doesNotMatch(document.querySelector(".compare-synthesis-bar")!.textContent!, /A·B·C/);
 });
 
+test("inline comparison synthesis notice letters come from the answers the synthesis really reviews", async () => {
+  const { requests, emit } = await openRealComparison();
+  await click(sendButton());
+  const base = { id: "run-4", prompt: requests[0].prompt, modelIds: compareModels, webSearchMode: "off" as const,
+    createdAt: new Date().toISOString(), attachmentNames: [] };
+  const notice = () => document.querySelector(".compare-synthesis-bar small")!.textContent!;
+  await emit({ type: "done", run: { ...base, results: [
+    { modelId: compareModels[0], status: "completed" as const, text: "합성 A" },
+    { modelId: compareModels[1], status: "failed" as const, text: "", error: "합성 실패" },
+    { modelId: compareModels[2], status: "completed" as const, text: "합성 C" }] } });
+  assert.equal(notice(), "GPT-5.6 Sol이 답변 A·C의 차이와 근거를 검토합니다. 실행 시 추가 크레딧이 사용됩니다.",
+    "a failed middle answer is not reviewed or billed, so its letter is not announced");
+  await emit({ type: "done", run: { ...base, results: compareModels.map((modelId) => ({ modelId, status: "completed" as const, text: "합성" })) } });
+  assert.equal(notice(), "GPT-5.6 Sol이 답변 A·B·C의 차이와 근거를 검토합니다. 실행 시 추가 크레딧이 사용됩니다.");
+  await emit({ type: "done", run: { ...base, results: compareModels.slice(0, 2).map((modelId) => ({ modelId, status: "completed" as const, text: "합성" })) } });
+  assert.equal(notice(), "GPT-5.6 Sol이 답변 A·B의 차이와 근거를 검토합니다. 실행 시 추가 크레딧이 사용됩니다.");
+});
+
 test("blocked links retain readable content and an explanation", async () => {
   await render(<MarkdownText text="[자료](http://example.invalid)" />);
   assert.equal(document.querySelector("a"), null);
