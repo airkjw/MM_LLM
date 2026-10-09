@@ -535,6 +535,8 @@ test("Stage 5 header: padding never grows the body header past the 52px contract
   const headerRules = [...css.matchAll(/\.panel-header \{([^}]*)\}/g)].map((match) => match[1]).join(" ");
   assert.doesNotMatch(headerRules, /padding: 1[2-9]px/, "no 12px+ block padding on the header at the narrow breakpoints");
   assert.match(css, /:root\[data-font-size="large"\] \.panel-header \{[^}]*padding-block: 8px/);
+  assert.match(css, /:root \.panel-header\.media-header, :root \.panel-header\.voice-header \{ padding-block: 6px; \}/,
+    "the two-line media and voice headers stay 52px with the large font");
   // 8px + the 32px search/action controls + 8px = 48px, so min-height 52px always decides the height.
   assert.match(css, /\.header-search \{[^}]*height: 32px/);
 });

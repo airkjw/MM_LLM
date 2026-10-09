@@ -295,15 +295,18 @@ async function ensureProject() {
   const hasProject = await cdp.eval(`Boolean(document.querySelector(".project-nav button"))`);
   if (hasProject) return;
   await click(`document.querySelector(".project-new input")`);
-  await typeText("스모크 합성 프로젝트");
+  await typeText("합성 프로젝트 (예시)");
   await click(byText(".project-new button", "프로젝트 만들기"));
   await waitFor(`document.querySelector(".project-nav button")`, "the created project", 20_000);
 }
 
 async function newConversation() {
   await goRail("대화", `document.querySelector(".chat-panel")`);
-  await press("n", MODIFIER.ctrl);
-  await waitFor(`document.querySelector(".template-card, .chat-welcome")`, "a fresh conversation");
+  // An untouched conversation already shows the start cards; only a used one needs Ctrl+N (a new thread each time).
+  if (!(await cdp.eval(`Boolean(document.querySelector(".chat-slot:not([hidden]) .template-card"))`))) {
+    await press("n", MODIFIER.ctrl);
+    await waitFor(`document.querySelector(".chat-slot:not([hidden]) .template-card, .chat-welcome")`, "a fresh conversation");
+  }
   await sleep(250);
 }
 

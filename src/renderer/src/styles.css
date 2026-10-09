@@ -914,6 +914,9 @@ a:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
   gap: 12px; padding-block: 8px;
 }
 :root[data-font-size="large"] .panel-actions { justify-content: flex-end; }
+/* Two-line headers (section label above the title: media, voice) trim their block padding so the larger line boxes of
+   the "크게" font size still end at the 52px header contract. */
+:root .panel-header.media-header, :root .panel-header.voice-header { padding-block: 6px; }
 
 @media (max-width: 720px) {
   /* The rail stays; the list column becomes an overlay sheet beside it (56 + 260), so the body keeps its width. */
