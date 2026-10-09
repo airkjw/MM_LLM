@@ -21,6 +21,7 @@ export class PcmResampler {
   clear():void {this.samples=[];this.position=0;}
 }
 // Frames awaiting main-process acknowledgement (8 x 100ms = 800ms); no automatic drop or resend.
+// Main's input credit (realtime-session.ts INPUT_CREDIT_MS) admits this whole backlog arriving at once.
 const MAX_IN_FLIGHT=8;
 export type VoiceAudioHooks = { frame: (frame:VoiceFrame)=>Promise<void>; played:(sequence:number,samples:number)=>void; failed:()=>void; ended:()=>void };
 export class VoiceAudio {

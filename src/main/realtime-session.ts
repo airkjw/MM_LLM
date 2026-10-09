@@ -29,16 +29,21 @@ export type VoiceTextClaim = { modelId: string; text: string; identity: VoiceIde
   assertCurrent: () => void; commit: () => void; rollback: () => void };
 export type VoiceSocket = Pick<WebSocket, 'on' | 'removeAllListeners' | 'send' | 'close' | 'terminate' | 'readyState' | 'bufferedAmount'>;
 type Session = VoiceIdentity & { id: string; modelId: string; provider: VoiceProvider; state: VoiceState; controller: AbortController;
-  socket?: VoiceSocket; keepalive?: ReturnType<typeof setInterval>; sonioxFinals: Set<string>; sonioxFinished: boolean; timer?: ReturnType<typeof setTimeout>; deliveries: Set<number>; delivery: number; inputSequence: number; muted: boolean; windowAt: number; windowBytes: number;
+  socket?: VoiceSocket; keepalive?: ReturnType<typeof setInterval>; sonioxFinals: Set<string>; sonioxFinished: boolean; timer?: ReturnType<typeof setTimeout>; deliveries: Set<number>; delivery: number; inputSequence: number; muted: boolean; creditAt: number; creditMs: number;
   receiveAt: number; receiveBytes: number; receiveCount: number; outputSequence: number; outputs: Map<number,{samples:number;itemId?:string}>;
   final: string; provisional: string; itemId?: string; itemSamples: number; playedSamples: number; interruption: number; awaitingInterrupt: boolean;
   discardedThrough: number; geminiInterim: string; geminiOutput: string; interaction: 'IN_PROGRESS' | 'IDLE'; blockedItems: Set<string>; connectStarted: boolean;
   turns: Turn[]; turnBase: string };
 type Turn = { itemId?: string; role: 'user' | 'ai'; text?: string };
 const TURN_LIMIT = 256;
+// Input rate budget shared with voice-capture.js MAX_PENDING and voice-audio.ts MAX_IN_FLIGHT (8 x 100ms):
+// a stall of up to 800ms may release eight queued frames at once at any phase, so the credit holds that
+// backlog plus two frames. It refills 25% faster than real time to absorb clock drift and jitter, which
+// still rejects sustained over-real-time input (e.g. 2x real time ends within about 1.4s).
+const INPUT_CREDIT_MS = 1000, INPUT_REFILL = 1.25, FRAME_MS = 100;
 type EventBody = VoiceEvent extends infer E ? E extends VoiceEvent ? Omit<E, 'id'> : never : never;
 type Dependencies = { identity: () => VoiceIdentity; emit: (event: VoiceEvent) => void; models: () => GatewayModel[];
-  socket?: (url: string) => VoiceSocket; fetch?: typeof fetch; now?: () => number };
+  socket?: (url: string) => VoiceSocket; fetch?: typeof fetch; now?: () => number; setupTimeoutMs?: number };
 export class RealtimeSessionManager {
   private current?: Session;
   private usedTokens = new Map<string,number>();
@@ -68,7 +73,7 @@ export class RealtimeSessionManager {
     if (provider !== 'soniox' && !voiceModels(this.deps.models()).some(m=>m.id===request.modelId)) throw new Error('현재 계정 목록에서 사용할 수 있는 실시간 모델을 선택해 주세요.');
     this.discardCompleted('새 음성을 시작해 이전의 저장하지 않은 확정문을 폐기했습니다.');
     const s: Session = { ...this.deps.identity(), id:request.id, modelId:request.modelId, provider, state:'requesting_permission', controller:new AbortController(),
-      sonioxFinals:new Set(),sonioxFinished:false,deliveries:new Set(),delivery:0,inputSequence:0, muted:false, windowAt:this.now(),windowBytes:0,receiveAt:this.now(),receiveBytes:0,receiveCount:0,
+      sonioxFinals:new Set(),sonioxFinished:false,deliveries:new Set(),delivery:0,inputSequence:0, muted:false, creditAt:this.now(),creditMs:INPUT_CREDIT_MS,receiveAt:this.now(),receiveBytes:0,receiveCount:0,
       outputSequence:0, outputs:new Map(),final:'',provisional:'',itemSamples:0,playedSamples:0,interruption:0,awaitingInterrupt:false,
       discardedThrough:0,geminiInterim:'',geminiOutput:'',interaction:'IDLE',blockedItems:new Set(),connectStarted:false,turns:[],turnBase:'' };
     this.current = s; this.state(s,'requesting_permission');
@@ -95,9 +100,8 @@ export class RealtimeSessionManager {
       this.usedTokens.set(issued.digest,Math.max(issued.expires,this.now()+120000));
       // No retry, refresh, alternate route, key in WS headers or token exposure to IPC.
       const socket = (this.deps.socket ?? createVoiceSocket)(issued.url); s.socket = socket;
-      // A locally past expiry can only be skew on a just-minted token; the server judges it during the handshake.
-      const remaining=issued.expires-this.now();
-      s.timer = setTimeout(()=>this.finish(s,'error','음성 초기 설정 응답 시간이 초과됐습니다. 새로 시작해 주세요.'),remaining>0?Math.min(10000,remaining):10000);
+      // Fixed like handshakeTimeout: local remaining time is skew-prone and the server judges token expiry.
+      s.timer = setTimeout(()=>this.finish(s,'error','음성 초기 설정 응답 시간이 초과됐습니다. 새로 시작해 주세요.'),this.deps.setupTimeoutMs ?? 10000);
       socket.on('error',()=>this.finish(s,'error','음성 연결에 실패했습니다. 자동 재연결하지 않습니다.'));
       socket.on('close',(code:number)=>this.finish(s,code===1000?'closed':'error',s.provider==='soniox' && !s.sonioxFinished && code===1000 ? '연결이 종료됐으며 마지막 확정 응답은 확인하지 못했습니다. 수신된 확정문만 남깁니다.' : voiceCloseMessage(code)));
       socket.on('open',()=>{ if (!this.owned(s)) return this.abort(); try { this.initialize(s); } catch { this.finish(s,'error','음성 초기 설정을 전송하지 못했습니다.'); } });
@@ -133,8 +137,8 @@ export class RealtimeSessionManager {
       if(s.state!=='active' || s.muted) return;
       if(raw.format!=='pcm_s16le'||raw.sampleRate!==rate||raw.channels!==1||!Number.isSafeInteger(raw.sequence)||raw.sequence!==s.inputSequence+1||
         !(raw.bytes instanceof Uint8Array)||raw.bytes.byteLength!==rate/10*2) throw new Error('오디오 프레임 형식');
-      if(this.now()-s.windowAt>=1000) {s.windowAt=this.now();s.windowBytes=0;}
-      s.windowBytes+=raw.bytes.byteLength; if(s.windowBytes>rate*2*1.5) throw new Error('오디오 빈도 한도');
+      const now=this.now();s.creditMs=Math.min(INPUT_CREDIT_MS,s.creditMs+Math.max(0,now-s.creditAt)*INPUT_REFILL);s.creditAt=now;
+      s.creditMs-=FRAME_MS; if(s.creditMs<0) throw new Error('오디오 빈도 한도');
       s.inputSequence=raw.sequence;
       if(s.provider==='openai') this.json(s,{type:'input_audio_buffer.append',audio:Buffer.from(raw.bytes).toString('base64')});
       else if(s.provider==='gemini') this.json(s,{realtimeInput:{audio:{data:Buffer.from(raw.bytes).toString('base64'),mimeType:'audio/pcm;rate=16000'}}});

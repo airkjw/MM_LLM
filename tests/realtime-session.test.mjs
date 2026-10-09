@@ -35,7 +35,7 @@ test('bounded options and invalid input/backpressure/oversize/output backlog/inb
  assert.deepEqual(BOUNDED_WS_OPTIONS,{maxPayload:262144,handshakeTimeout:10000,followRedirects:false,perMessageDeflate:false});
  for(const mode of ['format','odd','flood','buffer','oversize','output','receive']){const f=fixture();f.manager.begin({id:ID,modelId:f.response.model,consent:true});await f.manager.connect(ID,'synthetic');f.socket().open();f.socket().message({type:'session.updated'});
  if(mode==='format')f.manager.frame({...frame(),sampleRate:16000});if(mode==='odd')f.manager.frame({...frame(),bytes:new Uint8Array(3)});if(mode==='buffer'){f.socket().bufferedAmount=131072;f.manager.frame(frame())}
- if(mode==='flood')for(let n=1;n<=16;n++)f.manager.frame(frame(ID,n));if(mode==='oversize')f.socket().emit('message',Buffer.alloc(262145),false);
+ if(mode==='flood')for(let n=1;n<=16&&f.manager.size;n++)f.manager.frame(frame(ID,n));if(mode==='oversize')f.socket().emit('message',Buffer.alloc(262145),false);
  if(mode==='output')for(let n=0;n<11;n++)f.socket().message({type:'response.output_audio.delta',item_id:'item',delta:Buffer.alloc(24000).toString('base64')});
  if(mode==='receive')for(let n=0;n<201;n++)f.socket().message({type:'unknown'});
  assert.equal(f.manager.size,0);assert.equal(f.events.at(-1).state,'error');assert.equal(JSON.stringify(f.events).includes('token='),false);}
@@ -184,4 +184,30 @@ test('L8 turn list stays bounded and unfilled placeholders never block later tex
  assert.equal(f.manager.current.turns.length,256);
  f.socket().message({type:'conversation.item.input_audio_transcription.completed',item_id:'synthetic-299',transcript:'late'});
  assert.equal(f.events.filter(e=>e.type==='text').at(-1).final,'나: late\n');f.manager.abort();
+});
+test('F1 eight queued frames arriving at once after an 800ms stall keep the session alive at any window phase',async()=>{
+ for(const phase of [0,100,300,500,900]){
+  const f=fixture();await activeOpenAI(f);let seq=0;const send=()=>f.manager.frame(frame(ID,++seq));
+  for(let t=0;t<phase;t+=100){send();f.tick(100);}
+  f.tick(800);for(let n=0;n<8;n++)send();
+  for(let n=0;n<30;n++){f.tick(100);send();}
+  // Two stalls back to back recover too: the backlog budget refills faster than real time.
+  f.tick(800);for(let n=0;n<8;n++)send();for(let n=0;n<20;n++){f.tick(100);send();}
+  assert.equal(f.manager.size,1,`phase ${phase}`);assert.equal(f.manager.current.inputSequence,seq);f.manager.abort();
+ }
+});
+test('F1 sustained over-real-time input is still rejected',async()=>{
+ // About twice real time (a 100ms frame every 50ms) for two seconds.
+ const f=fixture();await activeOpenAI(f);let seq=0;
+ for(let n=0;n<40&&f.manager.size;n++){f.tick(50);f.manager.frame(frame(ID,++seq));}
+ assert.equal(f.manager.size,0);assert.match(f.events.at(-1).message,/빈도/);
+ // A single burst beyond the renderer's 8-frame backlog plus margin is rejected immediately.
+ const g=fixture();await activeOpenAI(g);for(let n=1;n<=16&&g.manager.size;n++)g.manager.frame(frame(ID,n));assert.equal(g.manager.size,0);
+});
+test('F3 initial setup timer does not shrink with local token remaining time',async(t)=>{
+ t.mock.timers.enable({apis:['setTimeout']});const f=fixture();f.response.expires_at=new Date(Date.now()+1000).toISOString();
+ f.manager.begin({id:ID,modelId:f.response.model,consent:true});await f.manager.connect(ID,'synthetic');f.socket().open();
+ t.mock.timers.tick(5000);assert.equal(f.manager.size,1);f.socket().message({type:'session.updated'});assert.equal(f.manager.current.state,'active');
+ const g=fixture();g.manager.begin({id:ID,modelId:g.response.model,consent:true});await g.manager.connect(ID,'synthetic');g.socket().open();
+ t.mock.timers.tick(10000);assert.equal(g.manager.size,0);assert.equal(g.events.at(-1).state,'error');
 });
