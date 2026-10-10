@@ -5,6 +5,10 @@ import { randomUUID } from "node:crypto";
 import type { PickedAttachment } from "../shared/contracts";
 import type { AttachmentContext } from "./storage";
 import { extractDocx, extractPdf, extractXlsx } from "./document-text";
+import {
+  DOCUMENT_EXTENSIONS, TEXT_DOCUMENT_EXTENSIONS, canonicalDocumentMime, extractHwpx, extractPlainText, extractPptx,
+  fileSignatureProblem
+} from "./document-formats";
 import { chunkDocument } from "./thread-context";
 import { clearSensitiveEntries, deleteSensitiveEntry, sweepSensitiveEntries, wipeBuffer } from "./sensitive-cache";
 
@@ -17,18 +21,17 @@ export const ATTACHMENT_TTL_MS = 60 * 60_000;
 const ATTACHMENT_SWEEP_INTERVAL_MS = 5 * 60_000;
 let sweepTimer: NodeJS.Timeout | null = null;
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".webp"]);
-const DOC_EXT = new Set([".pdf", ".docx", ".xlsx"]);
+const DOC_EXT = new Set(DOCUMENT_EXTENSIONS);
 const AUDIO_EXT = new Set([".mp3", ".m4a", ".mp4", ".wav", ".flac", ".ogg", ".opus", ".aiff"]);
 
 function mimeFor(extension: string): string {
+  const documentMime = canonicalDocumentMime(extension);
+  if (documentMime) return documentMime;
   return ({
     ".png": "image/png",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
     ".webp": "image/webp",
-    ".pdf": "application/pdf",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".mp3": "audio/mpeg",
     ".m4a": "audio/mp4",
     ".mp4": "audio/mp4",
@@ -61,6 +64,8 @@ function prepareAttachment(name: string, bytes: Buffer, kinds: AttachmentKind[])
   if ([".docx", ".xlsx"].includes(extension) && !bytes.subarray(0, 2).equals(Buffer.from("PK"))) {
     throw new Error(`${safeName}: 실제 Office 문서 형식이 아닙니다.`);
   }
+  const signatureProblem = fileSignatureProblem(extension, bytes);
+  if (signatureProblem) throw new Error(`${safeName}: ${signatureProblem}`);
   return {
     id: randomUUID(),
     name: safeName,
@@ -88,7 +93,7 @@ export async function pickAttachment(
   kinds: AttachmentKind[]
 ): Promise<PickedAttachment | null> {
   const extensions = [
-    ...(kinds.includes("document") ? ["pdf", "docx", "xlsx"] : []),
+    ...(kinds.includes("document") ? DOCUMENT_EXTENSIONS.map((extension) => extension.slice(1)) : []),
     ...(kinds.includes("image") ? ["png", "jpg", "jpeg", "webp"] : []),
     ...(kinds.includes("audio") ? ["mp3", "m4a", "mp4", "wav", "flac", "ogg", "opus", "aiff"] : [])
   ];
@@ -168,6 +173,21 @@ export function imageDataUrls(ids: string[]): string[] {
   });
 }
 
+async function extractDocumentText(
+  attachment: Attachment,
+  extension: string,
+  onProgress?: (message: string) => void,
+  signal?: AbortSignal
+): Promise<string> {
+  if (extension === ".pdf") return extractPdf(attachment.bytes, onProgress, signal);
+  if (extension === ".docx") return extractDocx(attachment.bytes);
+  if (extension === ".xlsx") return extractXlsx(attachment.bytes);
+  if (extension === ".pptx") return extractPptx(attachment.bytes);
+  if (extension === ".hwpx") return extractHwpx(attachment.bytes);
+  if (TEXT_DOCUMENT_EXTENSIONS.includes(extension)) return extractPlainText(attachment.bytes);
+  throw new Error(`${attachment.name}: 지원하지 않는 파일 형식입니다.`);
+}
+
 export async function contentForChat(
   text: string,
   ids: string[],
@@ -187,11 +207,7 @@ export async function contentForChat(
     const extension = extname(attachment.name).toLowerCase();
     let extracted = "";
     try {
-      extracted = extension === ".pdf"
-        ? await extractPdf(attachment.bytes, onProgress, signal)
-        : extension === ".docx"
-          ? await extractDocx(attachment.bytes)
-          : await extractXlsx(attachment.bytes);
+      extracted = await extractDocumentText(attachment, extension, onProgress, signal);
     } catch (error) {
       if (extension !== ".pdf" || attachment.bytes.length > 15 * 1024 * 1024) throw error;
       extracted = "[이 PDF는 로컬 OCR로 읽히지 않았습니다. Claude 네이티브 PDF 분석을 사용할 수 있습니다.]";

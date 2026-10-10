@@ -764,7 +764,7 @@ function registerHandlers(): void {
     const projectId = shortString(rawProjectId, 100, "프로젝트");
     const attachmentId = shortString(rawAttachmentId, 100, "첨부 파일");
     const attachment = getAttachment(attachmentId);
-    if (attachment.kind !== "document") throw new Error("프로젝트에는 PDF·Word·Excel 문서만 추가할 수 있습니다.");
+    if (attachment.kind !== "document") throw new Error("프로젝트에는 PDF·Word·Excel·PowerPoint·한글(HWPX)·텍스트(TXT·MD·CSV) 문서만 추가할 수 있습니다.");
     try {
       documentRetrieval.cancelProject(profileId, projectId);
       const result = await addProjectDocument(profileId, projectId, attachment, controller.signal);

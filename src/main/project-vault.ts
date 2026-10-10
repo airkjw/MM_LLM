@@ -6,6 +6,10 @@ import { decodeBackupBytes, type PortableProject } from "../shared/backup-format
 import type { ProjectDocument, ProjectSummary } from "../shared/contracts";
 import { writeAtomic } from "./atomic-file";
 import { extractDocx, extractPdf, extractXlsx } from "./document-text";
+import {
+  TEXT_DOCUMENT_EXTENSIONS, canonicalDocumentMime, extractHwpx, extractPlainText, extractPptx, fileSignatureProblem,
+  isAcceptedDocumentMime
+} from "./document-formats";
 import { createVaultKey, decryptVaultBlob, encryptVaultBlob, type VaultKey } from "./project-vault-crypto";
 import { chunkDocument } from "./thread-context";
 import { chunkKey, LOCAL_RETRIEVAL, MAX_SEMANTIC_INDEX_BYTES, validateRetrievalSettings, validateSemanticIndex,
@@ -175,6 +179,9 @@ async function updateProjectUnlocked(profileId: string, projectId: string,
   return publicProject(project);
 }
 
+const PROJECT_DOCUMENT_FORMATS_MESSAGE =
+  "프로젝트에는 PDF·Word·Excel·PowerPoint·한글(HWPX)·텍스트(TXT·MD·CSV) 문서만 추가할 수 있습니다.";
+
 async function extractedText(name: string, bytes: Buffer, signal?: AbortSignal): Promise<string> {
   const extension = extname(name).toLowerCase();
   signal?.throwIfAborted();
@@ -182,11 +189,14 @@ async function extractedText(name: string, bytes: Buffer, signal?: AbortSignal):
     if (extension === ".pdf") return await extractPdf(bytes, undefined, signal);
     if (extension === ".docx") return await extractDocx(bytes);
     if (extension === ".xlsx") return await extractXlsx(bytes);
+    if (extension === ".pptx") return await extractPptx(bytes);
+    if (extension === ".hwpx") return await extractHwpx(bytes);
+    if (TEXT_DOCUMENT_EXTENSIONS.includes(extension)) return extractPlainText(bytes);
   } catch (error) {
     if (extension !== ".pdf") throw error;
     return "[로컬 OCR로 읽히지 않은 PDF입니다. Claude 네이티브 PDF 분석에서 원문을 사용할 수 있습니다.]";
   }
-  throw new Error("프로젝트에는 PDF·Word·Excel 문서만 추가할 수 있습니다.");
+  throw new Error(PROJECT_DOCUMENT_FORMATS_MESSAGE);
 }
 
 async function addProjectDocumentUnlocked(profileId: string, projectId: string,
@@ -200,12 +210,10 @@ async function addProjectDocumentUnlocked(profileId: string, projectId: string,
   const used = project.documents.reduce((sum, item) => sum + item.size, 0);
   if (used + input.bytes.length > MAX_PROJECT_BYTES) throw new Error("프로젝트 문서 전체 용량은 64MB 이하여야 합니다.");
   const name = basename(input.name).slice(0, 255); const extension = extname(name).toLowerCase();
-  const expectedMime = extension === ".pdf" ? "application/pdf"
-    : extension === ".docx" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-      : extension === ".xlsx" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "";
-  if (!expectedMime || input.mime !== expectedMime || extension === ".pdf" &&
+  const expectedMime = canonicalDocumentMime(extension);
+  if (!expectedMime || !isAcceptedDocumentMime(extension, input.mime) || extension === ".pdf" &&
     !input.bytes.subarray(0, 5).equals(Buffer.from("%PDF-")) || [".docx", ".xlsx"].includes(extension) &&
-    !input.bytes.subarray(0, 2).equals(Buffer.from("PK"))) {
+    !input.bytes.subarray(0, 2).equals(Buffer.from("PK")) || fileSignatureProblem(extension, input.bytes)) {
     throw new Error("프로젝트 문서의 확장자·MIME·실제 파일 형식이 일치하지 않습니다.");
   }
   const text = await extractedText(name, input.bytes, signal); signal?.throwIfAborted();
@@ -217,7 +225,7 @@ async function addProjectDocumentUnlocked(profileId: string, projectId: string,
     encryptVaultBlob(indexBytes, key, `${profileId}:${indexBlobId}`)); }
   catch (error) { await unlink(blobPath(profileId, blobId)).catch(() => undefined); throw error; }
   const now = new Date().toISOString(); const document: StoredDocument = { id: randomUUID(), blobId, indexBlobId, name,
-    mime: input.mime, size: input.bytes.length, createdAt: now, sourceHash: createHash("sha256").update(input.bytes).digest("hex") };
+    mime: expectedMime, size: input.bytes.length, createdAt: now, sourceHash: createHash("sha256").update(input.bytes).digest("hex") };
   try { project.documents.push(document); project.updatedAt = now; await saveDb(profileId, value); }
   catch (error) { await Promise.all([blobId, indexBlobId].map((id) => unlink(blobPath(profileId, id)).catch(() => undefined))); throw error; }
   return publicProject(project);

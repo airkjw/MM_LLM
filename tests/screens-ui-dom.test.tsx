@@ -703,3 +703,22 @@ test("media: the kind segment lives in the media column and the project chip sho
   await click(tabs[2]);
   assert.equal(document.querySelectorAll<HTMLElement>('.media-panel [role="tablist"][aria-label="미디어 종류"] [role="tab"]')[2].getAttribute("aria-selected"), "true");
 });
+
+test("attachment format copy: the project drop zone and the chat composer list the new document formats", async () => {
+  await renderApp(projectApi());
+  const attach = document.querySelector<HTMLElement>('.composer-card button[title$="첨부"]');
+  assert.ok(attach, "the composer attach button carries the format list as its title");
+  assert.match(attach!.getAttribute("title") ?? "", /^PDF·Word·Excel·PPT·한글·텍스트·이미지 첨부$/);
+  await act(async () => {
+    const event = new browser.Event("dragenter", { bubbles: true, cancelable: true });
+    Object.assign(event, { dataTransfer: { types: ["Files"], files: [] } });
+    document.querySelector(".chat-panel")!.dispatchEvent(event);
+  });
+  assert.match(document.querySelector(".composer-drop-hint")?.textContent ?? "", /PDF·Word·Excel·PPT·한글·텍스트·이미지를 여기에 놓으세요/);
+  await click(railItem("프로젝트"));
+  const zone = document.querySelector<HTMLElement>(".project-dropzone")!;
+  for (const format of ["PDF", "DOCX", "XLSX", "PPTX", "HWPX", "TXT", "MD", "CSV"]) {
+    assert.match(zone.textContent ?? "", new RegExp(format), `${format} is listed`);
+  }
+  assert.match(zone.textContent ?? "", /끌어 놓거나 선택/);
+});

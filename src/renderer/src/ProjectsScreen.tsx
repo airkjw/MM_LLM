@@ -186,7 +186,7 @@ function ProjectDetail(props: ProjectsScreenProps & { project: ProjectSummary })
           <button type="button" className={dropActive ? "project-dropzone drop-active" : "project-dropzone"} disabled={busy || documentsFull}
             onClick={() => void props.onAddDocument(project.id)} {...dropProps}>
             {props.onDropDocuments ? <Upload size={16} aria-hidden="true" /> : <Paperclip size={16} aria-hidden="true" />}
-            {documentsFull ? `문서는 프로젝트당 ${MAX_DOCUMENTS}개까지 보관합니다` : `PDF · DOCX · XLSX 문서를 ${props.onDropDocuments ? "끌어 놓거나 " : ""}선택`}</button>
+            {documentsFull ? `문서는 프로젝트당 ${MAX_DOCUMENTS}개까지 보관합니다` : `PDF · DOCX · XLSX · PPTX · HWPX · TXT · MD · CSV 문서를 ${props.onDropDocuments ? "끌어 놓거나 " : ""}선택`}</button>
         </div>}
         {tab === "threads" && <div className="project-card">
           {projectThreads.length === 0 ? <p className="project-empty">이 프로젝트에 연결된 대화가 없습니다.</p>
