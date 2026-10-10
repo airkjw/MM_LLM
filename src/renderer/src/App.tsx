@@ -73,8 +73,16 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = useState<AppSettings | null>(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const settingsSavingRef = useRef(false);
-  const updateRequestRef = useRef(false);
+  /** The running update request: an install latches until the app quits, a check only while it runs. */
+  const updateRequestRef = useRef<"install" | "check" | null>(null);
+  const [installPending, setInstallPending] = useState(false);
   const [focusUpdateAction, setFocusUpdateAction] = useState(false);
+  // A successful install means the app is quitting, so the latch stays; an updater error or any other state ends it.
+  useEffect(() => {
+    if (updateState?.status === "ready") return;
+    if (updateRequestRef.current === "install") updateRequestRef.current = null;
+    setInstallPending(false);
+  }, [updateState?.status]);
   /** A default instruction left behind a running save; App (not the settings screen) owns it so leaving the screen cannot lose it. */
   const [pendingInstruction, setPendingInstruction] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState("");
@@ -372,6 +380,7 @@ export default function App() {
     setMediaVisited(false); setChatbotSelectedId(null); setChatbotStatus({}); setChatbotUsage(null);
     setAppSettings(null); setSettingsDraft(null); setSettingsSaving(false); settingsSavingRef.current = false; setPendingInstruction(null);
     setSettingsError(""); setSettingsCategory("general"); setFocusUpdateAction(false); pendingComposerFocusRef.current = null;
+    updateRequestRef.current = null; setInstallPending(false);
     setPaletteOpen(false); setRenameDialog(null);
     setKeyReplaceOpen(false); setReplacementKey(""); setKeyReplacing(false);
     setTemplateDraft(null); setEvidenceAppends([]); displacedChatbotDraftsRef.current.clear();
@@ -1074,14 +1083,18 @@ export default function App() {
     setSettingsDraft(appSettings); setSettingsError(""); setSettingsCategory(updateAction ? "general" : "account");
     setFocusUpdateAction(updateAction); setScreen("settings");
   };
-  // One install/check request at a time, whichever button (일반 row or footer) sent it.
+  // One install/check request at a time, whichever button (일반 row or footer) sent it. A resolved install keeps the
+  // latch (the app is quitting and installUpdate answers within milliseconds); only a rejection releases it.
   const runUpdateAction = () => {
     if (updateRequestRef.current) return;
-    updateRequestRef.current = true;
     const install = updateState?.status === "ready";
+    updateRequestRef.current = install ? "install" : "check";
+    if (install) setInstallPending(true);
     void new Promise<unknown>((resolve) => resolve(install ? window.mmllm.installUpdate() : window.mmllm.checkForUpdates()))
-      .catch((error) => setError(errorText(error)))
-      .finally(() => { updateRequestRef.current = false; });
+      .then(() => { if (!install) updateRequestRef.current = null; })
+      .catch((error) => {
+        updateRequestRef.current = null; setInstallPending(false); setError(errorText(error));
+      });
   };
   const headerSearch = <button type="button" className="header-search" aria-keyshortcuts="Meta+K Control+K"
     title={`명령 또는 대화 검색 (${SHORTCUT_LABEL})`} onClick={openPalette}>
@@ -1188,7 +1201,7 @@ export default function App() {
       {screen === "settings" && settingsDraft && <SettingsScreen category={settingsCategory} onCategoryChange={setSettingsCategory}
         settings={settingsDraft} saving={settingsSaving} error={settingsError} onChange={changeSettings} pendingInstruction={pendingInstruction}
         updateState={updateState} credits={credits} modelId={modelId}
-        onUpdateAction={runUpdateAction} focusUpdateAction={focusUpdateAction}
+        onUpdateAction={runUpdateAction} installPending={installPending} focusUpdateAction={focusUpdateAction}
         onFocusUpdateHandled={() => setFocusUpdateAction(false)}
         onRefreshModels={() => void refreshModels()} onRefreshCredits={() => void refreshCredits(true)}
         onOpenKeyReplace={openKeyReplace} onLogout={() => void logout()} />}

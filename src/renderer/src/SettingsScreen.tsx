@@ -141,6 +141,8 @@ export type SettingsScreenProps = {
    * once the 일반 body is shown and then calls onFocusUpdateHandled, so a later visit does not move focus again.
    */
   focusUpdateAction?: boolean; onFocusUpdateHandled?: () => void;
+  /** An install request was sent and the app has not quit yet: both install controls show it and ignore input. */
+  installPending?: boolean;
   /**
    * A default instruction the host is holding because another save was running when the field was left. The host
    * applies it after that save, also when this screen is no longer mounted; the screen shows it and its pending state.
@@ -151,7 +153,7 @@ export type SettingsScreenProps = {
 /** Settings screen (contract D4.1): a 240 category column and one category body; every change applies and saves at once. */
 export function SettingsScreen({ category, onCategoryChange, settings, saving, error, onChange, updateState, onUpdateAction,
   onRefreshModels, credits, onRefreshCredits, onOpenKeyReplace, onLogout, modelId, pendingInstruction = null,
-  focusUpdateAction = false, onFocusUpdateHandled }: SettingsScreenProps) {
+  focusUpdateAction = false, onFocusUpdateHandled, installPending = false }: SettingsScreenProps) {
   const entry = CATEGORIES.find((item) => item.id === category) ?? CATEGORIES[0];
   const titleId = useId();
   const [instruction, setInstruction] = useState(pendingInstruction ?? settings.defaultInstruction);
@@ -170,7 +172,12 @@ export function SettingsScreen({ category, onCategoryChange, settings, saving, e
   }, [focusUpdateAction, entry.id, onFocusUpdateHandled]);
   const status = updateStatusLabel(updateState);
   const version = updateState?.currentVersion;
-  const updateButton = updateState?.status === "ready" ? `업데이트 설치 ${updateState.availableVersion ?? ""}`.trim()
+  const installing = updateState?.status === "ready" && installPending;
+  // Running work uses aria-disabled, not disabled, so the focused action keeps focus while it runs.
+  const updateBusy = installing || updateState?.status === "checking" || updateState?.status === "downloading";
+  const runUpdateAction = () => { if (!updateBusy) onUpdateAction(); };
+  const updateButton = installing ? "업데이트 설치 중…"
+    : updateState?.status === "ready" ? `업데이트 설치 ${updateState.availableVersion ?? ""}`.trim()
     : updateState?.status === "downloading" ? `업데이트 다운로드 ${updateState.progress ?? 0}%`
       : updateState?.status === "checking" ? "업데이트 확인 중" : "업데이트 확인";
   // A blur save that meets another running save is handed to the host, which keeps it (even if this screen unmounts)
@@ -189,7 +196,8 @@ export function SettingsScreen({ category, onCategoryChange, settings, saving, e
       <div className="settings-row">
         <div className="settings-row-text"><strong>업데이트</strong><small>{updateDescription(updateState)}</small></div>
         <button ref={updateActionRef} type="button" className={updateState?.status === "ready" ? "primary-button" : "secondary-button"}
-          onClick={onUpdateAction} disabled={!updateState || updateState.status === "disabled" || updateState.status === "checking" || updateState.status === "downloading"}>
+          onClick={runUpdateAction} disabled={!updateState || updateState.status === "disabled"}
+          aria-disabled={updateBusy || undefined} aria-busy={installing || undefined}>
           {updateState?.status === "ready" ? <Download size={15} aria-hidden="true" /> : <RefreshCw size={15} aria-hidden="true" />}
           {updateButton}</button>
       </div>
@@ -271,7 +279,8 @@ export function SettingsScreen({ category, onCategoryChange, settings, saving, e
       <div className="settings-footer"><span>MM_LLM {version ? `v${version}` : "버전 확인 중"}</span>
         {status && <span className={`settings-footer-status status-${updateState?.status}`}> · {updateState?.status === "ready"
           // The ready status is the same install action as the 일반 row (one handler, same name), reachable from any category.
-          ? <button type="button" className="settings-footer-action" onClick={onUpdateAction}>{updateButton}</button> : status}</span>}</div>
+          ? <button type="button" className="settings-footer-action" onClick={runUpdateAction}
+            aria-disabled={updateBusy || undefined} aria-busy={installing || undefined}>{updateButton}</button> : status}</span>}</div>
     </div>
     <div className="settings-body">
       <div className="settings-content" aria-labelledby={titleId} role="region">

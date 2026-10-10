@@ -135,10 +135,13 @@ const now = new Date().toISOString();
 const thread = { id: "settings-thread", title: "합성 대화", modelId: "gpt-6-astra", createdAt: now, updatedAt: now,
   webSearchMode: "off" as const, reasoningMode: "auto" as const, instruction: "", advanced: {}, attachmentConsent: false,
   messages: [], messageCount: 0 };
-type Calls = { settings: AppSettings[]; logout: number; models: number; check: number; install: number; credits: boolean[]; keyReplace: string[] };
+type Calls = { settings: AppSettings[]; logout: number; models: number; check: number; install: number; credits: boolean[]; keyReplace: string[];
+  emitUpdate: (state: UpdateState) => Promise<void> };
 
 function appApi(options: { settings?: Partial<AppSettings>; update?: UpdateState; updateSettings?: (value: AppSettings) => Promise<AppSettings>; keyReplaceOk?: boolean } = {}) {
-  const calls: Calls = { settings: [], logout: 0, models: 0, check: 0, install: 0, credits: [], keyReplace: [] };
+  const updateListeners = new Set<(state: UpdateState) => void>();
+  const calls: Calls = { settings: [], logout: 0, models: 0, check: 0, install: 0, credits: [], keyReplace: [],
+    emitUpdate: async (state) => { await act(async () => { for (const listener of [...updateListeners]) listener(state); }); } };
   let stored: AppSettings = { theme: "light", fontSize: "medium", defaultInstruction: "합성 기본 지침", ...options.settings };
   const sessionState = { authenticated: true, credits: { total: { quota: 1000, used: 120, remaining: 880 },
     monthly_allocated: { quota: 500, used: 100, remaining: 400, renewal_date: "2026-11-01T00:00:00Z" } },
@@ -154,7 +157,8 @@ function appApi(options: { settings?: Partial<AppSettings>; update?: UpdateState
     setThemePreference: async () => {}, onThemeResolved: () => () => {},
     listThreads: async () => [thread], loadThread: async () => thread, listProjects: async () => [],
     listBackgroundResponses: async () => [], getUpdateState: async () => options.update ?? { status: "latest", currentVersion: "0.5.1" },
-    onUpdateChanged: () => () => {}, discardAttachments: async () => {},
+    onUpdateChanged: (listener: (state: UpdateState) => void) => { updateListeners.add(listener); return () => { updateListeners.delete(listener); }; },
+    discardAttachments: async () => {},
     getCredits: async (force: boolean) => { calls.credits.push(force); return { total: { quota: 1000, used: 130, remaining: 870 } }; },
     searchThreads: async () => [], listMediaJobs: async () => [], listChatbotBookmarks: async () => [], listCompareRuns: async () => [],
     cancelResearch: async () => {}, onVoiceEvent: () => () => {},
@@ -228,8 +232,12 @@ test("every update status shows its footer label and a 업데이트 row on 일�
     const row = [...document.querySelectorAll(".settings-row")].find((item) => item.querySelector("strong")?.textContent === "업데이트");
     assert.ok(row, `${update.status}: the update row is visible`);
     assert.equal(row!.querySelector("small")?.textContent, description, update.status);
-    const busyStatus = update.status === "checking" || update.status === "downloading" || update.status === "disabled";
-    assert.equal(row!.querySelector("button")!.disabled, busyStatus, `${update.status}: the action is ${busyStatus ? "off" : "available"}`);
+    const busyStatus = update.status === "checking" || update.status === "downloading";
+    const off = busyStatus || update.status === "disabled";
+    const action = row!.querySelector("button")!;
+    assert.equal(action.disabled, update.status === "disabled", `${update.status}: only an unavailable updater is natively disabled`);
+    assert.equal(action.getAttribute("aria-disabled"), busyStatus ? "true" : null,
+      `${update.status}: a running check keeps the control focusable (${off ? "off" : "available"})`);
     assert.equal(document.querySelectorAll('[data-testid="update-status-live"]').length, 1, "still one live region in the app");
     await act(async () => root!.unmount()); root = null; host?.remove(); host = null; document.body.replaceChildren();
   }
@@ -547,20 +555,64 @@ test("update ready: the footer status is the same install action, and a quick do
   assert.equal(calls.check, 0, "the install path never falls back to a check");
 });
 
-test("update ready: an install request still in flight ignores further clicks from the footer and the 일반 row", async () => {
+const sleep = (ms: number) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+
+test("update ready: an install request stays latched after it resolves; spaced clicks never send a second one", async () => {
   const calls = await renderApp({ update: { status: "ready", currentVersion: "0.6.0", availableVersion: "0.6.1" } });
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => { release = resolve; });
-  (browser as unknown as { mmllm: { installUpdate: () => Promise<void> } }).mmllm.installUpdate = () => { calls.install++; return held; };
+  await openSettings("일반");
+  const row = updateRowButton();
+  row.focus();
+  await click(row);
+  assert.equal(calls.install, 1);
+  // The request already resolved (the app is quitting): both install controls show it and refuse further input.
+  for (const control of [updateRowButton(), footerAction()!]) {
+    assert.equal(control.textContent?.trim(), "업데이트 설치 중…");
+    assert.equal(control.getAttribute("aria-busy"), "true");
+    assert.equal(control.getAttribute("aria-disabled"), "true");
+  }
+  assertFocused(updateRowButton(), "the pending control keeps focus");
+  // Real double click / key repeat spacing: separate tasks well after the first request settled.
+  for (let repeat = 0; repeat < 3; repeat++) {
+    await sleep(150);
+    await click(repeat === 1 ? footerAction()! : updateRowButton());
+  }
+  assert.equal(calls.install, 1, "exactly one installUpdate call");
+  assert.equal(calls.check, 0);
+});
+
+test("update ready: a rejected install request releases the latch and the same controls retry", async () => {
+  const calls = await renderApp({ update: { status: "ready", currentVersion: "0.6.0", availableVersion: "0.6.1" } });
+  const api = (browser as unknown as { mmllm: { installUpdate: () => Promise<void> } }).mmllm;
+  let fail = true;
+  api.installUpdate = async () => { calls.install++; if (fail) throw new Error("합성 설치 실패"); };
   await openSettings("일반");
   await click(footerAction()!);
+  assert.equal(calls.install, 1);
+  assert.match(document.body.textContent ?? "", /합성 설치 실패/, "the failure is shown");
+  for (const control of [updateRowButton(), footerAction()!]) {
+    assert.equal(control.textContent?.trim(), "업데이트 설치 0.6.1");
+    assert.equal(control.getAttribute("aria-busy"), null);
+    assert.equal(control.getAttribute("aria-disabled"), null);
+  }
+  fail = false;
   await click(updateRowButton());
+  assert.equal(calls.install, 2, "a rejected request can be retried");
+  assert.equal(updateRowButton().textContent?.trim(), "업데이트 설치 중…");
+});
+
+test("update ready: the latch also ends when the update state leaves ready (an updater error after the request)", async () => {
+  const calls = await renderApp({ update: { status: "ready", currentVersion: "0.6.0", availableVersion: "0.6.1" } });
+  await openSettings("일반");
   await click(footerAction()!);
-  assert.equal(calls.install, 1, "no second request while the first one is running");
-  await act(async () => { release(); await held; });
-  await settle();
+  assert.equal(calls.install, 1);
+  await calls.emitUpdate({ status: "error", currentVersion: "0.6.0", message: "합성 오류" });
+  assert.equal(updateRowButton().textContent?.trim(), "업데이트 확인");
+  assert.equal(updateRowButton().getAttribute("aria-busy"), null);
+  assert.equal(footerAction(), null, "an error is plain footer text again");
+  await calls.emitUpdate({ status: "ready", currentVersion: "0.6.0", availableVersion: "0.6.1" });
+  assert.equal(updateRowButton().textContent?.trim(), "업데이트 설치 0.6.1", "a fresh ready state is installable again");
   await click(updateRowButton());
-  assert.equal(calls.install, 2, "a finished request can be retried");
+  assert.equal(calls.install, 2);
 });
 
 test("update error: the rail avatar opens 일반 on the retry action; the footer stays plain text", async () => {
@@ -574,6 +626,31 @@ test("update error: the rail avatar opens 일반 on the retry action; the footer
   await click(retry);
   assert.equal(calls.check, 1);
   assert.equal(calls.install, 0);
+});
+
+test("update error: the retried check keeps focus on the action while it runs and ignores presses meanwhile", async () => {
+  const calls = await renderApp({ update: { status: "error", currentVersion: "0.6.0", message: "합성 오류" } });
+  const api = (browser as unknown as { mmllm: { checkForUpdates: () => Promise<void> } }).mmllm;
+  api.checkForUpdates = async () => {
+    calls.check++;
+    await calls.emitUpdate({ status: "checking", currentVersion: "0.6.0" });
+  };
+  await click(avatar());
+  const retry = updateRowButton();
+  assertFocused(retry);
+  await click(retry);
+  assert.equal(calls.check, 1);
+  const running = updateRowButton();
+  assert.equal(running.textContent?.trim(), "업데이트 확인 중");
+  assert.equal(running.disabled, false, "not natively disabled, so focus is not dropped to the page");
+  assert.equal(running.getAttribute("aria-disabled"), "true");
+  assertFocused(running, "focus stays on the update action while the check runs");
+  await click(running);
+  await click(running);
+  assert.equal(calls.check, 1, "presses while checking do nothing");
+  await calls.emitUpdate({ status: "latest", currentVersion: "0.6.0" });
+  assertFocused(updateRowButton());
+  assert.equal(updateRowButton().getAttribute("aria-disabled"), null);
 });
 
 test("other update states keep the avatar on 계정 · API 키 and the footer as plain text", async () => {

@@ -858,6 +858,10 @@ button:disabled, .primary-button:disabled, .send-button:disabled, .send-button.s
   cursor: not-allowed; color: var(--color-text-tertiary); border-color: var(--color-border);
   background: var(--color-bg-subtle); box-shadow: none;
 }
+/* A running update request keeps its control focusable (aria-disabled, not disabled) and uses the same inactive look. */
+.settings-row .primary-button[aria-disabled="true"], .settings-row .secondary-button[aria-disabled="true"] {
+  cursor: progress; color: var(--color-text-tertiary); border-color: var(--color-border); background: var(--color-bg-subtle); box-shadow: none; }
+.settings-footer-action[aria-disabled="true"] { cursor: progress; color: var(--color-text-tertiary); background: var(--color-bg-clear); text-decoration: none; }
 input:disabled, textarea:disabled, select:disabled {
   cursor: not-allowed; color: var(--color-text-tertiary); border-color: var(--color-border-control);
   background: var(--color-bg-subtle); -webkit-text-fill-color: var(--color-text-tertiary);
