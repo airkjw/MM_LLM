@@ -7,7 +7,8 @@ import vm from "node:vm";
 import ts from "typescript";
 import { applyThemePreference, publishResolvedTheme } from "../src/main/theme-application.ts";
 
-const readSource = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
+// Windows checkouts may use CRLF; the source assertions below are written against LF.
+const readSource = (path) => readFileSync(new URL(path, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 /** Mirrors Electron's nativeTheme: shouldUseDarkColors honors themeSource before the OS value. */
 function fakeNativeTheme(systemIsDark) {
@@ -143,7 +144,7 @@ function rendererSources(directory) {
   return readdirSync(directory).flatMap((name) => {
     const path = join(directory, name);
     if (statSync(path).isDirectory()) return rendererSources(path);
-    return /\.(?:ts|tsx)$/.test(name) ? [[path, readFileSync(path, "utf8")]] : [];
+    return /\.(?:ts|tsx)$/.test(name) ? [[path, readFileSync(path, "utf8").replace(/\r\n/g, "\n")]] : [];
   });
 }
 
