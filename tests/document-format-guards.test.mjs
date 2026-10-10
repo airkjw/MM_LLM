@@ -5,7 +5,6 @@ import { once } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { createDeflateRaw, deflateRawSync } from "node:zlib";
 import { extractHwpx, extractPlainText, extractPptx } from "../src/main/document-formats.ts";
 
@@ -106,7 +105,7 @@ test("guard: inflating stops at the declared size (bounded memory against a lyin
   const file = join(directory, "bomb.pptx"); await writeFile(file, buildZip(entries));
   const script = `
     import { readFileSync } from "node:fs";
-    import { extractPptx } from ${JSON.stringify(pathToFileURL(new URL("../src/main/document-formats.ts", import.meta.url).pathname).href)};
+    import { extractPptx } from ${JSON.stringify(new URL("../src/main/document-formats.ts", import.meta.url).href)};
     const bytes = readFileSync(process.argv[1]);
     const before = process.resourceUsage().maxRSS;
     let message = "";
