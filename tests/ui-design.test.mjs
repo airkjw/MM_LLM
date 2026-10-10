@@ -569,18 +569,11 @@ test("Stage 5 Hangul in monospace contexts: Hangul-sentence meta lines use the s
   assert.match(rulesFor(".model-option-id").join(";"), /font-family: var\(--font-mono\)/);
 });
 
-test("Stage 5 smoke script is dev-only, mock-only and ships nowhere", () => {
+test("dev-only tooling ships nowhere and the product carries no smoke or CDP hook", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   assert.deepEqual(pkg.build.files.filter((entry) => !entry.startsWith("!")), ["out/**/*", "package.json"], "only out/** ships; scripts/ is excluded");
-  assert.equal(pkg.scripts["ui:smoke"], "node scripts/ui-smoke.mjs");
-  const script = readFileSync(join(root, "scripts/ui-smoke.mjs"), "utf8");
-  assert.match(script, /from "ws"/, "uses the existing ws dependency");
-  assert.match(script, /MM_LLM_MOCK: "1"/, "mock mode only");
-  assert.match(script, /--remote-debugging-port=/);
-  assert.match(script, /refusing to continue/, "stops when the mock gateway is not detected");
-  assert.doesNotMatch(script, /api\.chat|chat\.khu\.ac\.kr|https?:\/\/(?!127\.0\.0\.1)/, "no real endpoint");
-  // No product test hook: the product reads no smoke/CDP switch.
+  // The UI smoke tool is a local-only developer script; the product must not read any smoke/CDP switch.
   for (const file of ["src/main/index.ts", "src/preload/index.ts", "src/renderer/src/App.tsx"]) {
     assert.ok(!/remote-debugging|__smoke|SMOKE_|scripts\/ui-smoke/.test(readFileSync(join(root, file), "utf8")), `${file} has no smoke hook`);
   }

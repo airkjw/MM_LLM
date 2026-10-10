@@ -16,3 +16,4 @@ release-*-local/
 /DESIGN-IS-*/
 /CLAUDE.md
 /AGENTS.md
+/scripts/ui-smoke.mjs
