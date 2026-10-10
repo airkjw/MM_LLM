@@ -21,7 +21,8 @@ export const RAIL_ITEMS: readonly RailItem[] = [
 
 /**
  * The rail avatar (README): credit and update state in its label and a text badge, one polite live region for
- * update changes. It opens the settings screen on the account category; the Stage 2 popover is gone (risk 6).
+ * update changes. It opens the settings screen on the account category, or on 일반 at the update action while an
+ * update is ready or failed; the Stage 2 popover is gone (risk 6).
  */
 function RailAvatar({ model, onOpen }: { model: SidebarAccountModel; onOpen: (trigger: HTMLElement) => void }) {
   const { credits, updateState } = model;

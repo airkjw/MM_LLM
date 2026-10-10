@@ -73,6 +73,8 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = useState<AppSettings | null>(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const settingsSavingRef = useRef(false);
+  const updateRequestRef = useRef(false);
+  const [focusUpdateAction, setFocusUpdateAction] = useState(false);
   /** A default instruction left behind a running save; App (not the settings screen) owns it so leaving the screen cannot lose it. */
   const [pendingInstruction, setPendingInstruction] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState("");
@@ -369,7 +371,7 @@ export default function App() {
     setBookmarks([]); setThread(null); setModelId(""); setScreen("chat"); setMediaKind("image"); setOpenedMediaJob(null);
     setMediaVisited(false); setChatbotSelectedId(null); setChatbotStatus({}); setChatbotUsage(null);
     setAppSettings(null); setSettingsDraft(null); setSettingsSaving(false); settingsSavingRef.current = false; setPendingInstruction(null);
-    setSettingsError(""); setSettingsCategory("general"); pendingComposerFocusRef.current = null;
+    setSettingsError(""); setSettingsCategory("general"); setFocusUpdateAction(false); pendingComposerFocusRef.current = null;
     setPaletteOpen(false); setRenameDialog(null);
     setKeyReplaceOpen(false); setReplacementKey(""); setKeyReplacing(false);
     setTemplateDraft(null); setEvidenceAppends([]); displacedChatbotDraftsRef.current.clear();
@@ -1066,8 +1068,20 @@ export default function App() {
     if (destination === "settings") { setSettingsDraft(appSettings); setSettingsError(""); }
     setScreen(destination);
   };
+  // A ready or failed update is what the rail badge points at, so the avatar lands on its action in 일반.
   const openAccountSettings = () => {
-    setSettingsDraft(appSettings); setSettingsError(""); setSettingsCategory("account"); setScreen("settings");
+    const updateAction = updateState?.status === "ready" || updateState?.status === "error";
+    setSettingsDraft(appSettings); setSettingsError(""); setSettingsCategory(updateAction ? "general" : "account");
+    setFocusUpdateAction(updateAction); setScreen("settings");
+  };
+  // One install/check request at a time, whichever button (일반 row or footer) sent it.
+  const runUpdateAction = () => {
+    if (updateRequestRef.current) return;
+    updateRequestRef.current = true;
+    const install = updateState?.status === "ready";
+    void new Promise<unknown>((resolve) => resolve(install ? window.mmllm.installUpdate() : window.mmllm.checkForUpdates()))
+      .catch((error) => setError(errorText(error)))
+      .finally(() => { updateRequestRef.current = false; });
   };
   const headerSearch = <button type="button" className="header-search" aria-keyshortcuts="Meta+K Control+K"
     title={`명령 또는 대화 검색 (${SHORTCUT_LABEL})`} onClick={openPalette}>
@@ -1174,9 +1188,8 @@ export default function App() {
       {screen === "settings" && settingsDraft && <SettingsScreen category={settingsCategory} onCategoryChange={setSettingsCategory}
         settings={settingsDraft} saving={settingsSaving} error={settingsError} onChange={changeSettings} pendingInstruction={pendingInstruction}
         updateState={updateState} credits={credits} modelId={modelId}
-        onUpdateAction={() => void (updateState?.status === "ready"
-          ? window.mmllm.installUpdate()
-          : window.mmllm.checkForUpdates()).catch((error) => setError(errorText(error)))}
+        onUpdateAction={runUpdateAction} focusUpdateAction={focusUpdateAction}
+        onFocusUpdateHandled={() => setFocusUpdateAction(false)}
         onRefreshModels={() => void refreshModels()} onRefreshCredits={() => void refreshCredits(true)}
         onOpenKeyReplace={openKeyReplace} onLogout={() => void logout()} />}
       <div className={screen === "chatbot" ? "conversation-host chatbot-screen screen-layout" : "conversation-host"}

@@ -208,7 +208,7 @@ test("the settings rail item opens the settings screen: one aria-current, its ow
 test("the footer version and status come from the update state, never a hard-coded version", async () => {
   await renderApp({ update: { status: "ready", currentVersion: "0.7.3", availableVersion: "0.7.4" } });
   await openSettings();
-  assert.equal(document.querySelector(".settings-footer")?.textContent?.replace(/\s+/g, " ").trim(), "MM_LLM v0.7.3 · 업데이트 준비됨");
+  assert.equal(document.querySelector(".settings-footer")?.textContent?.replace(/\s+/g, " ").trim(), "MM_LLM v0.7.3 · 업데이트 설치 0.7.4");
 });
 
 test("every update status shows its footer label and a 업데이트 row on 일반, with the version taken from the update state", async () => {
@@ -217,7 +217,7 @@ test("every update status shows its footer label and a 업데이트 row on 일�
     [{ status: "idle", currentVersion: "9.8.7" }, "업데이트 확인 전", "아직 업데이트를 확인하지 않았습니다."],
     [{ status: "checking", currentVersion: "9.8.7" }, "확인 중", "새 버전을 확인하는 중입니다."],
     [{ status: "downloading", currentVersion: "9.8.7", availableVersion: "9.9.0", progress: 40 }, "다운로드 40%", "9.9.0 버전을 내려받는 중입니다."],
-    [{ status: "ready", currentVersion: "9.8.7", availableVersion: "9.9.0" }, "업데이트 준비됨", "9.9.0 버전을 설치할 수 있습니다."],
+    [{ status: "ready", currentVersion: "9.8.7", availableVersion: "9.9.0" }, "업데이트 설치 9.9.0", "9.9.0 버전을 설치할 수 있습니다."],
     [{ status: "latest", currentVersion: "9.8.7" }, "최신", "현재 최신 버전입니다."],
     [{ status: "error", currentVersion: "9.8.7", message: "합성 오류" }, "확인 실패", "업데이트 확인에 실패했습니다. 다시 시도해 주세요."]
   ];
@@ -509,6 +509,87 @@ test("the rail avatar opens the settings screen on 계정 · API 키 in one clic
   assert.equal(document.querySelector('.settings-categories [aria-current="true"]')?.textContent?.trim(), "계정 · API 키");
   assert.equal(nameOf(document.querySelector('[aria-current="page"]')!), "앱 설정", "aria-current goes through the settings item");
   assert.equal(trigger.hasAttribute("aria-current"), false);
+});
+
+function footerAction() {
+  return document.querySelector<HTMLButtonElement>(".settings-footer button");
+}
+function updateRowButton() {
+  const row = [...document.querySelectorAll(".settings-body .settings-row")].find((item) => item.querySelector("strong")?.textContent === "업데이트");
+  assert.ok(row, "the update row is visible on 일반");
+  return row!.querySelector<HTMLButtonElement>("button")!;
+}
+
+test("update ready: the rail avatar opens 일반 and focuses the install button of the update row", async () => {
+  const calls = await renderApp({ update: { status: "ready", currentVersion: "0.6.0", availableVersion: "0.6.1" } });
+  const trigger = avatar();
+  assert.match(nameOf(trigger), /새 업데이트 준비됨/);
+  await click(trigger);
+  assert.ok(document.querySelector(".settings-screen"));
+  assert.equal(document.querySelector('.settings-categories [aria-current="true"]')?.textContent?.trim(), "일반");
+  const install = updateRowButton();
+  assert.equal(install.textContent?.trim(), "업데이트 설치 0.6.1");
+  assertFocused(install, "focus lands on the install action, not on the rail avatar");
+  assert.equal(calls.install, 0, "opening settings never installs by itself");
+  assert.equal(document.querySelectorAll('[data-testid="update-status-live"]').length, 1, "still one live region");
+});
+
+test("update ready: the footer status is the same install action, and a quick double click installs once", async () => {
+  const calls = await renderApp({ update: { status: "ready", currentVersion: "0.6.0", availableVersion: "0.6.1" } });
+  await openSettings();
+  const action = footerAction();
+  assert.ok(action, "the ready footer status is a button");
+  assert.equal(action!.textContent?.trim(), "업데이트 설치 0.6.1");
+  assert.equal(document.querySelectorAll(".settings-footer button").length, 1);
+  await act(async () => { action!.click(); action!.click(); });
+  await settle();
+  assert.equal(calls.install, 1, "two quick clicks send one install request");
+  assert.equal(calls.check, 0, "the install path never falls back to a check");
+});
+
+test("update ready: an install request still in flight ignores further clicks from the footer and the 일반 row", async () => {
+  const calls = await renderApp({ update: { status: "ready", currentVersion: "0.6.0", availableVersion: "0.6.1" } });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  (browser as unknown as { mmllm: { installUpdate: () => Promise<void> } }).mmllm.installUpdate = () => { calls.install++; return held; };
+  await openSettings("일반");
+  await click(footerAction()!);
+  await click(updateRowButton());
+  await click(footerAction()!);
+  assert.equal(calls.install, 1, "no second request while the first one is running");
+  await act(async () => { release(); await held; });
+  await settle();
+  await click(updateRowButton());
+  assert.equal(calls.install, 2, "a finished request can be retried");
+});
+
+test("update error: the rail avatar opens 일반 on the retry action; the footer stays plain text", async () => {
+  const calls = await renderApp({ update: { status: "error", currentVersion: "0.6.0", message: "합성 오류" } });
+  await click(avatar());
+  assert.equal(document.querySelector('.settings-categories [aria-current="true"]')?.textContent?.trim(), "일반");
+  const retry = updateRowButton();
+  assert.equal(retry.textContent?.trim(), "업데이트 확인");
+  assertFocused(retry);
+  assert.equal(footerAction(), null, "only a ready update turns the footer into an action");
+  await click(retry);
+  assert.equal(calls.check, 1);
+  assert.equal(calls.install, 0);
+});
+
+test("other update states keep the avatar on 계정 · API 키 and the footer as plain text", async () => {
+  const states: UpdateState[] = [
+    { status: "disabled", currentVersion: "0.6.0" }, { status: "idle", currentVersion: "0.6.0" },
+    { status: "checking", currentVersion: "0.6.0" }, { status: "downloading", currentVersion: "0.6.0", availableVersion: "0.6.1", progress: 40 },
+    { status: "latest", currentVersion: "0.6.0" }
+  ];
+  for (const update of states) {
+    await renderApp({ update });
+    await click(avatar());
+    assert.equal(document.querySelector('.settings-categories [aria-current="true"]')?.textContent?.trim(), "계정 · API 키", update.status);
+    assert.equal(footerAction(), null, `${update.status}: the footer is not a button`);
+    assert.equal(document.querySelector(".settings-footer")?.textContent?.includes("업데이트 설치"), false, update.status);
+    await act(async () => root!.unmount()); root = null; host?.remove(); host = null; document.body.replaceChildren();
+  }
 });
 
 test("account: the API key replace dialog opens from the settings screen and returns focus to its trigger", async () => {

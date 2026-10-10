@@ -137,6 +137,11 @@ export type SettingsScreenProps = {
   onOpenKeyReplace: (returnFocus: FocusReturnTarget) => void; onLogout: () => void;
   modelId: string;
   /**
+   * The host asks for focus on the 일반 update action (rail avatar with a ready or failed update). The screen focuses it
+   * once the 일반 body is shown and then calls onFocusUpdateHandled, so a later visit does not move focus again.
+   */
+  focusUpdateAction?: boolean; onFocusUpdateHandled?: () => void;
+  /**
    * A default instruction the host is holding because another save was running when the field was left. The host
    * applies it after that save, also when this screen is no longer mounted; the screen shows it and its pending state.
    */
@@ -145,7 +150,8 @@ export type SettingsScreenProps = {
 
 /** Settings screen (contract D4.1): a 240 category column and one category body; every change applies and saves at once. */
 export function SettingsScreen({ category, onCategoryChange, settings, saving, error, onChange, updateState, onUpdateAction,
-  onRefreshModels, credits, onRefreshCredits, onOpenKeyReplace, onLogout, modelId, pendingInstruction = null }: SettingsScreenProps) {
+  onRefreshModels, credits, onRefreshCredits, onOpenKeyReplace, onLogout, modelId, pendingInstruction = null,
+  focusUpdateAction = false, onFocusUpdateHandled }: SettingsScreenProps) {
   const entry = CATEGORIES.find((item) => item.id === category) ?? CATEGORIES[0];
   const titleId = useId();
   const [instruction, setInstruction] = useState(pendingInstruction ?? settings.defaultInstruction);
@@ -156,6 +162,12 @@ export function SettingsScreen({ category, onCategoryChange, settings, saving, e
   pendingInstructionRef.current = pendingInstruction;
   // The field follows the saved value, except while the host still holds a newer typed value for it.
   useEffect(() => { setInstruction(pendingInstructionRef.current ?? savedInstruction); }, [savedInstruction]);
+  const updateActionRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!focusUpdateAction || entry.id !== "general") return;
+    updateActionRef.current?.focus();
+    onFocusUpdateHandled?.();
+  }, [focusUpdateAction, entry.id, onFocusUpdateHandled]);
   const status = updateStatusLabel(updateState);
   const version = updateState?.currentVersion;
   const updateButton = updateState?.status === "ready" ? `업데이트 설치 ${updateState.availableVersion ?? ""}`.trim()
@@ -176,8 +188,8 @@ export function SettingsScreen({ category, onCategoryChange, settings, saving, e
         <small>MM_LLM {version ? `v${version}` : "버전 확인 중"}{status ? ` · ${status}` : ""}</small></div></div>
       <div className="settings-row">
         <div className="settings-row-text"><strong>업데이트</strong><small>{updateDescription(updateState)}</small></div>
-        <button type="button" className={updateState?.status === "ready" ? "primary-button" : "secondary-button"} onClick={onUpdateAction}
-          disabled={!updateState || updateState.status === "disabled" || updateState.status === "checking" || updateState.status === "downloading"}>
+        <button ref={updateActionRef} type="button" className={updateState?.status === "ready" ? "primary-button" : "secondary-button"}
+          onClick={onUpdateAction} disabled={!updateState || updateState.status === "disabled" || updateState.status === "checking" || updateState.status === "downloading"}>
           {updateState?.status === "ready" ? <Download size={15} aria-hidden="true" /> : <RefreshCw size={15} aria-hidden="true" />}
           {updateButton}</button>
       </div>
@@ -257,7 +269,9 @@ export function SettingsScreen({ category, onCategoryChange, settings, saving, e
             <Icon size={16} strokeWidth={1.75} aria-hidden="true" />{label}</button></div>)}
       </nav>
       <div className="settings-footer"><span>MM_LLM {version ? `v${version}` : "버전 확인 중"}</span>
-        {status && <span className={`settings-footer-status status-${updateState?.status}`}> · {status}</span>}</div>
+        {status && <span className={`settings-footer-status status-${updateState?.status}`}> · {updateState?.status === "ready"
+          // The ready status is the same install action as the 일반 row (one handler, same name), reachable from any category.
+          ? <button type="button" className="settings-footer-action" onClick={onUpdateAction}>{updateButton}</button> : status}</span>}</div>
     </div>
     <div className="settings-body">
       <div className="settings-content" aria-labelledby={titleId} role="region">
