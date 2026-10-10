@@ -7,3 +7,12 @@ release-*-local/
 
 # Private uploads and local Orca runtime receipts
 .orca/
+
+# Development documents stay local (not on GitHub); release notes and README images are published
+/docs/*
+!/docs/images/
+!/docs/RELEASE_NOTES_v*.md
+/design_handoff_console_redesign/
+/DESIGN-IS-*/
+/CLAUDE.md
+/AGENTS.md

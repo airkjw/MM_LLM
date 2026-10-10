@@ -11,7 +11,6 @@ const shell = [sidebar, rail, listColumn].join("\n");
 const app = readFileSync(new URL("../src/renderer/src/App.tsx", import.meta.url), "utf8");
 const css = readFileSync(new URL("../src/renderer/src/styles.css", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-const interactionDocs = readFileSync(new URL("../docs/SIDEBAR_INTERACTIONS.md", import.meta.url), "utf8");
 
 test("credit presentation only draws a ratio with a meaningful denominator", () => {
   assert.deepEqual(creditPresentation(undefined), {
@@ -98,8 +97,5 @@ test("sidebar CSS keeps one scroll region and the agreed responsive widths", () 
 test("UI interaction checks are headless DOM checks and never launch bare Electron", () => {
   assert.match(packageJson.scripts["ui:check"], /sidebar-ui-dom\.test\.tsx/);
   assert.doesNotMatch(packageJson.scripts["ui:check"], /\belectron\b|default_app|Electron\.app/);
-  assert.match(interactionDocs, /does not start Electron/);
-  assert.match(interactionDocs, /does not claim to measure pixels/);
-  assert.match(interactionDocs, /already open and visible desktop sidebar/);
   assert.match(packageJson.scripts.test, /npm run ui:check/);
 });
