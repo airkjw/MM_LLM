@@ -54,6 +54,13 @@ export function isAcceptedDocumentMime(extension: string, declared: string): boo
   return normalized === "" || aliases.includes(normalized);
 }
 
+/** Extra guidance for the legacy binary formats students most often have; they are not attachable themselves. */
+export function legacyFormatHint(extension: string): string | null {
+  if (extension === ".hwp") return "한글 구형식(.hwp)은 한글에서 HWPX로 저장한 뒤 첨부해 주세요.";
+  if (extension === ".ppt") return "PowerPoint 구형식(.ppt)은 .pptx로 저장한 뒤 첨부해 주세요.";
+  return null;
+}
+
 // ---- cheap attach-time signature checks ----------------------------------------------------------
 
 const OLE_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
@@ -61,6 +68,11 @@ const ZIP_LOCAL_SIGNATURE = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 
 function controlByte(value: number): boolean {
   return value < 0x20 && value !== 0x09 && value !== 0x0a && value !== 0x0c && value !== 0x0d || value === 0x7f;
+}
+
+/** Decoded text: C0 controls plus the C1 range, which ICU produces for stray high bytes in CP949. */
+function controlCharacter(code: number): boolean {
+  return controlByte(code) || code >= 0x80 && code <= 0x9f;
 }
 
 function hasUtf16Bom(bytes: Uint8Array): boolean {
@@ -125,7 +137,7 @@ export function extractPlainText(bytes: Buffer): string {
   for (let index = 0; index < decoded.length; index++) {
     const code = decoded.charCodeAt(index);
     if (code === 0) throw new Error(BINARY_TEXT_MESSAGE);
-    if (controlByte(code)) controls++;
+    if (controlCharacter(code)) controls++;
   }
   if (decoded.length && controls / decoded.length > MAX_CONTROL_RATIO) throw new Error(BINARY_TEXT_MESSAGE);
   return decoded.replace(/\r\n?/g, "\n");
@@ -226,8 +238,13 @@ class SafeZip {
   }
 }
 
-// ---- minimal XML helpers (no parser, no entity expansion beyond the predefined five) -------------
+// ---- linear XML scanning (no parser, no regex over document text, no entity expansion) ----------
+//
+// Every character of a part is visited a bounded number of times: tags are located with `indexOf` and the
+// scan only ever moves forward. A construct that is not closed ends the part with MALFORMED_XML instead of
+// being re-scanned from every earlier position.
 
+const MALFORMED_XML = "문서 XML 구조가 올바르지 않습니다.";
 const NAMED_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'" };
 
 function validXmlCodePoint(code: number): boolean {
@@ -235,36 +252,134 @@ function validXmlCodePoint(code: number): boolean {
     code >= 0xe000 && code <= 0xfffd || code >= 0x10000 && code <= 0x10ffff;
 }
 
+/** Only the five predefined entities and numeric references; `&amp;lt;` becomes `&lt;`, not `<`. */
 function decodeEntities(value: string): string {
+  if (!value.includes("&")) return value;
   return value.replace(/&(?:#x([0-9a-fA-F]{1,6})|#([0-9]{1,7})|(amp|lt|gt|quot|apos));/g,
     (_match, hex: string | undefined, decimal: string | undefined, named: string | undefined) => {
       if (named) return NAMED_ENTITIES[named];
       const code = hex !== undefined ? parseInt(hex, 16) : parseInt(decimal!, 10);
-      return validXmlCodePoint(code) ? String.fromCodePoint(code) : "�";
+      return validXmlCodePoint(code) ? String.fromCodePoint(code) : "\ufffd";
     });
 }
 
-function markupText(piece: string): string {
-  return decodeEntities(piece
-    .replace(/<hp:tab\b[^>]*>/g, "\t")
-    .replace(/<hp:lineBreak\b[^>]*>/g, "\n")
-    .replace(/<hp:(?:nbSpace|fwSpace)\b[^>]*>/g, " ")
-    .replace(/<[^>]*>/g, ""));
-}
+type XmlTag = {
+  name: string; closing: boolean; selfClosing: boolean;
+  /** Offset of `<` and the offset just after `>`. */
+  start: number; end: number;
+  nameEnd: number;
+};
 
-/** Character data of one text element, including CDATA sections. */
-function elementText(raw: string): string {
-  let output = ""; let last = 0;
-  for (const match of raw.matchAll(/<!\[CDATA\[([\s\S]*?)\]\]>/g)) {
-    output += markupText(raw.slice(last, match.index)) + match[1];
-    last = match.index + match[0].length;
+const isBlank = (code: number) => code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0d;
+const QUOTE_DOUBLE = 0x22; const QUOTE_SINGLE = 0x27; const SLASH = 0x2f; const GT = 0x3e; const LT = 0x3c;
+
+/** Parses the tag that starts exactly at `start` (which must be a `<`). */
+function tagAt(xml: string, start: number): XmlTag {
+  let index = start + 1; let quote = 0;
+  for (; index < xml.length; index++) {
+    const code = xml.charCodeAt(index);
+    if (quote) { if (code === quote) quote = 0; continue; }
+    if (code === QUOTE_DOUBLE || code === QUOTE_SINGLE) quote = code;
+    else if (code === GT) break;
+    else if (code === LT) throw new Error(MALFORMED_XML);
   }
-  return output + markupText(raw.slice(last));
+  if (index >= xml.length) throw new Error(MALFORMED_XML);
+  const closing = xml.charCodeAt(start + 1) === SLASH;
+  let nameStart = start + 1 + (closing ? 1 : 0); let nameEnd = nameStart;
+  while (nameEnd < index) {
+    const code = xml.charCodeAt(nameEnd);
+    if (isBlank(code) || code === SLASH) break;
+    nameEnd++;
+  }
+  return { name: xml.slice(nameStart, nameEnd), closing, selfClosing: !closing && xml.charCodeAt(index - 1) === SLASH,
+    start, end: index + 1, nameEnd };
 }
 
-function attribute(tag: string, name: string): string | undefined {
-  const match = new RegExp(`\\s${name.replace(/[:.]/g, "\\$&")}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`).exec(tag);
-  return match ? decodeEntities(match[1] ?? match[2] ?? "") : undefined;
+/** Next element tag at or after `from`; comments, processing instructions and CDATA between elements are skipped. */
+function nextTag(xml: string, from: number): XmlTag | null {
+  let start = xml.indexOf("<", from);
+  while (start >= 0) {
+    let skipTo = -1;
+    if (xml.startsWith("<!--", start)) skipTo = xml.indexOf("-->", start + 4) + 3;
+    else if (xml.startsWith("<![CDATA[", start)) skipTo = xml.indexOf("]]>", start + 9) + 3;
+    else if (xml.startsWith("<?", start)) skipTo = xml.indexOf("?>", start + 2) + 2;
+    else if (xml.startsWith("<!", start)) skipTo = xml.indexOf(">", start + 2) + 1;
+    else return tagAt(xml, start);
+    if (skipTo <= 2) throw new Error(MALFORMED_XML);
+    start = xml.indexOf("<", skipTo);
+  }
+  return null;
+}
+
+/** Attribute values of one tag, parsed in a single left-to-right pass. */
+function attributes(xml: string, tag: XmlTag): Map<string, string> {
+  const result = new Map<string, string>();
+  const end = tag.end - 1; let index = tag.nameEnd;
+  while (index < end) {
+    while (index < end && (isBlank(xml.charCodeAt(index)) || xml.charCodeAt(index) === SLASH)) index++;
+    const nameStart = index;
+    while (index < end) {
+      const code = xml.charCodeAt(index);
+      if (code === 0x3d || isBlank(code) || code === SLASH) break;
+      index++;
+    }
+    const name = xml.slice(nameStart, index);
+    while (index < end && isBlank(xml.charCodeAt(index))) index++;
+    if (xml.charCodeAt(index) !== 0x3d) continue;
+    index++;
+    while (index < end && isBlank(xml.charCodeAt(index))) index++;
+    const quote = xml.charCodeAt(index);
+    if (quote !== QUOTE_DOUBLE && quote !== QUOTE_SINGLE) break;
+    const close = xml.indexOf(String.fromCharCode(quote), index + 1);
+    if (close < 0 || close >= end) break;
+    if (name) result.set(name, decodeEntities(xml.slice(index + 1, close)));
+    index = close + 1;
+  }
+  return result;
+}
+
+/** Content and resume offset of a text element whose opening tag was just read; the closing tag is looked up once. */
+function elementContent(xml: string, tag: XmlTag): { content: string; next: number } {
+  const prefix = `</${tag.name}`; let search = tag.end;
+  for (;;) {
+    const at = xml.indexOf(prefix, search);
+    if (at < 0) throw new Error(MALFORMED_XML);
+    const after = xml.charCodeAt(at + prefix.length);
+    if (after === GT || isBlank(after)) {
+      const close = xml.indexOf(">", at);
+      if (close < 0) throw new Error(MALFORMED_XML);
+      return { content: xml.slice(tag.end, at), next: close + 1 };
+    }
+    search = at + prefix.length;
+  }
+}
+
+/** Character data of a text element: CDATA kept raw, inline tab/line-break tags honoured, other tags dropped. */
+function elementText(raw: string): string {
+  let output = ""; let index = 0;
+  for (;;) {
+    const lt = raw.indexOf("<", index);
+    if (lt < 0) return output + decodeEntities(raw.slice(index));
+    output += decodeEntities(raw.slice(index, lt));
+    if (raw.startsWith("<![CDATA[", lt)) {
+      const close = raw.indexOf("]]>", lt + 9);
+      if (close < 0) throw new Error(MALFORMED_XML);
+      output += raw.slice(lt + 9, close); index = close + 3; continue;
+    }
+    if (raw.startsWith("<!--", lt) || raw.startsWith("<?", lt)) {
+      const terminator = raw.startsWith("<!--", lt) ? "-->" : "?>";
+      const close = raw.indexOf(terminator, lt + 2);
+      if (close < 0) throw new Error(MALFORMED_XML);
+      index = close + terminator.length; continue;
+    }
+    const tag = tagAt(raw, lt);
+    if (!tag.closing) {
+      if (tag.name === "hp:tab") output += "\t";
+      else if (tag.name === "hp:lineBreak") output += "\n";
+      else if (tag.name === "hp:nbSpace" || tag.name === "hp:fwSpace") output += " ";
+    }
+    index = tag.end;
+  }
 }
 
 /** Package-relative part name; only ever used as a key into the archive's own entry table. */
@@ -290,18 +405,28 @@ class TextBudget {
   }
 }
 
+/** Calls `visit` for every opening/self-closing tag whose name is listed; closing tags are ignored. */
+function eachTag(xml: string, names: ReadonlySet<string>, visit: (tag: XmlTag, values: () => Map<string, string>) => void): void {
+  for (let tag = nextTag(xml, 0); tag; tag = nextTag(xml, tag.end)) {
+    if (tag.closing || !names.has(tag.name)) continue;
+    const current = tag;
+    visit(current, () => attributes(xml, current));
+  }
+}
+
 function relationships(zip: SafeZip, name: string): Array<{ id: string; type: string; target: string }> {
   const xml = zip.xml(name, MAX_SMALL_PART_BYTES);
-  if (!xml) return [];
-  return [...xml.matchAll(/<Relationship\b[^>]*>/g)].flatMap((match) => {
-    const id = attribute(match[0], "Id"); const type = attribute(match[0], "Type"); const target = attribute(match[0], "Target");
-    return id !== undefined && type !== undefined && target !== undefined ? [{ id, type, target }] : [];
+  const found: Array<{ id: string; type: string; target: string }> = [];
+  if (!xml) return found;
+  eachTag(xml, new Set(["Relationship"]), (_tag, values) => {
+    const { Id: id, Type: type, Target: target } = Object.fromEntries(values());
+    if (id !== undefined && type !== undefined && target !== undefined) found.push({ id, type, target });
   });
+  return found;
 }
 
 // ---- pptx ----------------------------------------------------------------------------------------
 
-const PPTX_TOKEN = /<a:p\b[^>]*?(\/)?>|<\/a:p>|<a:br\b[^>]*>|<a:t\b[^>]*?(?:\/>|>([\s\S]*?)<\/a:t>)/g;
 const PPTX_TOO_LARGE = "PowerPoint 문서에서 추출된 텍스트가 너무 큽니다.";
 
 function drawingParagraphs(xml: string, budget: TextBudget): string[] {
@@ -310,12 +435,16 @@ function drawingParagraphs(xml: string, budget: TextBudget): string[] {
     if (current !== null && current.trim()) { budget.add(current.length); lines.push(current); }
     current = null;
   };
-  for (const match of xml.matchAll(PPTX_TOKEN)) {
-    const token = match[0];
-    if (token.startsWith("</a:p")) flush();
-    else if (token.startsWith("<a:p")) { flush(); if (!match[1]) current = ""; }
-    else if (token.startsWith("<a:br")) current = (current ?? "") + "\n";
-    else if (match[2] !== undefined) current = (current ?? "") + elementText(match[2]);
+  let position = 0;
+  for (let tag = nextTag(xml, position); tag; tag = nextTag(xml, position)) {
+    position = tag.end;
+    if (tag.name === "a:p") { flush(); if (!tag.closing && !tag.selfClosing) current = ""; continue; }
+    if (tag.closing) continue;
+    if (tag.name === "a:br") current = (current ?? "") + "\n";
+    else if (tag.name === "a:t" && !tag.selfClosing) {
+      const { content, next } = elementContent(xml, tag);
+      current = (current ?? "") + elementText(content); position = next;
+    }
   }
   flush();
   return lines;
@@ -329,13 +458,34 @@ function orderedSlides(zip: SafeZip): string[] {
   const presentation = zip.xml("ppt/presentation.xml", MAX_SMALL_PART_BYTES);
   if (!presentation) return numeric;
   const targets = new Map(relationships(zip, "ppt/_rels/presentation.xml.rels").map((item) => [item.id, item.target]));
-  const ordered: string[] = [];
-  for (const match of presentation.matchAll(/<p:sldId\b[^>]*>/g)) {
-    const id = attribute(match[0], "r:id"); const target = id === undefined ? undefined : targets.get(id);
+  const seen = new Set<string>(); const ordered: string[] = [];
+  eachTag(presentation, new Set(["p:sldId"]), (_tag, values) => {
+    const id = values().get("r:id"); const target = id === undefined ? undefined : targets.get(id);
     const name = target === undefined ? undefined : resolvePart("ppt/", target);
-    if (name && zip.has(name) && !ordered.includes(name)) ordered.push(name);
-  }
+    if (name && zip.has(name) && !seen.has(name)) { seen.add(name); ordered.push(name); }
+  });
   return ordered.length ? ordered : numeric;
+}
+
+const IGNORED_NOTE_PLACEHOLDERS = new Set(["sldNum", "sldImg", "hdr", "ftr", "dt"]);
+
+/** Paragraphs of the speaker-notes body shapes of one notes page. */
+function notesParagraphs(xml: string, budget: TextBudget): string[] {
+  const shapes: Array<{ text: string; placeholder: string | undefined }> = [];
+  let shapeStart = -1; let placeholder: string | undefined;
+  for (let tag = nextTag(xml, 0); tag; tag = nextTag(xml, tag.end)) {
+    if (tag.name === "p:sp" && !tag.closing && !tag.selfClosing) { shapeStart = tag.start; placeholder = undefined; }
+    else if (tag.name === "p:ph" && !tag.closing && shapeStart >= 0) placeholder = attributes(xml, tag).get("type") ?? "";
+    else if (tag.name === "p:sp" && tag.closing && shapeStart >= 0) {
+      shapes.push({ text: xml.slice(shapeStart, tag.end), placeholder }); shapeStart = -1;
+    }
+  }
+  const body = shapes.filter((shape) => shape.placeholder === "body");
+  const chosen = body.length ? body
+    : shapes.filter((shape) => shape.placeholder === undefined || !IGNORED_NOTE_PLACEHOLDERS.has(shape.placeholder));
+  const lines: string[] = [];
+  for (const shape of chosen) for (const line of drawingParagraphs(shape.text, budget)) lines.push(line);
+  return lines;
 }
 
 function slideNotes(zip: SafeZip, slide: string, budget: TextBudget): string[] {
@@ -343,19 +493,14 @@ function slideNotes(zip: SafeZip, slide: string, budget: TextBudget): string[] {
   const relsName = `${directory}_rels/${file}.rels`;
   let notesName: string | undefined;
   if (zip.has(relsName)) {
-    const notes = relationships(zip, relsName).find((item) => /\/notesSlide$/.test(item.type));
+    const notes = relationships(zip, relsName).find((item) => item.type.endsWith("/notesSlide"));
     if (notes) notesName = resolvePart(directory, notes.target);
   } else {
     const number = /slide(\d+)\.xml$/.exec(slide)?.[1];
     if (number) notesName = `ppt/notesSlides/notesSlide${number}.xml`;
   }
   const xml = notesName ? zip.xml(notesName) : null;
-  if (!xml) return [];
-  const shapes = xml.match(/<p:sp\b[\s\S]*?<\/p:sp>/g) ?? [];
-  const body = shapes.filter((shape) => /<p:ph\b[^>]*\btype\s*=\s*["']body["']/.test(shape));
-  const chosen = body.length ? body
-    : shapes.filter((shape) => !/<p:ph\b[^>]*\btype\s*=\s*["'](?:sldNum|sldImg|hdr|ftr|dt)["']/.test(shape));
-  return chosen.flatMap((shape) => drawingParagraphs(shape, budget));
+  return xml ? notesParagraphs(xml, budget) : [];
 }
 
 export async function extractPptx(bytes: Buffer): Promise<string> {
@@ -370,31 +515,35 @@ export async function extractPptx(bytes: Buffer): Promise<string> {
     const label = index + 1;
     const lines = drawingParagraphs(zip.xml(slide) ?? "", budget);
     const notes = slideNotes(zip, slide, budget);
-    if (lines.length) blocks.push(`[슬라이드 ${label}]\n${lines.join("\n")}`);
-    if (notes.length) blocks.push(`[슬라이드 ${label} 발표자 노트]\n${notes.join("\n")}`);
+    if (lines.length) { budget.add(`[슬라이드 ${label}]`.length); blocks.push(`[슬라이드 ${label}]\n${lines.join("\n")}`); }
+    if (notes.length) {
+      budget.add(`[슬라이드 ${label} 발표자 노트]`.length);
+      blocks.push(`[슬라이드 ${label} 발표자 노트]\n${notes.join("\n")}`);
+    }
   }
   return blocks.join("\n\n");
 }
 
 // ---- hwpx ----------------------------------------------------------------------------------------
 
-const HWPX_TOKEN = /<hp:p\b[^>]*?(\/)?>|<\/hp:p>|<hp:t\b[^>]*?(?:\/>|>([\s\S]*?)<\/hp:t>)/g;
 const HWPX_PROTECTED = "암호화되었거나 배포용으로 보호된 한글 문서는 읽을 수 없습니다. 보호를 해제한 HWPX로 저장해 주세요.";
 
 /** Paragraph text per hp:p; paragraphs nested in tables or text boxes become their own lines in reading order. */
 function hwpxParagraphs(xml: string, budget: TextBudget): { lines: string[]; sawParagraph: boolean } {
   const lines: string[] = []; const open: string[] = []; let sawParagraph = false;
   const emit = (text: string) => { if (text.trim()) { budget.add(text.length); lines.push(text); } };
-  for (const match of xml.matchAll(HWPX_TOKEN)) {
-    const token = match[0];
-    if (token.startsWith("</hp:p")) { if (open.length) emit(open.pop()!); }
-    else if (token.startsWith("<hp:p")) {
+  let position = 0;
+  for (let tag = nextTag(xml, position); tag; tag = nextTag(xml, position)) {
+    position = tag.end;
+    if (tag.name === "hp:p") {
+      if (tag.closing) { if (open.length) emit(open.pop()!); continue; }
       sawParagraph = true;
-      if (match[1]) continue;
+      if (tag.selfClosing) continue;
       if (open.length) { emit(open[open.length - 1]); open[open.length - 1] = ""; }
       open.push("");
-    } else if (match[2] !== undefined) {
-      const text = elementText(match[2]);
+    } else if (tag.name === "hp:t" && !tag.closing && !tag.selfClosing) {
+      const { content, next } = elementContent(xml, tag);
+      const text = elementText(content); position = next;
       if (open.length) open[open.length - 1] += text; else emit(text);
     }
   }
@@ -409,20 +558,26 @@ function orderedSections(zip: SafeZip): string[] {
   }).sort((a, b) => a.number - b.number).map((item) => item.name);
   const manifest = zip.xml("Contents/content.hpf", MAX_SMALL_PART_BYTES);
   if (!manifest) return numeric;
-  const hrefs = new Map<string, string>();
-  for (const match of manifest.matchAll(/<opf:item\b[^>]*>/g)) {
-    const id = attribute(match[0], "id"); const href = attribute(match[0], "href");
-    if (id !== undefined && href !== undefined) hrefs.set(id, href);
-  }
-  const ordered: string[] = [];
-  for (const match of manifest.matchAll(/<opf:itemref\b[^>]*>/g)) {
-    const id = attribute(match[0], "idref"); const href = id === undefined ? undefined : hrefs.get(id);
+  const known = new Set(numeric);
+  const hrefs = new Map<string, string>(); const itemrefs: string[] = [];
+  eachTag(manifest, new Set(["opf:item", "opf:itemref"]), (tag, values) => {
+    const found = values();
+    if (tag.name === "opf:item") {
+      const id = found.get("id"); const href = found.get("href");
+      if (id !== undefined && href !== undefined) hrefs.set(id, href);
+    } else {
+      const id = found.get("idref"); if (id !== undefined) itemrefs.push(id);
+    }
+  });
+  const seen = new Set<string>(); const ordered: string[] = [];
+  for (const id of itemrefs) {
+    const href = hrefs.get(id);
     if (href === undefined) continue;
-    const name = [resolvePart("", href), resolvePart("Contents/", href)].find((candidate) => numeric.includes(candidate));
-    if (name && !ordered.includes(name)) ordered.push(name);
+    const name = [resolvePart("", href), resolvePart("Contents/", href)].find((candidate) => known.has(candidate));
+    if (name && !seen.has(name)) { seen.add(name); ordered.push(name); }
   }
   // A spine that omits sections must not silently drop body text: append any section it did not list.
-  return ordered.length ? [...ordered, ...numeric.filter((name) => !ordered.includes(name))] : numeric;
+  return ordered.length ? [...ordered, ...numeric.filter((name) => !seen.has(name))] : numeric;
 }
 
 export async function extractHwpx(bytes: Buffer): Promise<string> {
@@ -438,7 +593,8 @@ export async function extractHwpx(bytes: Buffer): Promise<string> {
   for (const section of sections) {
     await yieldToEventLoop();
     const parsed = hwpxParagraphs(zip.xml(section) ?? "", budget);
-    sawParagraph ||= parsed.sawParagraph; lines.push(...parsed.lines);
+    sawParagraph ||= parsed.sawParagraph;
+    for (const line of parsed.lines) lines.push(line);
   }
   if (!sawParagraph) throw new Error(HWPX_PROTECTED);
   return lines.join("\n");

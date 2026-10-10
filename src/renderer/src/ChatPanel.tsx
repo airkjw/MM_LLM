@@ -867,7 +867,7 @@ export function ChatPanel({
             {progress && <div className="inline-progress" role="status" aria-live="polite"><LoaderCircle className="spin" size={15} />{progress}</div>}
             <ComposerPrimitive.Root className={dropActive ? "composer-card drop-active" : "composer-card"}>
               {dropActive && <div className="composer-drop-hint"><Paperclip size={18} />
-                PDF·Word·Excel·PPT·한글·텍스트·이미지를 여기에 놓으세요</div>}
+                PDF·Word·Excel·PPTX·한글(HWPX)·텍스트·이미지를 여기에 놓으세요</div>}
               {!chatbotTarget && <div className="composer-models" role="group" aria-label="대화 모델">
                 <ModelPicker models={displayModels} selected={modelId} onSelect={choosePrimaryModel} disabled={modelsLocked}
                   compare={compare ? { ids: composerModels, onAdd: addCompareModel } : undefined} restoreFallback={pickerFallback} />
@@ -897,7 +897,7 @@ export function ChatPanel({
                 className="composer-input" rows={2} addAttachmentOnPaste={false} />
               <div className="composer-bottom">
                 {!chatbotTarget && <button type="button" className="attach-button" onClick={addAttachment}
-                  disabled={isRunning || controlsPending || compareBusy || Boolean(privacyDialog)} title="PDF·Word·Excel·PPT·한글·텍스트·이미지 첨부">
+                  disabled={isRunning || controlsPending || compareBusy || Boolean(privacyDialog)} title="PDF·Word·Excel·PPTX·한글(HWPX)·텍스트·이미지 첨부">
                   <Paperclip size={16} aria-hidden="true" /><span className="sr-only">파일 첨부</span>
                 </button>}
                 {!chatbotTarget && <ComposerMenu name="웹 검색 방식" icon={<Globe2 size={14} aria-hidden="true" />}

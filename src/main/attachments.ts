@@ -7,7 +7,7 @@ import type { AttachmentContext } from "./storage";
 import { extractDocx, extractPdf, extractXlsx } from "./document-text";
 import {
   DOCUMENT_EXTENSIONS, TEXT_DOCUMENT_EXTENSIONS, canonicalDocumentMime, extractHwpx, extractPlainText, extractPptx,
-  fileSignatureProblem
+  fileSignatureProblem, legacyFormatHint
 } from "./document-formats";
 import { chunkDocument } from "./thread-context";
 import { clearSensitiveEntries, deleteSensitiveEntry, sweepSensitiveEntries, wipeBuffer } from "./sensitive-cache";
@@ -54,7 +54,8 @@ function prepareAttachment(name: string, bytes: Buffer, kinds: AttachmentKind[])
   const safeName = basename(name);
   const kind = attachmentKind(safeName);
   if (!safeName || safeName.length > 255 || !kind || !kinds.includes(kind)) {
-    throw new Error(`${safeName || "파일"}: 지원하지 않는 파일 형식입니다.`);
+    const hint = legacyFormatHint(extname(safeName).toLowerCase());
+    throw new Error(`${safeName || "파일"}: 지원하지 않는 파일 형식입니다.${hint ? ` ${hint}` : ""}`);
   }
   if (bytes.length > MAX_FILE_BYTES) throw new Error(`${safeName}: 파일은 18MB 이하만 첨부할 수 있습니다.`);
   const extension = extname(safeName).toLowerCase();

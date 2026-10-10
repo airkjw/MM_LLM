@@ -72,15 +72,29 @@ origin은 없다. 새 형식도 `kind: "document"`이므로 파일 전송 동의
 - `tests/attachment-formats.test.mjs`: 첨부·파일 선택 필터·`contentForChat`·프로젝트 추가(MIME 변형)·
   거부 사례·백업 export/restore.
 - `tests/screens-ui-dom.test.tsx`: 프로젝트 드롭존과 채팅 입력창의 형식 안내 문구.
+- `tests/document-format-guards.test.mjs`: ZIP 가드별 단일 fixture, 선형 XML 스캔 시간 상한(1KB·480KB·파트 상한 직전).
+- `tests/chunk-document.test.mjs`: `chunkDocument` 출력 동치와 긴 공백 run 시간 상한.
 
 결과(Linux, 합성 fixture, 4GB 제한 scope):
 
 | 검사 | 결과 | 최대 RSS |
 | --- | --- | --- |
 | `npm run typecheck` | 통과 | 0.6GB |
-| `node --test --test-concurrency=1 tests/*.test.mjs` | 523 pass / 0 fail | 0.43GB |
-| `npm run ui:check` | 258 pass / 0 fail | 0.53GB |
-| `npm run ui:audit` | 통과 | 0.11GB |
-| `npm run build` | 통과 | 0.64GB |
+| `node --test --test-concurrency=1 tests/*.test.mjs` | 578 pass / 0 fail | 0.43GB |
+| `npm run ui:check` | 258 pass / 0 fail | 0.54GB |
+| `npm run ui:audit` | 통과 | 0.10GB |
+| `npm run build` | 통과 | 0.63GB |
 
 실제 HWPX/PPTX 원본 파일, macOS 서명/공증, Windows 설치본, CI는 이 변경에서 검증하지 않았다.
+
+## 보정 1 (R-1 리뷰)
+
+- **XML 스캔**: PPTX·HWPX 토크나이저를 `indexOf` 기반 단일 방향 스캐너로 교체했다. 닫히지 않은 태그·주석·CDATA·
+  따옴표와 태그 안의 `<`는 `문서 XML 구조가 올바르지 않습니다.`로 즉시 끝난다. 노트 본문 선택, rels·spine
+  파싱도 같은 스캐너를 쓰며 순서 중복 제거는 `Set`을 쓴다. 정규식은 5개 엔티티·숫자 참조 치환에만 남아 있다.
+- **chunkDocument**: `[ \t]+\n` 정규식을 한 번의 선형 패스로 바꿨다. 일반 텍스트의 출력은 이전과 같다
+  (`tests/chunk-document.test.mjs`가 이전 구현과 비교).
+- **텍스트 인코딩**: ICU가 CP949의 낱개 `0x81` 등을 C1 제어 문자(U+0080–U+009F)로 해석하므로 디코딩된
+  텍스트의 제어 문자 비율 검사에 C1을 포함했다.
+- **안내 문구**: 채팅 문구를 `PPTX·한글(HWPX)`로 바꾸고 `.hwp`·`.ppt`를 끌어 놓으면 HWPX·PPTX로 저장하라는
+  전용 안내를 보여 준다.

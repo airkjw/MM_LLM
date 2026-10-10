@@ -3,8 +3,23 @@ import type { InternalMessage } from "./storage";
 const MAX_CHUNK_CHARS = 6_000;
 const CHUNK_OVERLAP = 500;
 
+/** Removes the spaces and tabs that directly precede a newline, in one pass (a `[ \t]+\n` regex is quadratic). */
+function stripTrailingBlanks(text: string): string {
+  const parts: string[] = [];
+  let segmentStart = 0; let blankStart = -1;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code === 0x20 || code === 0x09) { if (blankStart < 0) blankStart = index; continue; }
+    if (code === 0x0a && blankStart >= 0) { parts.push(text.slice(segmentStart, blankStart)); segmentStart = index; }
+    blankStart = -1;
+  }
+  if (!parts.length) return text;
+  parts.push(text.slice(segmentStart));
+  return parts.join("");
+}
+
 export function chunkDocument(text: string, maxChars = MAX_CHUNK_CHARS): string[] {
-  const normalized = text.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").trim();
+  const normalized = stripTrailingBlanks(text.replace(/\r\n?/g, "\n")).trim();
   if (!normalized) return [];
   const chunks: string[] = [];
   let start = 0;

@@ -203,3 +203,10 @@ test("new-format project documents survive a portable backup export and restore 
   const context = await vault.projectContext(target, restored.id, "백업 슬라이드 한글 마크다운", false);
   for (const expected of [/백업 슬라이드 본문/, /백업 한글 본문/, /백업 마크다운/]) assert.match(context.text, expected);
 });
+
+test("legacy .hwp and .ppt files are refused with a pointer to HWPX and PPTX", () => {
+  const refuse = (name) => { try { attachments.addDroppedAttachments([{ name, bytes: Buffer.from("x") }], ["document"]); } catch (error) { return error.message; } return ""; };
+  assert.equal(refuse("옛문서.hwp"), "옛문서.hwp: 지원하지 않는 파일 형식입니다. 한글 구형식(.hwp)은 한글에서 HWPX로 저장한 뒤 첨부해 주세요.");
+  assert.equal(refuse("발표.PPT"), "발표.PPT: 지원하지 않는 파일 형식입니다. PowerPoint 구형식(.ppt)은 .pptx로 저장한 뒤 첨부해 주세요.");
+  assert.equal(refuse("스크립트.js"), "스크립트.js: 지원하지 않는 파일 형식입니다.");
+});
