@@ -36,6 +36,9 @@ export class McpClient {
   private tools = new Map<string, CachedTool>();
   private epoch = 0;
   private calls: number[] = [];
+  /** The running app version is injected by main so this module stays loadable outside Electron. */
+  private readonly appVersion: string;
+  constructor(appVersion: string) { this.appVersion = appVersion; }
   clear(): void { this.epoch++; this.suites = []; this.tools.clear(); this.calls = []; }
   private assertEpoch(epoch: number, signal: AbortSignal): void {
     signal.throwIfAborted(); if (epoch !== this.epoch) throw new Error("계정 또는 검색 도구가 변경되어 응답을 폐기했습니다.");
@@ -62,7 +65,7 @@ export class McpClient {
     if (!this.suites.some((item) => item.slug === suite)) throw new Error("먼저 이 계정의 검색 도구를 확인해 주세요.");
     const epoch = this.epoch;
     for (const [token, item] of this.tools) if (item.suite === suite) this.tools.delete(token);
-    const initialized = await this.rpc(key, suite, "initialize", { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: "MM_LLM", version: "0.5.1" } }, signal);
+    const initialized = await this.rpc(key, suite, "initialize", { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: "MM_LLM", version: this.appVersion } }, signal);
     this.assertEpoch(epoch, signal);
     if (initialized.protocolVersion !== PROTOCOL || !researchRecord(initialized.capabilities) || !researchRecord(initialized.capabilities.tools)) throw new Error("MCP 프로토콜 또는 tools capability를 확인하지 못했습니다.");
     const raw = await this.rpc(key, suite, "tools/list", {}, signal); this.assertEpoch(epoch, signal);

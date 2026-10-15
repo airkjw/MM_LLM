@@ -21,8 +21,8 @@ function envelope(init, result, sse = false) {
   const id = JSON.parse(init.body).id; const body = { jsonrpc: '2.0', id, result };
   return sse ? new Response(`: keepalive\r\n\r\nevent: message\r\ndata: ${JSON.stringify(body)}\r\n\r\n`, { headers: { 'content-type': 'text/event-stream' } }) : Response.json(body);
 }
-async function ready(call) {
-  const client = new McpClient(); const calls = [];
+async function ready(call, version = '9.8.7') {
+  const client = new McpClient(version); const calls = [];
   globalThis.fetch = async (url, init) => {
     calls.push({ url, init }); assert.equal(init.redirect, 'error'); assert.equal(init.headers.Authorization, 'Bearer synthetic');
     if (init.method === 'GET') return Response.json({ object: 'list', data: [suite] });
@@ -129,4 +129,10 @@ test('L5: server-declared read-only is labeled as a declaration and an absent de
   const missing = reviewedSearchSchema({ ...tool, annotations: { readOnlyHint: true } });
   assert.ok(missing.reason); assert.equal(missing.reason.includes('제공사가 읽기 전용으로 선언'), false);
   assert.equal(reviewedSearchSchema(tool).fields.length > 0, true);
+});
+test('initialize reports the injected running app version, not a hardcoded one', async () => {
+  const { calls } = await ready((init) => envelope(init, { content: [] }), '9.8.7');
+  const initialize = calls.map((call) => JSON.parse(call.init.body ?? 'null')).find((body) => body?.method === 'initialize');
+  assert.deepEqual(initialize.params.clientInfo, { name: 'MM_LLM', version: '9.8.7' });
+  assert.notEqual(initialize.params.clientInfo.version, '0.5.1');
 });

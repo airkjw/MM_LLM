@@ -106,7 +106,7 @@ let lastThemePreference: ThemePreference | null = null;
 const activeRuns = new Map<string, AbortController>();
 const quoteRuns = new Map<string, AbortController>();
 const researchRuns = new Map<string, AbortController>();
-const mcpClient = new McpClient();
+const mcpClient = new McpClient(app.getVersion());
 const documentRetrieval = new DocumentRetrieval();
 function clearResearchSession(): void {
   voiceManager.abort();
