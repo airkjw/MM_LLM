@@ -615,6 +615,99 @@ test("update ready: the latch also ends when the update state leaves ready (an u
   assert.equal(calls.install, 2);
 });
 
+// The app arms exactly one 60 s timer after a resolved install request. This fake clock only captures that timer
+// (every other window.setTimeout passes through), so the tests never wait 60 real seconds.
+const STALL_MS = 60_000;
+const STALL_MESSAGE = /업데이트 설치가 시작되지 않았습니다.*다시 시도하거나.*앱을 종료하면/;
+function fakeStallClock() {
+  const realSet = browser.setTimeout.bind(browser);
+  const realClear = browser.clearTimeout.bind(browser);
+  const pending = new Map<number, () => void>();
+  const delays: number[] = [];
+  let nextId = 9_000_000;
+  browser.setTimeout = ((callback: () => void, delay?: number, ...args: unknown[]) => {
+    if (delay !== STALL_MS) return realSet(callback, delay, ...args);
+    const id = ++nextId; pending.set(id, callback); delays.push(delay); return id;
+  }) as never;
+  browser.clearTimeout = ((id?: number) => { if (id === undefined || !pending.delete(id)) realClear(id as never); }) as never;
+  return {
+    pending, delays,
+    fire: () => act(async () => { for (const [id, callback] of [...pending]) { pending.delete(id); callback(); } }),
+    restore: () => { browser.setTimeout = realSet as never; browser.clearTimeout = realClear as never; }
+  };
+}
+const stallAlerts = () => [...document.querySelectorAll('[role="alert"]')].filter((node) => STALL_MESSAGE.test(node.textContent ?? ""));
+
+test("update ready: an install that never starts releases the latch after 60 s, says so once, and retry installs again", async () => {
+  const clock = fakeStallClock();
+  try {
+    const calls = await renderApp({ update: { status: "ready", currentVersion: "0.6.0", availableVersion: "0.6.1" } });
+    await openSettings("일반");
+    const row = updateRowButton();
+    row.focus();
+    await click(row);
+    assert.equal(calls.install, 1);
+    assert.deepEqual(clock.delays, [STALL_MS], "one 60 s timer is armed once the request resolved");
+    assert.equal(stallAlerts().length, 0, "nothing is announced before the timer fires");
+    await click(footerAction()!);
+    assert.equal(calls.install, 1, "still latched while the timer runs: no second request");
+    assert.equal(clock.pending.size, 1);
+    await clock.fire();
+    assert.equal(stallAlerts().length, 1, "the stall is announced exactly once");
+    for (const control of [updateRowButton(), footerAction()!]) {
+      assert.equal(control.textContent?.trim(), "업데이트 설치 0.6.1");
+      assert.equal(control.getAttribute("aria-busy"), null);
+      assert.equal(control.getAttribute("aria-disabled"), null);
+    }
+    assertFocused(updateRowButton(), "focus stays on the install action, not on body");
+    assert.equal(clock.pending.size, 0);
+    await click(updateRowButton());
+    assert.equal(calls.install, 2, "the released latch sends a second install request");
+    assert.equal(updateRowButton().textContent?.trim(), "업데이트 설치 중…");
+    assert.equal(clock.pending.size, 1, "the retry arms its own timer");
+    await clock.fire();
+    assert.equal(stallAlerts().length, 1, "a repeated stall replaces, never stacks, the message");
+    assert.equal(calls.check, 0);
+  } finally { clock.restore(); }
+});
+
+test("update ready: no stall message when the update state leaves ready before the 60 s elapse", async () => {
+  const clock = fakeStallClock();
+  try {
+    const calls = await renderApp({ update: { status: "ready", currentVersion: "0.6.0", availableVersion: "0.6.1" } });
+    await openSettings("일반");
+    await click(footerAction()!);
+    assert.equal(calls.install, 1);
+    assert.equal(clock.pending.size, 1);
+    await calls.emitUpdate({ status: "error", currentVersion: "0.6.0", message: "합성 오류" });
+    assert.equal(clock.pending.size, 0, "leaving ready cancels the timer");
+    await clock.fire();
+    assert.equal(stallAlerts().length, 0);
+    assert.doesNotMatch(document.body.textContent ?? "", STALL_MESSAGE);
+  } finally { clock.restore(); }
+});
+
+test("update ready: a rejected install never arms the stall timer, and unmounting cancels a running one", async () => {
+  const clock = fakeStallClock();
+  try {
+    const calls = await renderApp({ update: { status: "ready", currentVersion: "0.6.0", availableVersion: "0.6.1" } });
+    const api = (browser as unknown as { mmllm: { installUpdate: () => Promise<void> } }).mmllm;
+    let fail = true;
+    api.installUpdate = async () => { calls.install++; if (fail) throw new Error("합성 설치 실패"); };
+    await openSettings("일반");
+    await click(footerAction()!);
+    assert.match(document.body.textContent ?? "", /합성 설치 실패/);
+    assert.equal(clock.pending.size, 0, "a rejection releases at once and arms nothing");
+    fail = false;
+    await click(updateRowButton());
+    assert.equal(clock.pending.size, 1);
+    await act(async () => root!.unmount());
+    root = null;
+    assert.equal(clock.pending.size, 0, "unmount clears the timer");
+    assert.equal(stallAlerts().length, 0);
+  } finally { clock.restore(); }
+});
+
 test("update error: the rail avatar opens 일반 on the retry action; the footer stays plain text", async () => {
   const calls = await renderApp({ update: { status: "error", currentVersion: "0.6.0", message: "합성 오류" } });
   await click(avatar());

@@ -34,6 +34,8 @@ type Screen = SidebarScreen;
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
 const MAC = navigator.platform.includes("Mac");
 const SHORTCUT_LABEL = MAC ? "⌘K" : "Ctrl K";
+/** How long a resolved install request may leave the app running before the student is told it did not start. */
+const INSTALL_STALL_MS = 60_000;
 /** Palette commands (contract D3.7). "⌘↵ 새 창" is out of scope: the app has one window. */
 const PALETTE_COMMANDS: readonly PaletteCommand[] = [
   { id: "new-thread", label: "새 대화", shortcut: MAC ? "⌘N" : "Ctrl+N" },
@@ -77,12 +79,20 @@ export default function App() {
   const updateRequestRef = useRef<"install" | "check" | null>(null);
   const [installPending, setInstallPending] = useState(false);
   const [focusUpdateAction, setFocusUpdateAction] = useState(false);
+  /** A resolved install means the app should already be quitting; if it is still running this long, the install never started. */
+  const installStallTimerRef = useRef<number | null>(null);
+  const clearInstallStall = useCallback(() => {
+    if (installStallTimerRef.current === null) return;
+    window.clearTimeout(installStallTimerRef.current); installStallTimerRef.current = null;
+  }, []);
   // A successful install means the app is quitting, so the latch stays; an updater error or any other state ends it.
   useEffect(() => {
     if (updateState?.status === "ready") return;
+    clearInstallStall();
     if (updateRequestRef.current === "install") updateRequestRef.current = null;
     setInstallPending(false);
-  }, [updateState?.status]);
+  }, [updateState?.status, clearInstallStall]);
+  useEffect(() => clearInstallStall, [clearInstallStall]);
   /** A default instruction left behind a running save; App (not the settings screen) owns it so leaving the screen cannot lose it. */
   const [pendingInstruction, setPendingInstruction] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState("");
@@ -380,12 +390,12 @@ export default function App() {
     setMediaVisited(false); setChatbotSelectedId(null); setChatbotStatus({}); setChatbotUsage(null);
     setAppSettings(null); setSettingsDraft(null); setSettingsSaving(false); settingsSavingRef.current = false; setPendingInstruction(null);
     setSettingsError(""); setSettingsCategory("general"); setFocusUpdateAction(false); pendingComposerFocusRef.current = null;
-    updateRequestRef.current = null; setInstallPending(false);
+    clearInstallStall(); updateRequestRef.current = null; setInstallPending(false);
     setPaletteOpen(false); setRenameDialog(null);
     setKeyReplaceOpen(false); setReplacementKey(""); setKeyReplacing(false);
     setTemplateDraft(null); setEvidenceAppends([]); displacedChatbotDraftsRef.current.clear();
     evidenceCreationRef.current = null; setError("");
-  }, []);
+  }, [clearInstallStall]);
 
   const applyThreadUpdate = useCallback((snapshot: ThreadSnapshot) => {
     if (visibleThreadIdRef.current === snapshot.id) setThread(snapshot);
@@ -1084,16 +1094,28 @@ export default function App() {
     setFocusUpdateAction(updateAction); setScreen("settings");
   };
   // One install/check request at a time, whichever button (일반 row or footer) sent it. A resolved install keeps the
-  // latch (the app is quitting and installUpdate answers within milliseconds); only a rejection releases it.
+  // latch (the app is quitting and installUpdate answers within milliseconds); a rejection releases it at once, and an
+  // app still running INSTALL_STALL_MS later (a quitAndInstall that silently stalled) releases it with one notice.
   const runUpdateAction = () => {
     if (updateRequestRef.current) return;
     const install = updateState?.status === "ready";
     updateRequestRef.current = install ? "install" : "check";
     if (install) setInstallPending(true);
     void new Promise<unknown>((resolve) => resolve(install ? window.mmllm.installUpdate() : window.mmllm.checkForUpdates()))
-      .then(() => { if (!install) updateRequestRef.current = null; })
+      .then(() => {
+        if (!install) { updateRequestRef.current = null; return; }
+        // The state may have left "ready" (and released the latch) while the request was in flight.
+        if (updateRequestRef.current !== "install") return;
+        clearInstallStall();
+        installStallTimerRef.current = window.setTimeout(() => {
+          installStallTimerRef.current = null;
+          if (updateRequestRef.current !== "install") return;
+          updateRequestRef.current = null; setInstallPending(false);
+          setError("업데이트 설치가 시작되지 않았습니다. 다시 시도하거나, 앱을 종료하면 종료할 때 설치됩니다.");
+        }, INSTALL_STALL_MS);
+      })
       .catch((error) => {
-        updateRequestRef.current = null; setInstallPending(false); setError(errorText(error));
+        clearInstallStall(); updateRequestRef.current = null; setInstallPending(false); setError(errorText(error));
       });
   };
   const headerSearch = <button type="button" className="header-search" aria-keyshortcuts="Meta+K Control+K"
