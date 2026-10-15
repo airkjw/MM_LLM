@@ -615,10 +615,10 @@ test("update ready: the latch also ends when the update state leaves ready (an u
   assert.equal(calls.install, 2);
 });
 
-// The app arms exactly one 60 s timer after a resolved install request. This fake clock only captures that timer
-// (every other window.setTimeout passes through), so the tests never wait 60 real seconds.
-const STALL_MS = 60_000;
-const STALL_MESSAGE = /업데이트 설치가 시작되지 않았습니다.*다시 시도하거나.*앱을 종료하면/;
+// The app arms exactly one 120 s timer after a resolved install request. This fake clock only captures that timer
+// (every other window.setTimeout passes through), so the tests never wait 120 real seconds.
+const STALL_MS = 120_000;
+const STALL_MESSAGE = /업데이트 설치가 아직 시작되지 않았습니다.*스스로 종료.*작업을 저장.*다시 시도하거나.*앱을 종료하면/;
 function fakeStallClock() {
   const realSet = browser.setTimeout.bind(browser);
   const realClear = browser.clearTimeout.bind(browser);
@@ -636,9 +636,10 @@ function fakeStallClock() {
     restore: () => { browser.setTimeout = realSet as never; browser.clearTimeout = realClear as never; }
   };
 }
-const stallAlerts = () => [...document.querySelectorAll('[role="alert"]')].filter((node) => STALL_MESSAGE.test(node.textContent ?? ""));
+// A status-tone notice (not an error alert); the sr-only update live region never carries this text.
+const stallAlerts = () => [...document.querySelectorAll('.notice-info[role="status"]')].filter((node) => STALL_MESSAGE.test(node.textContent ?? ""));
 
-test("update ready: an install that never starts releases the latch after 60 s, says so once, and retry installs again", async () => {
+test("update ready: an install that never starts releases the latch after 120 s, says so once, and retry installs again", async () => {
   const clock = fakeStallClock();
   try {
     const calls = await renderApp({ update: { status: "ready", currentVersion: "0.6.0", availableVersion: "0.6.1" } });
@@ -647,13 +648,15 @@ test("update ready: an install that never starts releases the latch after 60 s, 
     row.focus();
     await click(row);
     assert.equal(calls.install, 1);
-    assert.deepEqual(clock.delays, [STALL_MS], "one 60 s timer is armed once the request resolved");
+    assert.deepEqual(clock.delays, [STALL_MS], "one 120 s timer is armed once the request resolved");
     assert.equal(stallAlerts().length, 0, "nothing is announced before the timer fires");
     await click(footerAction()!);
     assert.equal(calls.install, 1, "still latched while the timer runs: no second request");
     assert.equal(clock.pending.size, 1);
     await clock.fire();
     assert.equal(stallAlerts().length, 1, "the stall is announced exactly once");
+    assert.equal(document.querySelector('[role="alert"]'), null, "the slow-start notice is not an error alert");
+    assert.doesNotMatch(document.body.textContent ?? "", /오류: 업데이트 설치/);
     for (const control of [updateRowButton(), footerAction()!]) {
       assert.equal(control.textContent?.trim(), "업데이트 설치 0.6.1");
       assert.equal(control.getAttribute("aria-busy"), null);
@@ -671,7 +674,7 @@ test("update ready: an install that never starts releases the latch after 60 s, 
   } finally { clock.restore(); }
 });
 
-test("update ready: no stall message when the update state leaves ready before the 60 s elapse", async () => {
+test("update ready: no stall message when the update state leaves ready before the 120 s elapse", async () => {
   const clock = fakeStallClock();
   try {
     const calls = await renderApp({ update: { status: "ready", currentVersion: "0.6.0", availableVersion: "0.6.1" } });

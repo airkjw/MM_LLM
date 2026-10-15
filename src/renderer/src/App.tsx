@@ -34,8 +34,9 @@ type Screen = SidebarScreen;
 type RenameDialogState = { thread: ThreadSummary; value: string; busy: boolean; error: string };
 const MAC = navigator.platform.includes("Mac");
 const SHORTCUT_LABEL = MAC ? "⌘K" : "Ctrl K";
-/** How long a resolved install request may leave the app running before the student is told it did not start. */
-const INSTALL_STALL_MS = 60_000;
+/** How long a resolved install request may leave the app running before the student is told it has not started yet.
+ * On macOS "ready" arrives before Squirrel has staged the ~205 MB zip, so this must outlast a slow preparation. */
+const INSTALL_STALL_MS = 120_000;
 /** Palette commands (contract D3.7). "⌘↵ 새 창" is out of scope: the app has one window. */
 const PALETTE_COMMANDS: readonly PaletteCommand[] = [
   { id: "new-thread", label: "새 대화", shortcut: MAC ? "⌘N" : "Ctrl+N" },
@@ -1095,7 +1096,7 @@ export default function App() {
   };
   // One install/check request at a time, whichever button (일반 row or footer) sent it. A resolved install keeps the
   // latch (the app is quitting and installUpdate answers within milliseconds); a rejection releases it at once, and an
-  // app still running INSTALL_STALL_MS later (a quitAndInstall that silently stalled) releases it with one notice.
+  // app still running INSTALL_STALL_MS later (a quitAndInstall that is stalled or still preparing) releases it with one notice.
   const runUpdateAction = () => {
     if (updateRequestRef.current) return;
     const install = updateState?.status === "ready";
@@ -1111,7 +1112,8 @@ export default function App() {
           installStallTimerRef.current = null;
           if (updateRequestRef.current !== "install") return;
           updateRequestRef.current = null; setInstallPending(false);
-          setError("업데이트 설치가 시작되지 않았습니다. 다시 시도하거나, 앱을 종료하면 종료할 때 설치됩니다.");
+          // Not an error: a slow preparation may still finish and close the app by itself, so say so (status tone, announced once).
+          setInfo("업데이트 설치가 아직 시작되지 않았습니다. 준비가 끝나면 앱이 스스로 종료되며 설치될 수 있으니 작업을 저장해 주세요. 계속 그대로라면 다시 시도하거나, 앱을 종료하면 종료할 때 설치됩니다.");
         }, INSTALL_STALL_MS);
       })
       .catch((error) => {
